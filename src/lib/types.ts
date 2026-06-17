@@ -4,6 +4,7 @@
 
 export interface MongoDoc {
   _id: string;
+  id?: string;
 }
 
 // ─── Users (created by admin only) ─────────────────────────────────────────────
@@ -87,14 +88,16 @@ export interface Sale extends MongoDoc {
   staffName: string;
   customerName?: string;
   customerPhone?: string;
-  paymentMethod: 'cash' | 'pos' | 'unpaid';
+  paymentMethod: 'cash' | 'pos' | 'unpaid' | 'part';
   totalAmount: number;
+  amountPaid?: number;
+  balanceDue?: number;
   notes?: string;
   items: SaleItem[];
   saleDate: string;
   createdAt: string;
   updatedAt: string;
-  branchName?: string;
+  reportId?: string;
 }
 
 // ─── Debtors (unpaid customers) ────────────────────────────────────────────────
