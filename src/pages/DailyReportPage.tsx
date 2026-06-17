@@ -22,19 +22,19 @@ const statusIcon = (s: string) =>
 
 export default function DailyReportPage() {
   const { user } = useAuth();
-  const [branches, setBranches]           = useState<Branch[]>([]);
+  const [branches, setBranches]             = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState(user?.branchId || '');
-  const [reportDate, setReportDate]       = useState(new Date().toISOString().split('T')[0]);
-  const [sales, setSales]                 = useState<Sale[]>([]);
-  const [expenses, setExpenses]           = useState<Expense[]>([]);
-  const [debtors, setDebtors]             = useState<Debtor[]>([]);
+  const [reportDate, setReportDate]         = useState(new Date().toISOString().split('T')[0]);
+  const [sales, setSales]                   = useState<Sale[]>([]);
+  const [expenses, setExpenses]             = useState<Expense[]>([]);
+  const [debtors, setDebtors]               = useState<Debtor[]>([]);
   const [existingReport, setExistingReport] = useState<DailyReport | null>(null);
-  const [notes, setNotes]                 = useState('');
-  const [loading, setLoading]             = useState(false);
-  const [submitting, setSubmitting]       = useState(false);
-  const [success, setSuccess]             = useState('');
-  const [error, setError]                 = useState('');
-  const [pastReports, setPastReports]     = useState<DailyReport[]>([]);
+  const [notes, setNotes]                   = useState('');
+  const [loading, setLoading]               = useState(false);
+  const [submitting, setSubmitting]         = useState(false);
+  const [success, setSuccess]               = useState('');
+  const [error, setError]                   = useState('');
+  const [pastReports, setPastReports]       = useState<DailyReport[]>([]);
 
   useEffect(() => {
     find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }).then(data => {
@@ -46,43 +46,36 @@ export default function DailyReportPage() {
     if (selectedBranch && reportDate) fetchData();
   }, [selectedBranch, reportDate]);
 
-  useEffect(() => {
-    if (selectedBranch) fetchPast();
-  }, [selectedBranch]);
-
   async function fetchData() {
     setLoading(true);
     const start = `${reportDate}T00:00:00.000Z`;
     const end   = `${reportDate}T23:59:59.999Z`;
 
-    const [salesData, expensesData, debtorsData, reportData] = await Promise.all([
+    const [salesData, expensesData, debtorsData, reportsData] = await Promise.all([
       find(Collections.SALES,    { branchId: selectedBranch, saleDate:    { $gte: start, $lte: end } }),
       find(Collections.EXPENSES, { branchId: selectedBranch, expenseDate: { $gte: start, $lte: end } }),
-      // Fetch all active debtors for this branch (no date filter — API doesn't support createdAt filter)
       find(Collections.DEBTORS,  { branchId: selectedBranch, isCleared: false }),
-      find(Collections.DAILY_REPORTS, { branchId: selectedBranch, reportDate: { $gte: start, $lte: end } }, { limit: 1 }),
+      // Fetch without date filter — match client-side to avoid backend ::date cast issue
+      find(Collections.DAILY_REPORTS, { branchId: selectedBranch }, { limit: 30 }),
     ]);
 
+    const reports = reportsData as DailyReport[];
     setSales(salesData as Sale[]);
     setExpenses(expensesData as Expense[]);
     setDebtors(debtorsData as Debtor[]);
-    setExistingReport((reportData[0] as DailyReport) ?? null);
+    setPastReports(reports);
+    setExistingReport(reports.find(r => r.reportDate?.split('T')[0] === reportDate) ?? null);
     setLoading(false);
   }
 
-  async function fetchPast() {
-    const data = await find(Collections.DAILY_REPORTS, { branchId: selectedBranch }, { sort: { reportDate: -1 }, limit: 10 });
-    setPastReports(data as DailyReport[]);
-  }
-
-  const totalCashSales   = sales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0);
-  const totalPosSales    = sales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0);
-  const totalPartSales   = sales.filter(s => s.paymentMethod === 'part').reduce((a, s) => a + Number(s.totalAmount), 0);
-  const totalUnpaidSales = sales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
-  const totalSales       = totalCashSales + totalPosSales + totalPartSales + totalUnpaidSales;
-  const totalExpenses    = expenses.reduce((a, e) => a + Number(e.amount), 0);
-  const netIncome        = totalCashSales + totalPosSales + totalPartSales - totalExpenses;
-  const debtorCount      = debtors.length;
+  const totalCashSales    = sales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const totalPosSales     = sales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const totalPartSales    = sales.filter(s => s.paymentMethod === 'part').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const totalUnpaidSales  = sales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const totalSales        = totalCashSales + totalPosSales + totalPartSales + totalUnpaidSales;
+  const totalExpenses     = expenses.reduce((a, e) => a + Number(e.amount), 0);
+  const netIncome         = totalCashSales + totalPosSales + totalPartSales - totalExpenses;
+  const debtorCount       = debtors.length;
   const totalDebtorAmount = debtors.reduce((a, d) => a + Number(d.amountOwed), 0);
 
   async function submitReport() {
@@ -91,11 +84,12 @@ export default function DailyReportPage() {
     setError('');
     try {
       const payload = {
-        branchId:          selectedBranch,
+        branchId:         selectedBranch,
         reportDate,
         totalCashSales,
         totalPosSales,
         totalUnpaidSales,
+        totalPartSales,
         totalExpenses,
         netIncome,
         debtorCount,
@@ -116,7 +110,6 @@ export default function DailyReportPage() {
 
       setSuccess('Daily report submitted successfully! Awaiting admin review.');
       fetchData();
-      fetchPast();
       setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
       setError(err.message || 'Failed to submit report');
@@ -125,7 +118,6 @@ export default function DailyReportPage() {
   }
 
   const fmt = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
-  const canSubmit = !existingReport || existingReport.status === 'rejected' || existingReport.status === 'pending';
 
   return (
     <div className="p-6 space-y-6">
@@ -170,7 +162,6 @@ export default function DailyReportPage() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 space-y-5">
 
-          {/* Branch & Date */}
           <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -190,7 +181,6 @@ export default function DailyReportPage() {
             </div>
           </div>
 
-          {/* Report summary */}
           {!loading && selectedBranch && (
             <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
               <div className="flex items-center justify-between mb-4">
@@ -204,13 +194,12 @@ export default function DailyReportPage() {
                 )}
               </div>
 
-              {/* Sales breakdown */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                 {[
-                  { label: 'Cash Sales',  value: totalCashSales,   cls: 'bg-green-50 text-green-700'  },
-                  { label: 'POS Sales',   value: totalPosSales,    cls: 'bg-blue-50 text-blue-700'    },
-                  { label: 'Part Payment',value: totalPartSales,   cls: 'bg-orange-50 text-orange-700'},
-                  { label: 'Unpaid',      value: totalUnpaidSales, cls: 'bg-red-50 text-red-700'      },
+                  { label: 'Cash Sales',   value: totalCashSales,   cls: 'bg-green-50 text-green-700'   },
+                  { label: 'POS Sales',    value: totalPosSales,    cls: 'bg-blue-50 text-blue-700'     },
+                  { label: 'Part Payment', value: totalPartSales,   cls: 'bg-orange-50 text-orange-700' },
+                  { label: 'Unpaid',       value: totalUnpaidSales, cls: 'bg-red-50 text-red-700'       },
                 ].map(c => (
                   <div key={c.label} className={`text-center p-3 rounded-lg ${c.cls}`}>
                     <p className="text-xs font-medium">{c.label}</p>
@@ -248,7 +237,6 @@ export default function DailyReportPage() {
                 </div>
               </div>
 
-              {/* Sales list */}
               {sales.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-sm font-medium text-slate-700 mb-2">Sales Today ({sales.length})</h4>
@@ -261,9 +249,9 @@ export default function DailyReportPage() {
                           {s.customerName && <span className="text-slate-400 ml-2">{s.customerName}</span>}
                         </div>
                         <span className={`px-2 py-0.5 rounded-full font-medium capitalize ${
-                          s.paymentMethod === 'cash'   ? 'bg-green-100 text-green-700'  :
-                          s.paymentMethod === 'pos'    ? 'bg-blue-100 text-blue-700'    :
-                          s.paymentMethod === 'part'   ? 'bg-orange-100 text-orange-700':
+                          s.paymentMethod === 'cash'   ? 'bg-green-100 text-green-700'   :
+                          s.paymentMethod === 'pos'    ? 'bg-blue-100 text-blue-700'     :
+                          s.paymentMethod === 'part'   ? 'bg-orange-100 text-orange-700' :
                                                          'bg-red-100 text-red-700'
                         }`}>{s.paymentMethod}</span>
                       </div>
@@ -272,7 +260,6 @@ export default function DailyReportPage() {
                 </div>
               )}
 
-              {/* Expenses list */}
               {expenses.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-sm font-medium text-slate-700 mb-2">Expenses ({expenses.length})</h4>
@@ -287,7 +274,6 @@ export default function DailyReportPage() {
                 </div>
               )}
 
-              {/* Debtors list */}
               {debtors.length > 0 && (
                 <div className="mb-4">
                   <h4 className="text-sm font-medium text-slate-700 mb-2">Active Debtors ({debtors.length})</h4>
@@ -311,7 +297,6 @@ export default function DailyReportPage() {
                 </div>
               )}
 
-              {/* Notes */}
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
                 <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
@@ -319,7 +304,6 @@ export default function DailyReportPage() {
                   placeholder="Any notes for the admin..." />
               </div>
 
-              {/* Submit / Status */}
               {existingReport?.status === 'approved' ? (
                 <div className="flex items-center gap-2 p-3 bg-green-50 rounded-lg text-green-700 text-sm">
                   <CheckCircle className="w-4 h-4" />
@@ -349,7 +333,6 @@ export default function DailyReportPage() {
           )}
         </div>
 
-        {/* Past Reports */}
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 h-fit">
           <h3 className="font-semibold text-slate-800 mb-4">Recent Reports</h3>
           {pastReports.length === 0 ? (

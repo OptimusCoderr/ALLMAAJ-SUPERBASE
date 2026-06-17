@@ -86,16 +86,15 @@ router.get('/daily', async (req: Request, res: Response) => {
       LEFT JOIN users ru ON ru.id = dr.reviewed_by
       WHERE
         (${effectiveBranchId}::uuid IS NULL OR dr.branch_id = ${effectiveBranchId}::uuid)
-        AND (${status    ?? null} IS NULL OR dr.status      = ${status    ?? null}::report_status)
-        AND (${startDate ?? null} IS NULL OR dr.report_date >= ${startDate ?? null}::timestamptz::date)
-        AND (${endDate   ?? null} IS NULL OR dr.report_date <= ${endDate   ?? null}::timestamptz::date)
+        AND (${status    ?? null}::text IS NULL OR dr.status      = ${status    ?? null}::report_status)
+        AND (${startDate ?? null}::text IS NULL OR dr.report_date >= ${startDate ?? null}::timestamptz::date)
+        AND (${endDate   ?? null}::text IS NULL OR dr.report_date <= ${endDate   ?? null}::timestamptz::date)
       ORDER BY dr.report_date DESC
       LIMIT ${parseInt(limit)}
     `;
     return sendResponse(res, 200, 'Reports fetched', reports.map(toReport));
   } catch (err) { console.error('[GET /reports/daily]', err); return sendError(res, 500, 'Server error', err); }
 });
-
 
 // GET /api/reports/daily/:id
 router.get('/daily/:id', async (req: Request, res: Response) => {
