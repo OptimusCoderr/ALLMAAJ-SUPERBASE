@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { find, insertOne, Collections } from '../lib/api';
-import type { Product, Branch, BranchStock } from '../lib/types';
+import type { Product, Branch, BranchStock, Expense, Debtor } from '../lib/types';
 import { Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt, Pencil, Lock, Send, AlertTriangle, X } from 'lucide-react';
 
 interface CartItem { product: Product; quantity: number; unitPrice: number }
@@ -101,6 +101,10 @@ export default function SalesPage() {
   const [editPrice, setEditPrice]   = useState(0);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError]     = useState('');
+
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportSuccess, setReportSuccess] = useState('');
+  const [reportError, setReportError]     = useState('');
 
   useEffect(() => { fetchData(); }, [user]);
   useEffect(() => { if (selectedBranch) fetchStock(selectedBranch); }, [selectedBranch]);
@@ -298,6 +302,60 @@ export default function SalesPage() {
       setError(err.message || 'Failed to record expense');
     }
     setLoading(false);
+  }
+
+    async function handleSubmitDailyReport() {
+    if (!selectedBranch) { setReportError('No branch selected'); return; }
+    setReportLoading(true);
+    setReportError('');
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const start = `${today}T00:00:00.000Z`;
+      const end   = `${today}T23:59:59.999Z`;
+
+      const [expensesData, debtorsData] = await Promise.all([
+        find(Collections.EXPENSES, { branchId: selectedBranch, expenseDate: { $gte: start, $lte: end } }),
+        find(Collections.DEBTORS,  { branchId: selectedBranch, isCleared: false }),
+      ]);
+
+      const totalCashSales    = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0);
+      const totalPosSales     = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0);
+      const totalPartSales    = todaySales.filter(s => s.paymentMethod === 'part').reduce((a, s) => a + Number(s.totalAmount), 0);
+      const totalUnpaidSales  = todaySales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
+      const totalExpenses     = (expensesData as Expense[]).reduce((a, e) => a + Number(e.amount), 0);
+      const netIncome         = totalCashSales + totalPosSales + totalPartSales - totalExpenses;
+      const debtorCount       = (debtorsData as Debtor[]).length;
+      const totalDebtorAmount = (debtorsData as Debtor[]).reduce((a, d) => a + Number(d.amountOwed), 0);
+
+      const res = await fetch(`${BASE}/api/reports/daily`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({
+          branchId: selectedBranch,
+          reportDate: today,
+          totalCashSales,
+          totalPosSales,
+          totalUnpaidSales,
+          totalPartSales,
+          totalExpenses,
+          netIncome,
+          debtorCount,
+          totalDebtorAmount,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || `HTTP ${res.status}`);
+      }
+
+      setReportSuccess('Daily report submitted! Awaiting admin review.');
+      setTimeout(() => setReportSuccess(''), 6000);
+    } catch (err: any) {
+      setReportError(err.message || 'Failed to submit report');
+      setTimeout(() => setReportError(''), 6000);
+    }
+    setReportLoading(false);
   }
 
   // ── Edit helpers ──────────────────────────────────────────────────────────────
@@ -773,10 +831,24 @@ export default function SalesPage() {
                 Sales lock at midnight — submit your report before 12:00 AM
               </p>
             </div>
-            <button onClick={() => navigate('/daily-report')}
-              className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold rounded-lg transition-colors">
-              <Send className="w-4 h-4" />Submit Daily Report
+
+            <button
+              onClick={handleSubmitDailyReport}
+              disabled={reportLoading}
+              className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-semibold rounded-lg transition-colors"
+            >
+              {reportLoading
+                ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                : <Send className="w-4 h-4" />}
+              {reportLoading ? 'Submitting...' : 'Submit Daily Report'}
             </button>
+            {reportSuccess && (
+              <p className="text-xs text-green-700 font-medium mt-1 text-center">{reportSuccess}</p>
+            )}
+            {reportError && (
+              <p className="text-xs text-red-600 font-medium mt-1 text-center">{reportError}</p>
+            )}
+
           </div>
 
           <div className="p-4">

@@ -76,7 +76,6 @@ router.get('/daily', async (req: Request, res: Response) => {
     const effectiveBranchId =
       req.user?.role !== 'admin' && req.user?.branchId ? req.user.branchId : (branchId ?? null);
 
-    // JOIN users for submitted_by_name and reviewed_by_name (no longer stored)
     const reports = await sql<(DailyReportRow & { submitted_by_name: string; reviewed_by_name: string | null })[]>`
       SELECT
         dr.*,
@@ -88,14 +87,15 @@ router.get('/daily', async (req: Request, res: Response) => {
       WHERE
         (${effectiveBranchId}::uuid IS NULL OR dr.branch_id = ${effectiveBranchId}::uuid)
         AND (${status    ?? null} IS NULL OR dr.status      = ${status    ?? null}::report_status)
-        AND (${startDate ?? null}::date IS NULL OR dr.report_date >= ${startDate ?? null}::date)
-        AND (${endDate   ?? null}::date IS NULL OR dr.report_date <= ${endDate   ?? null}::date)
+        AND (${startDate ?? null} IS NULL OR dr.report_date >= ${startDate ?? null}::timestamptz::date)
+        AND (${endDate   ?? null} IS NULL OR dr.report_date <= ${endDate   ?? null}::timestamptz::date)
       ORDER BY dr.report_date DESC
       LIMIT ${parseInt(limit)}
     `;
     return sendResponse(res, 200, 'Reports fetched', reports.map(toReport));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) { console.error('[GET /reports/daily]', err); return sendError(res, 500, 'Server error', err); }
 });
+
 
 // GET /api/reports/daily/:id
 router.get('/daily/:id', async (req: Request, res: Response) => {
@@ -215,6 +215,7 @@ router.get('/debtors', async (req: Request, res: Response) => {
 });
 
 // POST /api/reports/debtors
+// REPLACE THIS:
 router.post('/debtors', async (req: Request, res: Response) => {
   try {
     const { name, phone, amountOwed, branchId, saleId, notes } = req.body;
@@ -224,6 +225,23 @@ router.post('/debtors', async (req: Request, res: Response) => {
       VALUES (
         ${name}, ${phone}, ${amountOwed}, ${branchId},
         ${req.userId!}, ${createdByName},
+        ${saleId ?? null}, ${notes ?? null}
+      )
+      RETURNING *
+    `;
+    return sendResponse(res, 201, 'Debtor recorded', toDebtor(debtor));
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+// WITH THIS:
+router.post('/debtors', async (req: Request, res: Response) => {
+  try {
+    const { name, phone, amountOwed, branchId, saleId, notes } = req.body;
+    const [debtor] = await sql<DebtorRow[]>`
+      INSERT INTO debtors (name, phone, amount_owed, branch_id, created_by, sale_id, notes)
+      VALUES (
+        ${name}, ${phone}, ${amountOwed}, ${branchId},
+        ${req.userId!},
         ${saleId ?? null}, ${notes ?? null}
       )
       RETURNING *
