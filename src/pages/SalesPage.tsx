@@ -135,7 +135,7 @@ export default function SalesPage() {
       { branchId, saleDate: { $gte: `${today}T00:00:00.000Z` } },
       { sort: { createdAt: -1 }, limit: 100 }
     );
-    setTodaySales(data as any[]);
+    setTodaySales((data as any[]).filter(s => !s.reportId));
   }
 
   function getStock(productId: string) {
@@ -214,22 +214,7 @@ export default function SalesPage() {
   saleDate: new Date(`${saleDate}T12:00:00.000Z`).toISOString(),
       });
 
-      if (hasDebt && balance > 0) {
-        const itemsSummary = cart.map(c => `${c.product.name} x${c.quantity}`).join(', ');
-        await insertOne(Collections.DEBTORS, {
-          name:          customerName.trim(),
-          phone:         customerPhone.trim(),
-          amountOwed:    balance,
-          branchId:      selectedBranch,
-          createdBy:     user!.id,
-          createdByName: user!.fullName,
-          isCleared:     false,
-          saleId:        newSaleId,
-          notes: `Sale: ${itemsSummary}${notes.trim() ? ` | ${notes.trim()}` : ''}`,
-        });
-      }
-
-      if (hasDebt && balance > 0) {
+            if (hasDebt && balance > 0) {
         const itemsSummary = cart.map(c => `${c.product.name} x${c.quantity}`).join(', ');
         await insertOne(Collections.DEBTORS, {
           name:          customerName.trim(),
@@ -241,6 +226,7 @@ export default function SalesPage() {
           createdBy:     user!.id,
           createdByName: user!.fullName,
           isCleared:     false,
+          saleId:        newSaleId,
           notes: `Sale: ${itemsSummary}${notes.trim() ? ` | ${notes.trim()}` : ''}`,
         });
       }
@@ -365,6 +351,7 @@ export default function SalesPage() {
       }
 
       setReportSuccess('Daily report submitted! Awaiting admin review.');
+      setTodaySales([]);
       setTimeout(() => setReportSuccess(''), 6000);
     } catch (err: any) {
       setReportError(err.message || 'Failed to submit report');

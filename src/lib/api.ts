@@ -93,6 +93,7 @@ export async function find(
   if (f.branchId)                 params.set('branchId',  f.branchId);
   if (f.status)                   params.set('status',    f.status);
   if (f.isCleared  !== undefined) params.set('isCleared', String(f.isCleared));
+  if (f.reportId)                 params.set('reportId',  f.reportId);
 
   // Date range (saleDate / expenseDate / reportDate)
   const dateField = f.saleDate ?? f.expenseDate ?? f.reportDate;

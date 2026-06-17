@@ -37,9 +37,10 @@ const toSale = (s: SaleRow & { staff_name?: string }) => ({
 });
 
 // ── GET /api/sales ────────────────────────────────────────────────────────────
+// ── GET /api/sales ────────────────────────────────────────────────────────────
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { branchId, startDate, endDate, paymentMethod, limit = '100', page = '1', ids } = req.query as Record<string, string>;
+    const { branchId, startDate, endDate, paymentMethod, limit = '100', page = '1', ids, reportId } = req.query as Record<string, string>;
 
     if (ids) {
       const idList = ids.split(',').map(id => id.trim()).filter(Boolean);
@@ -49,6 +50,17 @@ router.get('/', async (req: Request, res: Response) => {
         SELECT s.*, u.full_name AS staff_name FROM sales s
         JOIN users u ON u.id = s.staff_id
         WHERE s.id = ANY(${idList}::uuid[])
+        ORDER BY s.sale_date DESC
+      `;
+      return sendResponse(res, 200, 'Sales fetched', { sales: sales.map(toSale), total: sales.length, page: 1, limit: sales.length });
+    }
+
+    // Fetch all sales linked to a specific daily report
+    if (reportId) {
+      const sales = await sql<(SaleRow & { staff_name: string })[]>`
+        SELECT s.*, u.full_name AS staff_name FROM sales s
+        JOIN users u ON u.id = s.staff_id
+        WHERE s.report_id = ${reportId}::uuid
         ORDER BY s.sale_date DESC
       `;
       return sendResponse(res, 200, 'Sales fetched', { sales: sales.map(toSale), total: sales.length, page: 1, limit: sales.length });
