@@ -118,6 +118,9 @@ export interface Debtor extends MongoDoc {
   createdAt: string;
   updatedAt: string;
   branchName?: string;
+  paymentMethod?: 'cash' | 'pos' | 'unpaid' | 'part';
+  totalSaleAmount?: number;
+  saleItems?: Array<{ product_id: string; quantity: number; unit_price: number; subtotal: number }>;
 }
 
 // ─── Expenses ──────────────────────────────────────────────────────────────────

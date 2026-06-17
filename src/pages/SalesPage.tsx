@@ -193,26 +193,41 @@ export default function SalesPage() {
     setLoading(true);
     setError('');
     try {
-      await insertOne(Collections.SALES, {
-        branchId:      selectedBranch,
-        staffId:       user!.id,
-        staffName:     user!.fullName,
-        customerName:  customerName.trim(),
-        customerPhone: customerPhone.trim(),
-        paymentMethod,
-        totalAmount:   total,
-        amountPaid:    paid,
-        balanceDue:    balance,
-        notes:         notes.trim(),
-        items: cart.map(c => ({
-          productId:   c.product._id,
-          productName: c.product.name,
-          quantity:    c.quantity,
-          unitPrice:   c.unitPrice,
-          subtotal:    c.quantity * c.unitPrice,
-        })),
-        saleDate: new Date(`${saleDate}T12:00:00.000Z`).toISOString(),
+      const newSaleId = await insertOne(Collections.SALES, {
+  branchId:      selectedBranch,
+  staffId:       user!.id,
+  staffName:     user!.fullName,
+  customerName:  customerName.trim(),
+  customerPhone: customerPhone.trim(),
+  paymentMethod,
+  totalAmount:   total,
+  amountPaid:    paid,
+  balanceDue:    balance,
+  notes:         notes.trim(),
+  items: cart.map(c => ({
+    productId:   c.product._id,
+    productName: c.product.name,
+    quantity:    c.quantity,
+    unitPrice:   c.unitPrice,
+    subtotal:    c.quantity * c.unitPrice,
+  })),
+  saleDate: new Date(`${saleDate}T12:00:00.000Z`).toISOString(),
       });
+
+      if (hasDebt && balance > 0) {
+        const itemsSummary = cart.map(c => `${c.product.name} x${c.quantity}`).join(', ');
+        await insertOne(Collections.DEBTORS, {
+          name:          customerName.trim(),
+          phone:         customerPhone.trim(),
+          amountOwed:    balance,
+          branchId:      selectedBranch,
+          createdBy:     user!.id,
+          createdByName: user!.fullName,
+          isCleared:     false,
+          saleId:        newSaleId,
+          notes: `Sale: ${itemsSummary}${notes.trim() ? ` | ${notes.trim()}` : ''}`,
+        });
+      }
 
       if (hasDebt && balance > 0) {
         const itemsSummary = cart.map(c => `${c.product.name} x${c.quantity}`).join(', ');

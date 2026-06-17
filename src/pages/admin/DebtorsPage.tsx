@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useAuth } from '../../context/AuthContext';
 import { find, updateOne, Collections } from '../../lib/api';
 import type { Debtor, Branch } from '../../lib/types';
-import { UserCheck, Search, CheckCircle, RotateCcw, Phone, User, Clock, AlertTriangle, TrendingDown } from 'lucide-react';
+import { UserCheck, Search, CheckCircle, XCircle, Phone, User, Clock } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 function timeOwing(createdAt: string): { label: string; days: number } {
   const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
-  if (days === 0) return { label: 'Today',    days };
-  if (days === 1) return { label: '1 day',    days };
+  if (days === 0) return { label: 'Today', days };
+  if (days === 1) return { label: '1 day', days };
   if (days < 7)   return { label: `${days} days`, days };
   if (days < 30)  return { label: `${Math.floor(days / 7)}w ${days % 7}d`, days };
   if (days < 365) return { label: `${Math.floor(days / 30)} month${Math.floor(days / 30) > 1 ? 's' : ''}`, days };
@@ -15,9 +15,16 @@ function timeOwing(createdAt: string): { label: string; days: number } {
 }
 
 function urgencyStyle(days: number): string {
-  if (days > 30) return 'bg-red-100 text-red-700 border-red-200';
-  if (days > 7)  return 'bg-orange-100 text-orange-700 border-orange-200';
-  return 'bg-amber-100 text-amber-700 border-amber-200';
+  if (days >= 30) return 'text-red-700 bg-red-100';
+  if (days >= 7)  return 'text-orange-700 bg-orange-100';
+  if (days >= 1)  return 'text-amber-700 bg-amber-100';
+  return 'text-slate-600 bg-slate-100';
+}
+
+function parseProducts(notes: string | undefined): string {
+  if (!notes) return '';
+  const match = notes.match(/^Sale:\s*(.+?)(\s*\|.*)?$/);
+  return match ? match[1].trim() : '';
 }
 
 export default function DebtorsPage() {
@@ -31,7 +38,7 @@ export default function DebtorsPage() {
   const [clearing, setClearing]     = useState<string | null>(null);
 
   useEffect(() => {
-    find(Collections.BRANCHES, { isActive: true }).then(b => setBranches(b as Branch[]));
+    find(Collections.BRANCHES, {}, { sort: { name: 1 } }).then(b => setBranches(b as Branch[]));
   }, []);
 
   useEffect(() => { fetchDebtors(); }, [branchFilter]);
@@ -46,23 +53,36 @@ export default function DebtorsPage() {
   }
 
   async function clearDebtor(d: Debtor) {
-    if (!confirm(`Mark "${d.name}" as cleared? They owed ${fmt(d.amountOwed)}.`)) return;
+    if (!confirm(`Mark "${d.name}" as cleared? They owed ₦${d.amountOwed.toLocaleString()}.`)) return;
     setClearing(d._id);
-    await updateOne(Collections.DEBTORS, { _id: d._id }, { isCleared: true });
-    await fetchDebtors();
+    await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
+      $set: {
+        isCleared: true,
+        clearedBy: user!.id,
+        clearedByName: user!.fullName,
+        clearedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    setDebtors(prev => prev.map(x => x._id === d._id
+      ? { ...x, isCleared: true, clearedBy: user!.id, clearedByName: user!.fullName, clearedAt: new Date().toISOString() }
+      : x));
     setClearing(null);
   }
 
   async function reactivateDebtor(d: Debtor) {
     if (!confirm(`Reactivate debtor "${d.name}"?`)) return;
     setClearing(d._id);
-    await updateOne(Collections.DEBTORS, { _id: d._id }, { isCleared: false });
-    await fetchDebtors();
+    await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
+      $set: { isCleared: false, clearedBy: null, clearedByName: null, clearedAt: null, updatedAt: new Date().toISOString() },
+    });
+    setDebtors(prev => prev.map(x => x._id === d._id
+      ? { ...x, isCleared: false, clearedBy: undefined, clearedByName: undefined, clearedAt: undefined }
+      : x));
     setClearing(null);
   }
 
   const filtered = debtors.filter(d => {
-    if (branchFilter && d.branchId !== branchFilter) return false;
     if (statusFilter === 'active'  && d.isCleared)  return false;
     if (statusFilter === 'cleared' && !d.isCleared) return false;
     if (search) {
@@ -72,11 +92,8 @@ export default function DebtorsPage() {
     return true;
   });
 
-  const activeDebtors  = debtors.filter(d => !d.isCleared);
-  const totalActive    = activeDebtors.reduce((s, d) => s + d.amountOwed, 0);
-  const overdueCount   = activeDebtors.filter(d => timeOwing(d.createdAt).days > 30).length;
-  const totalCleared   = debtors.filter(d => d.isCleared).reduce((s, d) => s + d.amountOwed, 0);
-
+  const totalActive  = debtors.filter(d => !d.isCleared).reduce((s, d) => s + d.amountOwed, 0);
+  const totalCleared = debtors.filter(d => d.isCleared).reduce((s, d) => s + d.amountOwed, 0);
   const fmt = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 
   return (
@@ -86,158 +103,174 @@ export default function DebtorsPage() {
         <p className="text-slate-500 text-sm mt-1">Manage customers with unpaid balances</p>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 gap-4">
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
           <p className="text-slate-500 text-sm">Active Debtors</p>
-          <p className="font-bold text-slate-800 text-2xl mt-1">{activeDebtors.length}</p>
+          <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => !d.isCleared).length}</p>
           <p className="text-sm font-medium mt-1 text-red-600">{fmt(totalActive)}</p>
         </div>
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
-          <p className="text-slate-500 text-sm">Overdue (&gt;30 days)</p>
-          <p className="font-bold text-red-600 text-2xl mt-1">{overdueCount}</p>
-          <p className="text-sm font-medium mt-1 text-slate-400">needs urgent follow-up</p>
-        </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
           <p className="text-slate-500 text-sm">Cleared Debtors</p>
-          <p className="font-bold text-green-600 text-2xl mt-1">{debtors.filter(d => d.isCleared).length}</p>
-          <p className="text-sm font-medium mt-1 text-green-600">{fmt(totalCleared)} recovered</p>
-        </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
-          <p className="text-slate-500 text-sm">Total Outstanding</p>
-          <p className="font-bold text-slate-800 text-2xl mt-1">{fmt(totalActive)}</p>
-          <p className="text-sm font-medium mt-1 text-slate-400">across {activeDebtors.length} customers</p>
+          <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => d.isCleared).length}</p>
+          <p className="text-sm font-medium mt-1 text-green-600">{fmt(totalCleared)}</p>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
-        <div className="flex flex-col sm:flex-row gap-3 mb-5">
+      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+        <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
               placeholder="Search by name or phone..."
-              className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
           </div>
-          <select value={branchFilter} onChange={e => setBranchFilter(e.target.value)}
-            className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+          <select
+            value={branchFilter}
+            onChange={e => setBranchFilter(e.target.value)}
+            className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+          >
             <option value="">All Branches</option>
             {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
           </select>
           <div className="flex gap-2">
             {(['active', 'cleared', 'all'] as const).map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
                   statusFilter === s ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}>{s}</button>
+                }`}
+              >{s}</button>
             ))}
           </div>
         </div>
+      </div>
 
-        {loading ? (
-          <div className="space-y-3">{[...Array(5)].map((_, i) => <div key={i} className="h-24 bg-slate-100 rounded-xl animate-pulse" />)}</div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-12 text-slate-400">
-            <UserCheck className="w-12 h-12 mx-auto mb-3 opacity-40" />
-            <p>No debtors found</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filtered.map(d => {
-              const { label: owing, days } = timeOwing(d.createdAt);
-              const isOverdue = days > 30;
-              return (
-                <div key={d._id}
-                  className={`flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-xl border transition-colors ${
-                    d.isCleared
-                      ? 'bg-slate-50 border-slate-200 opacity-70'
-                      : isOverdue
-                        ? 'bg-red-50 border-red-100'
-                        : 'bg-white border-slate-200'
-                  }`}>
+      {/* Cards */}
+      {loading ? (
+        <div className="space-y-3">
+          {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-slate-100 rounded-xl animate-pulse" />)}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-16 text-slate-400">
+          <UserCheck className="w-12 h-12 mx-auto mb-3 opacity-40" />
+          <p>No debtors found</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(d => {
+            const { label: timeLabel, days } = timeOwing(d.createdAt);
+            const products = parseProducts(d.notes);
+            const isPartPayment = d.paymentMethod === 'part';
 
-                  {/* Avatar + Name */}
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      d.isCleared ? 'bg-green-100' : isOverdue ? 'bg-red-100' : 'bg-amber-100'
-                    }`}>
-                      <User className={`w-5 h-5 ${d.isCleared ? 'text-green-600' : isOverdue ? 'text-red-600' : 'text-amber-600'}`} />
+            return (
+              <div
+                key={d._id}
+                className={`bg-white rounded-xl p-4 shadow-sm border ${d.isCleared ? 'border-green-100 opacity-75' : 'border-slate-100'}`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  {/* Left: avatar + info */}
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      <User className="w-5 h-5 text-amber-600" />
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-800 truncate">{d.name}</p>
-                      <a href={`tel:${d.phone}`}
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-slate-800">{d.name}</span>
+                        {/* Payment type badge */}
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          isPartPayment
+                            ? 'bg-orange-100 text-orange-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}>
+                          {isPartPayment ? 'Part Payment' : 'Unpaid'}
+                        </span>
+                        {/* Status badge */}
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          d.isCleared ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {d.isCleared ? 'Cleared' : 'Active'}
+                        </span>
+                      </div>
+
+                      {/* Phone */}
+                      <a
+                        href={`tel:${d.phone}`}
+                        className="flex items-center gap-1 text-sm text-blue-600 hover:underline mt-0.5"
+                      >
                         <Phone className="w-3 h-3" />{d.phone}
                       </a>
-                      {d.notes && (
-                        <p className="text-xs text-slate-400 truncate mt-0.5">{d.notes}</p>
+
+                      {/* Products */}
+                      {products && (
+                        <p className="text-xs text-slate-500 mt-1 truncate max-w-xs">
+                          <span className="font-medium text-slate-600">Items:</span> {products}
+                        </p>
+                      )}
+
+                      {/* Recorded by */}
+                      {d.createdByName && (
+                        <p className="text-xs text-slate-400 mt-0.5">Recorded by {d.createdByName}</p>
+                      )}
+                      {d.isCleared && d.clearedByName && (
+                        <p className="text-xs text-green-600 mt-0.5">Cleared by {d.clearedByName}</p>
                       )}
                     </div>
                   </div>
 
-                  {/* Amount */}
-                  <div className="text-right sm:text-center min-w-[100px]">
-                    <p className={`text-lg font-bold ${d.isCleared ? 'text-slate-400 line-through' : 'text-red-600'}`}>
-                      {fmt(d.amountOwed)}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {branches.find(b => b._id === d.branchId)?.name || 'Unknown branch'}
-                    </p>
-                  </div>
-
-                  {/* Time Owing */}
-                  {!d.isCleared ? (
-                    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold ${urgencyStyle(days)}`}>
-                      {isOverdue
-                        ? <AlertTriangle className="w-3.5 h-3.5" />
-                        : <Clock className="w-3.5 h-3.5" />}
-                      Owing {owing}
+                  {/* Right: amount + time + action */}
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <div className="text-right">
+                      <p className="font-bold text-red-600 text-lg">{fmt(d.amountOwed)}</p>
+                      {isPartPayment && d.totalSaleAmount != null && d.totalSaleAmount > 0 && (
+                        <p className="text-xs text-slate-400">of {fmt(d.totalSaleAmount)} total</p>
+                      )}
                     </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-100 border border-green-200 text-xs font-semibold text-green-700">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      Cleared{d.clearedAt ? ` ${timeOwing(d.clearedAt).label} ago` : ''}
-                    </div>
-                  )}
 
-                  {/* Recorded by + Date */}
-                  <div className="text-xs text-slate-400 min-w-[90px] text-right hidden sm:block">
-                    <p>by {d.createdByName}</p>
-                    <p>{new Date(d.createdAt).toLocaleDateString('en-NG')}</p>
-                  </div>
+                    {/* Time owing */}
+                    {!d.isCleared && (
+                      <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${urgencyStyle(days)}`}>
+                        <Clock className="w-3 h-3" />{timeLabel}
+                      </span>
+                    )}
 
-                  {/* Action */}
-                  <div className="flex-shrink-0">
+                    {/* Action button */}
                     {d.isCleared ? (
-                      <button onClick={() => reactivateDebtor(d)} disabled={clearing === d._id}
-                        className="flex items-center gap-1.5 text-xs px-3 py-2 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors font-medium border border-amber-200">
+                      <button
+                        onClick={() => reactivateDebtor(d)}
+                        disabled={clearing === d._id}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors"
+                      >
                         {clearing === d._id
                           ? <span className="w-3 h-3 border border-amber-600 border-t-transparent rounded-full animate-spin" />
-                          : <RotateCcw className="w-3.5 h-3.5" />}
+                          : <XCircle className="w-3.5 h-3.5" />}
                         Reactivate
                       </button>
                     ) : (
-                      <button onClick={() => clearDebtor(d)} disabled={clearing === d._id}
-                        className="flex items-center gap-1.5 text-xs px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors font-medium disabled:opacity-50">
+                      <button
+                        onClick={() => clearDebtor(d)}
+                        disabled={clearing === d._id}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                      >
                         {clearing === d._id
-                          ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          ? <span className="w-3 h-3 border border-green-600 border-t-transparent rounded-full animate-spin" />
                           : <CheckCircle className="w-3.5 h-3.5" />}
-                        Mark Cleared
+                        Clear Debt
                       </button>
                     )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-
-        {filtered.length > 0 && (
-          <p className="text-xs text-slate-400 text-right mt-3">
-            Showing {filtered.length} of {debtors.length} debtors
-          </p>
-        )}
-      </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

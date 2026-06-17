@@ -36,22 +36,26 @@ const toReport = (r: DailyReportRow & { submitted_by_name?: string | null; revie
   updatedAt:         r.updated_at,
 });
 
-const toDebtor = (d: DebtorRow & { created_by_name?: string | null; cleared_by_name?: string | null }) => ({
-  id:            d.id,
-  branchId:      d.branch_id,
-  name:          d.name,
-  phone:         d.phone,
-  amountOwed:    num(d.amount_owed),
-  createdBy:     d.created_by,
-  createdByName: d.created_by_name  ?? null,
-  saleId:        d.sale_id,
-  isCleared:     d.is_cleared,
-  clearedBy:     d.cleared_by,
-  clearedByName: d.cleared_by_name  ?? null,
-  clearedAt:     d.cleared_at,
-  notes:         d.notes,
-  createdAt:     d.created_at,
-  updatedAt:     d.updated_at,
+const toDebtor = (d: DebtorRow & { created_by_name?: string | null; cleared_by_name?: string | null; sale_payment_method?: string | null; sale_total_amount?: string | null; sale_items?: any }) => ({
+  id:              d.id,
+  _id:             d.id,
+  branchId:        d.branch_id,
+  name:            d.name,
+  phone:           d.phone,
+  amountOwed:      num(d.amount_owed),
+  createdBy:       d.created_by,
+  createdByName:   d.created_by_name  ?? null,
+  saleId:          d.sale_id,
+  isCleared:       d.is_cleared,
+  clearedBy:       d.cleared_by,
+  clearedByName:   d.cleared_by_name  ?? null,
+  clearedAt:       d.cleared_at,
+  notes:           d.notes,
+  createdAt:       d.created_at,
+  updatedAt:       d.updated_at,
+  paymentMethod:   d.sale_payment_method ?? null,
+  totalSaleAmount: num(d.sale_total_amount),
+  saleItems:       Array.isArray(d.sale_items) ? d.sale_items : [],
 });
 
 const toExpense = (e: ExpenseRow & { recorded_by_name?: string | null }) => ({
@@ -196,14 +200,24 @@ router.get('/debtors', async (req: Request, res: Response) => {
       req.user?.role !== 'admin' && req.user?.branchId ? req.user.branchId : (branchId ?? null);
     const clearedFilter = isCleared === 'true' ? true : isCleared === 'false' ? false : null;
 
-    const debtors = await sql<(DebtorRow & { created_by_name: string; cleared_by_name: string | null })[]>`
+    const debtors = await sql<(DebtorRow & {
+      created_by_name: string;
+      cleared_by_name: string | null;
+      sale_payment_method: string | null;
+      sale_total_amount: string | null;
+      sale_items: any;
+    })[]>`
       SELECT
         d.*,
-        cu.full_name AS created_by_name,
-        cl.full_name AS cleared_by_name
+        cu.full_name          AS created_by_name,
+        cl.full_name          AS cleared_by_name,
+        s.payment_method      AS sale_payment_method,
+        s.total_amount        AS sale_total_amount,
+        s.items               AS sale_items
       FROM debtors d
       JOIN   users cu ON cu.id = d.created_by
       LEFT JOIN users cl ON cl.id = d.cleared_by
+      LEFT JOIN sales s  ON s.id  = d.sale_id
       WHERE
         (${effectiveBranchId}::uuid IS NULL OR d.branch_id = ${effectiveBranchId}::uuid)
         AND (${clearedFilter} IS NULL OR d.is_cleared = ${clearedFilter})
