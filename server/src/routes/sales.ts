@@ -9,9 +9,6 @@ import { sendResponse, sendError } from '../utils/apiResponse.js';
 const router = Router();
 router.use(authMiddleware);
 
-// Map DB row → API response.
-// staff_name is JOINed from users; product names can be JOINed from products
-// on the client side using the product_id already present in each item.
 const toSale = (s: SaleRow & { staff_name?: string }) => ({
   id:            s.id,
   branchId:      s.branch_id,
@@ -31,7 +28,6 @@ const toSale = (s: SaleRow & { staff_name?: string }) => ({
 });
 
 // ── GET /api/sales ────────────────────────────────────────────────────────────
-// ?branchId  ?startDate  ?endDate  ?paymentMethod  ?limit  ?page  ?ids
 router.get('/', async (req: Request, res: Response) => {
   try {
     const {
@@ -39,7 +35,6 @@ router.get('/', async (req: Request, res: Response) => {
       limit = '100', page = '1', ids,
     } = req.query as Record<string, string>;
 
-    // ids shortcut — fetch exact set for report view
     if (ids) {
       const idList = ids.split(',').map(id => id.trim()).filter(Boolean);
       if (idList.length === 0)
@@ -57,7 +52,6 @@ router.get('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Non-admin staff restricted to their own branch
     const effectiveBranchId =
       req.user?.role !== 'admin' && req.user?.branchId
         ? req.user.branchId
@@ -66,14 +60,17 @@ router.get('/', async (req: Request, res: Response) => {
     const lim  = parseInt(limit);
     const skip = (parseInt(page) - 1) * lim;
 
+    // Normalise 'part' filter → 'unpaid' since part is stored as unpaid in DB
+    const dbPaymentMethod = paymentMethod === 'part' ? 'unpaid' : (paymentMethod ?? null);
+
     const sales = await sql<(SaleRow & { staff_name: string })[]>`
       SELECT s.*, u.full_name AS staff_name
       FROM   sales s
       JOIN   users u ON u.id = s.staff_id
       WHERE
         (${effectiveBranchId}::uuid IS NULL OR s.branch_id = ${effectiveBranchId}::uuid)
-        AND (${paymentMethod ?? null}::payment_method IS NULL
-             OR s.payment_method = ${paymentMethod ?? null}::payment_method)
+        AND (${dbPaymentMethod}::payment_method IS NULL
+             OR s.payment_method = ${dbPaymentMethod}::payment_method)
         AND (${startDate ?? null}::timestamptz IS NULL
              OR s.sale_date >= ${startDate ?? null}::timestamptz)
         AND (${endDate ?? null}::timestamptz IS NULL
@@ -87,8 +84,8 @@ router.get('/', async (req: Request, res: Response) => {
       SELECT COUNT(*)::text AS count FROM sales s
       WHERE
         (${effectiveBranchId}::uuid IS NULL OR s.branch_id = ${effectiveBranchId}::uuid)
-        AND (${paymentMethod ?? null}::payment_method IS NULL
-             OR s.payment_method = ${paymentMethod ?? null}::payment_method)
+        AND (${dbPaymentMethod}::payment_method IS NULL
+             OR s.payment_method = ${dbPaymentMethod}::payment_method)
         AND (${startDate ?? null}::timestamptz IS NULL
              OR s.sale_date >= ${startDate ?? null}::timestamptz)
         AND (${endDate ?? null}::timestamptz IS NULL
@@ -143,7 +140,6 @@ router.post(
       }));
       const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
 
-      // Resolve paid/owed amounts based on payment method
       const paid    = paymentMethod === 'unpaid' ? 0
                     : paymentMethod === 'part'   ? Number(amountPaid ?? 0)
                     : totalAmount;
@@ -151,25 +147,50 @@ router.post(
 
       const staffName = (req.user as any)?.fullName ?? (req.user as any)?.email ?? 'Unknown';
 
+      // 'part' is stored as 'unpaid' in DB since the enum only has cash/pos/unpaid.
+      // Balance tracking is handled via the debtors table.
+      const dbPaymentMethod = paymentMethod === 'part' ? 'unpaid' : paymentMethod;
+
       const [sale] = await sql<SaleRow[]>`
         INSERT INTO sales
           (branch_id, staff_id, staff_name, customer_name, customer_phone,
-           payment_method, total_amount, amount_paid, balance_due, notes, items, sale_date)
+           payment_method, total_amount, notes, items, sale_date)
         VALUES (
           ${branchId}, ${req.userId!}, ${staffName},
           ${customerName ?? null}, ${customerPhone ?? null},
-          ${paymentMethod}::payment_method, ${totalAmount},
-          ${paid}, ${balance},
+          ${dbPaymentMethod}::payment_method, ${totalAmount},
           ${notes ?? null}, ${JSON.stringify(processedItems)},
           ${saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()}
         )
         RETURNING *
       `;
-      return sendResponse(res, 201, 'Sale recorded', toSale(sale));
+
+      // Auto-create debtor when there is an outstanding balance
+      if (balance > 0 && customerName) {
+        const itemsSummary = processedItems
+          .map((i: any) => `${i.product_id} x${i.quantity}`)
+          .join(', ');
+        await sql`
+          INSERT INTO debtors
+            (name, phone, amount_owed, branch_id, created_by, sale_id, notes)
+          VALUES (
+            ${customerName}, ${customerPhone ?? null}, ${balance},
+            ${branchId}, ${req.userId!}, ${sale.id},
+            ${notes ? `Sale: ${itemsSummary} | ${notes}` : `Sale: ${itemsSummary}`}
+          )
+        `;
+      }
+
+      return sendResponse(res, 201, 'Sale recorded', {
+        ...toSale(sale),
+        // Return computed values so the frontend knows what was paid/owed
+        paymentMethod,   // return the original ('part'), not the DB value
+        amountPaid: paid,
+        balanceDue: balance,
+      });
     } catch (err) { return sendError(res, 500, 'Server error', err); }
   }
 );
-
 
 // ── DELETE /api/sales/:id ─────────────────────────────────────────────────────
 router.delete('/:id', adminOnly, async (req: Request, res: Response) => {

@@ -25,3 +25,5 @@ ADD COLUMN IF NOT EXISTS current_price numeric(12,2) DEFAULT 0;
 UPDATE products 
 SET current_price = unit_price, previous_price = unit_price 
 WHERE current_price = 0 OR current_price IS NULL;
+
+
