@@ -190,6 +190,7 @@ router.patch('/daily/:id/review', adminOnly, async (req: Request, res: Response)
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
+
 // ── DEBTORS ───────────────────────────────────────────────────────────────────
 
 // GET /api/reports/debtors
@@ -200,6 +201,14 @@ router.get('/debtors', async (req: Request, res: Response) => {
       req.user?.role !== 'admin' && req.user?.branchId ? req.user.branchId : (branchId ?? null);
     const clearedFilter = isCleared === 'true' ? true : isCleared === 'false' ? false : null;
 
+    // Build optional WHERE fragments to avoid untyped-null parameter issues
+    const branchCond  = effectiveBranchId !== null
+      ? sql`AND d.branch_id = ${effectiveBranchId}::uuid`
+      : sql``;
+    const clearedCond = clearedFilter !== null
+      ? sql`AND d.is_cleared = ${clearedFilter}`
+      : sql``;
+
     const debtors = await sql<(DebtorRow & {
       created_by_name: string;
       cleared_by_name: string | null;
@@ -209,18 +218,18 @@ router.get('/debtors', async (req: Request, res: Response) => {
     })[]>`
       SELECT
         d.*,
-        cu.full_name          AS created_by_name,
-        cl.full_name          AS cleared_by_name,
-        s.payment_method      AS sale_payment_method,
-        s.total_amount        AS sale_total_amount,
-        s.items               AS sale_items
+        cu.full_name     AS created_by_name,
+        cl.full_name     AS cleared_by_name,
+        s.payment_method AS sale_payment_method,
+        s.total_amount   AS sale_total_amount,
+        s.items          AS sale_items
       FROM debtors d
-      JOIN   users cu ON cu.id = d.created_by
+      JOIN      users cu ON cu.id = d.created_by
       LEFT JOIN users cl ON cl.id = d.cleared_by
       LEFT JOIN sales s  ON s.id  = d.sale_id
-      WHERE
-        (${effectiveBranchId}::uuid IS NULL OR d.branch_id = ${effectiveBranchId}::uuid)
-        AND (${clearedFilter} IS NULL OR d.is_cleared = ${clearedFilter})
+      WHERE TRUE
+        ${branchCond}
+        ${clearedCond}
       ORDER BY d.created_at DESC
     `;
     return sendResponse(res, 200, 'Debtors fetched', debtors.map(toDebtor));
@@ -228,25 +237,6 @@ router.get('/debtors', async (req: Request, res: Response) => {
 });
 
 // POST /api/reports/debtors
-// REPLACE THIS:
-router.post('/debtors', async (req: Request, res: Response) => {
-  try {
-    const { name, phone, amountOwed, branchId, saleId, notes } = req.body;
-    const createdByName = (req.user as any)?.fullName ?? 'Unknown';
-    const [debtor] = await sql<DebtorRow[]>`
-      INSERT INTO debtors (name, phone, amount_owed, branch_id, created_by, created_by_name, sale_id, notes)
-      VALUES (
-        ${name}, ${phone}, ${amountOwed}, ${branchId},
-        ${req.userId!}, ${createdByName},
-        ${saleId ?? null}, ${notes ?? null}
-      )
-      RETURNING *
-    `;
-    return sendResponse(res, 201, 'Debtor recorded', toDebtor(debtor));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
-});
-
-// WITH THIS:
 router.post('/debtors', async (req: Request, res: Response) => {
   try {
     const { name, phone, amountOwed, branchId, saleId, notes } = req.body;

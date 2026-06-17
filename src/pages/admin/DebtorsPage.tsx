@@ -45,11 +45,17 @@ export default function DebtorsPage() {
 
   async function fetchDebtors() {
     setLoading(true);
-    const filter: Record<string, any> = {};
-    if (branchFilter) filter.branchId = branchFilter;
-    const d = await find(Collections.DEBTORS, filter);
-    setDebtors(d as Debtor[]);
-    setLoading(false);
+    try {
+      const filter: Record<string, any> = {};
+      if (branchFilter) filter.branchId = branchFilter;
+      const d = await find(Collections.DEBTORS, filter);
+      setDebtors(d as Debtor[]);
+    } catch (err) {
+      console.error('Failed to load debtors:', err);
+      setDebtors([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function clearDebtor(d: Debtor) {
