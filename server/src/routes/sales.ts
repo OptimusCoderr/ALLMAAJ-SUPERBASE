@@ -3,7 +3,7 @@ import { body, validationResult } from 'express-validator';
 import sql from '../db/client.js';
 import type { SaleRow, SaleItemJson } from '../db/types.js';
 import { num } from '../db/types.js';
-import { authMiddleware, adminOnly } from '../middleware/auth.js';
+import { authMiddleware } from '../middleware/auth.js';
 import { sendResponse, sendError } from '../utils/apiResponse.js';
 
 const router = Router();
@@ -11,6 +11,7 @@ router.use(authMiddleware);
 
 const toSale = (s: SaleRow & { staff_name?: string }) => ({
   id:            s.id,
+  _id:           s.id,
   branchId:      s.branch_id,
   staffId:       s.staff_id,
   staffName:     s.staff_name ?? null,
@@ -21,7 +22,7 @@ const toSale = (s: SaleRow & { staff_name?: string }) => ({
   amountPaid:    num((s as any).amount_paid ?? s.total_amount),
   balanceDue:    num((s as any).balance_due ?? 0),
   notes:         s.notes,
-  items:         s.items,
+  items:         typeof s.items === 'string' ? JSON.parse(s.items) : (s.items ?? []),
   saleDate:      s.sale_date,
   createdAt:     s.created_at,
   reportId:      s.report_id,
@@ -30,71 +31,47 @@ const toSale = (s: SaleRow & { staff_name?: string }) => ({
 // ── GET /api/sales ────────────────────────────────────────────────────────────
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const {
-      branchId, startDate, endDate, paymentMethod,
-      limit = '100', page = '1', ids,
-    } = req.query as Record<string, string>;
+    const { branchId, startDate, endDate, paymentMethod, limit = '100', page = '1', ids } = req.query as Record<string, string>;
 
     if (ids) {
       const idList = ids.split(',').map(id => id.trim()).filter(Boolean);
       if (idList.length === 0)
         return sendResponse(res, 200, 'Sales fetched', { sales: [], total: 0, page: 1, limit: 0 });
-
       const sales = await sql<(SaleRow & { staff_name: string })[]>`
-        SELECT s.*, u.full_name AS staff_name
-        FROM sales s
+        SELECT s.*, u.full_name AS staff_name FROM sales s
         JOIN users u ON u.id = s.staff_id
         WHERE s.id = ANY(${idList}::uuid[])
         ORDER BY s.sale_date DESC
       `;
-      return sendResponse(res, 200, 'Sales fetched', {
-        sales: sales.map(toSale), total: sales.length, page: 1, limit: sales.length,
-      });
+      return sendResponse(res, 200, 'Sales fetched', { sales: sales.map(toSale), total: sales.length, page: 1, limit: sales.length });
     }
 
-    const effectiveBranchId =
-      req.user?.role !== 'admin' && req.user?.branchId
-        ? req.user.branchId
-        : (branchId ?? null);
-
+    const effectiveBranchId = req.user?.role !== 'admin' && req.user?.branchId ? req.user.branchId : (branchId ?? null);
     const lim  = parseInt(limit);
     const skip = (parseInt(page) - 1) * lim;
 
-    // Normalise 'part' filter → 'unpaid' since part is stored as unpaid in DB
-    const dbPaymentMethod = paymentMethod === 'part' ? 'unpaid' : (paymentMethod ?? null);
-
     const sales = await sql<(SaleRow & { staff_name: string })[]>`
-      SELECT s.*, u.full_name AS staff_name
-      FROM   sales s
-      JOIN   users u ON u.id = s.staff_id
+      SELECT s.*, u.full_name AS staff_name FROM sales s
+      JOIN users u ON u.id = s.staff_id
       WHERE
         (${effectiveBranchId}::uuid IS NULL OR s.branch_id = ${effectiveBranchId}::uuid)
-        AND (${dbPaymentMethod}::payment_method IS NULL
-             OR s.payment_method = ${dbPaymentMethod}::payment_method)
-        AND (${startDate ?? null}::timestamptz IS NULL
-             OR s.sale_date >= ${startDate ?? null}::timestamptz)
-        AND (${endDate ?? null}::timestamptz IS NULL
-             OR s.sale_date <= ${endDate ?? null}::timestamptz)
+        AND (${paymentMethod ?? null}::payment_method IS NULL OR s.payment_method = ${paymentMethod ?? null}::payment_method)
+        AND (${startDate ?? null}::timestamptz IS NULL OR s.sale_date >= ${startDate ?? null}::timestamptz)
+        AND (${endDate ?? null}::timestamptz IS NULL OR s.sale_date <= ${endDate ?? null}::timestamptz)
       ORDER BY s.sale_date DESC
-      LIMIT  ${lim}
-      OFFSET ${skip}
+      LIMIT ${lim} OFFSET ${skip}
     `;
 
     const [{ count }] = await sql<[{ count: string }]>`
       SELECT COUNT(*)::text AS count FROM sales s
       WHERE
         (${effectiveBranchId}::uuid IS NULL OR s.branch_id = ${effectiveBranchId}::uuid)
-        AND (${dbPaymentMethod}::payment_method IS NULL
-             OR s.payment_method = ${dbPaymentMethod}::payment_method)
-        AND (${startDate ?? null}::timestamptz IS NULL
-             OR s.sale_date >= ${startDate ?? null}::timestamptz)
-        AND (${endDate ?? null}::timestamptz IS NULL
-             OR s.sale_date <= ${endDate ?? null}::timestamptz)
+        AND (${paymentMethod ?? null}::payment_method IS NULL OR s.payment_method = ${paymentMethod ?? null}::payment_method)
+        AND (${startDate ?? null}::timestamptz IS NULL OR s.sale_date >= ${startDate ?? null}::timestamptz)
+        AND (${endDate ?? null}::timestamptz IS NULL OR s.sale_date <= ${endDate ?? null}::timestamptz)
     `;
 
-    return sendResponse(res, 200, 'Sales fetched', {
-      sales: sales.map(toSale), total: parseInt(count), page: parseInt(page), limit: lim,
-    });
+    return sendResponse(res, 200, 'Sales fetched', { sales: sales.map(toSale), total: parseInt(count), page: parseInt(page), limit: lim });
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
@@ -102,10 +79,9 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const [sale] = await sql<(SaleRow & { staff_name: string })[]>`
-      SELECT s.*, u.full_name AS staff_name
-      FROM   sales s
-      JOIN   users u ON u.id = s.staff_id
-      WHERE  s.id = ${req.params.id}
+      SELECT s.*, u.full_name AS staff_name FROM sales s
+      JOIN users u ON u.id = s.staff_id
+      WHERE s.id = ${req.params.id}
     `;
     if (!sale) return sendError(res, 404, 'Sale not found');
     return sendResponse(res, 200, 'Sale fetched', toSale(sale));
@@ -113,89 +89,159 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // ── POST /api/sales ───────────────────────────────────────────────────────────
-router.post(
-  '/',
-  [
-    body('branchId').notEmpty(),
-    body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
-    body('items').isArray({ min: 1 }),
-    body('items.*.productId').notEmpty(),
-    body('items.*.quantity').isFloat({ min: 0.01 }),
-    body('items.*.unitPrice').isFloat({ min: 0 }),
-  ],
-  async (req: Request, res: Response) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
-    try {
-      const {
-        branchId, paymentMethod, customerName, customerPhone,
-        notes, saleDate, items, amountPaid, balanceDue,
-      } = req.body;
-
-      const processedItems: SaleItemJson[] = items.map((item: any) => ({
-        product_id: item.productId,
-        quantity:   item.quantity,
-        unit_price: item.unitPrice,
-        subtotal:   item.quantity * item.unitPrice,
-      }));
-      const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
-
-      const paid    = paymentMethod === 'unpaid' ? 0
-                    : paymentMethod === 'part'   ? Number(amountPaid ?? 0)
-                    : totalAmount;
-      const balance = totalAmount - paid;
-
-      const staffName = (req.user as any)?.fullName ?? (req.user as any)?.email ?? 'Unknown';
-
-      // 'part' is stored as 'unpaid' in DB since the enum only has cash/pos/unpaid.
-      // Balance tracking is handled via the debtors table.
-      const dbPaymentMethod = paymentMethod === 'part' ? 'unpaid' : paymentMethod;
-
-      const [sale] = await sql<SaleRow[]>`
-        INSERT INTO sales
-          (branch_id, staff_id, staff_name, customer_name, customer_phone,
-           payment_method, total_amount, notes, items, sale_date)
-        VALUES (
-          ${branchId}, ${req.userId!}, ${staffName},
-          ${customerName ?? null}, ${customerPhone ?? null},
-          ${dbPaymentMethod}::payment_method, ${totalAmount},
-          ${notes ?? null}, ${JSON.stringify(processedItems)},
-          ${saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()}
-        )
-        RETURNING *
-      `;
-
-      // Auto-create debtor when there is an outstanding balance
-      if (balance > 0 && customerName) {
-        const itemsSummary = processedItems
-          .map((i: any) => `${i.product_id} x${i.quantity}`)
-          .join(', ');
-        await sql`
-          INSERT INTO debtors
-            (name, phone, amount_owed, branch_id, created_by, sale_id, notes)
-          VALUES (
-            ${customerName}, ${customerPhone ?? null}, ${balance},
-            ${branchId}, ${req.userId!}, ${sale.id},
-            ${notes ? `Sale: ${itemsSummary} | ${notes}` : `Sale: ${itemsSummary}`}
-          )
-        `;
-      }
-
-      return sendResponse(res, 201, 'Sale recorded', {
-        ...toSale(sale),
-        // Return computed values so the frontend knows what was paid/owed
-        paymentMethod,   // return the original ('part'), not the DB value
-        amountPaid: paid,
-        balanceDue: balance,
-      });
-    } catch (err) { return sendError(res, 500, 'Server error', err); }
-  }
-);
-
-// ── DELETE /api/sales/:id ─────────────────────────────────────────────────────
-router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
+router.post('/', [
+  body('branchId').notEmpty(),
+  body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
+  body('items').isArray({ min: 1 }),
+  body('items.*.productId').notEmpty(),
+  body('items.*.quantity').isFloat({ min: 0.01 }),
+  body('items.*.unitPrice').isFloat({ min: 0 }),
+], async (req: Request, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
   try {
-    await sql`DELETE FROM sales WHERE id = ${req.params.id}`;
+    const { branchId, paymentMethod, customerName, customerPhone, notes, saleDate, items, amountPaid } = req.body;
+
+    const processedItems: SaleItemJson[] = items.map((item: any) => ({
+      product_id: item.productId,
+      quantity:   item.quantity,
+      unit_price: item.unitPrice,
+      subtotal:   item.quantity * item.unitPrice,
+    }));
+    const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
+    const paid    = paymentMethod === 'unpaid' ? 0 : paymentMethod === 'part' ? Number(amountPaid ?? 0) : totalAmount;
+    const balance = totalAmount - paid;
+    const staffName = (req.user as any)?.fullName ?? (req.user as any)?.email ?? 'Unknown';
+
+    const [sale] = await sql<SaleRow[]>`
+      INSERT INTO sales
+        (branch_id, staff_id, staff_name, customer_name, customer_phone,
+         payment_method, total_amount, amount_paid, balance_due, notes, items, sale_date)
+      VALUES (
+        ${branchId}, ${req.userId!}, ${staffName},
+        ${customerName ?? null}, ${customerPhone ?? null},
+        ${paymentMethod}::payment_method, ${totalAmount}, ${paid}, ${balance},
+        ${notes ?? null}, ${JSON.stringify(processedItems)},
+        ${saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()}
+      )
+      RETURNING *
+    `;
+    return sendResponse(res, 201, 'Sale recorded', toSale(sale));
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+// ── PUT /api/sales/:id  (edit — same-day only) ────────────────────────────────
+router.put('/:id', [
+  body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
+  body('items').isArray({ min: 1 }),
+  body('items.*.productId').notEmpty(),
+  body('items.*.quantity').isFloat({ min: 0.01 }),
+  body('items.*.unitPrice').isFloat({ min: 0 }),
+], async (req: Request, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
+  try {
+    const saleId  = req.params.id;
+    const isAdmin = req.user?.role === 'admin';
+
+    const [existing] = await sql<SaleRow[]>`SELECT * FROM sales WHERE id = ${saleId}`;
+    if (!existing) return sendError(res, 404, 'Sale not found');
+
+    // Day lock — check using Africa/Lagos timezone
+    const [dateCheck] = await sql<[{ is_today: boolean }]>`
+      SELECT (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
+             = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today
+    `;
+    if (!dateCheck.is_today)
+      return sendError(res, 403, 'Sales can only be edited on the day they were made. This sale is now locked.');
+
+    if (!isAdmin && existing.staff_id !== req.userId)
+      return sendError(res, 403, 'You can only edit your own sales.');
+
+    const { paymentMethod, customerName, customerPhone, notes, items, amountPaid } = req.body;
+
+    const processedItems: SaleItemJson[] = items.map((item: any) => ({
+      product_id: item.productId,
+      quantity:   item.quantity,
+      unit_price: item.unitPrice,
+      subtotal:   item.quantity * item.unitPrice,
+    }));
+    const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
+    const paid        = paymentMethod === 'unpaid' ? 0 : paymentMethod === 'part' ? Number(amountPaid ?? 0) : totalAmount;
+    const balance     = totalAmount - paid;
+    const oldBalance  = num((existing as any).balance_due ?? 0);
+
+    await sql`
+      UPDATE sales SET
+        customer_name  = ${customerName ?? null},
+        customer_phone = ${customerPhone ?? null},
+        payment_method = ${paymentMethod}::payment_method,
+        total_amount   = ${totalAmount},
+        amount_paid    = ${paid},
+        balance_due    = ${balance},
+        notes          = ${notes ?? null},
+        items          = ${JSON.stringify(processedItems)},
+        updated_at     = NOW()
+      WHERE id = ${saleId}
+    `;
+
+    // Sync linked debtor when balance changes
+    if (balance !== oldBalance) {
+      const linked = await sql`SELECT id FROM debtors WHERE sale_id = ${saleId} AND is_cleared = false LIMIT 1`;
+      if (linked.length > 0) {
+        if (balance <= 0) {
+          await sql`UPDATE debtors SET amount_owed = 0, is_cleared = true, updated_at = NOW() WHERE sale_id = ${saleId}`;
+        } else {
+          await sql`UPDATE debtors SET amount_owed = ${balance}, updated_at = NOW() WHERE sale_id = ${saleId} AND is_cleared = false`;
+        }
+      } else if (customerPhone) {
+        if (balance <= 0) {
+          await sql`UPDATE debtors SET amount_owed = 0, is_cleared = true, updated_at = NOW()
+                    WHERE phone = ${customerPhone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
+        } else {
+          await sql`UPDATE debtors SET amount_owed = ${balance}, updated_at = NOW()
+                    WHERE phone = ${customerPhone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
+        }
+      }
+    }
+
+    const [withStaff] = await sql<(SaleRow & { staff_name: string })[]>`
+      SELECT s.*, u.full_name AS staff_name FROM sales s
+      JOIN users u ON u.id = s.staff_id WHERE s.id = ${saleId}
+    `;
+    return sendResponse(res, 200, 'Sale updated', toSale(withStaff));
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+// ── DELETE /api/sales/:id  (same-day only — staff own / admin any) ─────────────
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const saleId  = req.params.id;
+    const isAdmin = req.user?.role === 'admin';
+
+    const [existing] = await sql<SaleRow[]>`SELECT * FROM sales WHERE id = ${saleId}`;
+    if (!existing) return sendError(res, 404, 'Sale not found');
+
+    const [dateCheck] = await sql<[{ is_today: boolean }]>`
+      SELECT (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
+             = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today
+    `;
+    if (!dateCheck.is_today)
+      return sendError(res, 403, 'Sales can only be deleted on the day they were made. This sale is now locked.');
+
+    if (!isAdmin && existing.staff_id !== req.userId)
+      return sendError(res, 403, 'You can only delete your own sales.');
+
+    // Clear linked debtors before deleting the sale
+    const linked = await sql`SELECT id FROM debtors WHERE sale_id = ${saleId} LIMIT 1`;
+    if (linked.length > 0) {
+      await sql`UPDATE debtors SET is_cleared = true, amount_owed = 0, updated_at = NOW() WHERE sale_id = ${saleId}`;
+    } else if ((existing as any).customer_phone) {
+      await sql`UPDATE debtors SET is_cleared = true, amount_owed = 0, updated_at = NOW()
+                WHERE phone = ${(existing as any).customer_phone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
+    }
+
+    await sql`DELETE FROM sales WHERE id = ${saleId}`;
     return sendResponse(res, 200, 'Sale deleted');
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
