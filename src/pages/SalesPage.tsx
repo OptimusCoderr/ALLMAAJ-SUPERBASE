@@ -44,12 +44,11 @@ const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/
 
 function getToken(): string {
   return (
-    sessionStorage.getItem('authToken') ||
-    localStorage.getItem('authToken') ||
-    (window as any).__authToken ||
+    sessionStorage.getItem('bt_session') ||
+    localStorage.getItem('bt_session') ||
     ''
   );
-}
+  }
 
 export default function SalesPage() {
   const { user } = useAuth();
@@ -140,18 +139,31 @@ export default function SalesPage() {
   }
 
   function addToCart() {
-    const product = products.find(p => p._id === selectedProduct);
-    if (!product) return;
-    const idx = cart.findIndex(c => c.product._id === selectedProduct);
-    if (idx >= 0) {
-      setCart(cart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + qty } : c));
-    } else {
-      setCart([...cart, { product, quantity: qty, unitPrice: price || product.unitPrice }]);
-    }
-    setSelectedProduct('');
-    setQty(1);
-    setPrice(0);
+  const product = products.find(p => p._id === selectedProduct);
+  if (!product) return;
+
+  const alreadyInCart = cart.find(c => c.product._id === selectedProduct)?.quantity ?? 0;
+  const available = getStock(selectedProduct);
+
+  if (alreadyInCart + qty > available) {
+    setError(`Not enough stock for "${product.name}". Available: ${available - alreadyInCart}`);
+    return;
   }
+  if (available === 0) {
+    setError(`"${product.name}" is out of stock.`);
+    return;
+  }
+
+  const idx = cart.findIndex(c => c.product._id === selectedProduct);
+  if (idx >= 0) {
+    setCart(cart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + qty } : c));
+  } else {
+    setCart([...cart, { product, quantity: qty, unitPrice: price || product.unitPrice }]);
+  }
+  setSelectedProduct('');
+  setQty(1);
+  setPrice(0);
+}
 
   function updateItem(idx: number, field: 'quantity' | 'unitPrice', value: number) {
     setCart(cart.map((c, i) => i === idx ? { ...c, [field]: value } : c));
@@ -532,7 +544,14 @@ export default function SalesPage() {
                       if (p) setPrice(p.unitPrice);
                     }} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
                       <option value="">Select...</option>
-                      {products.map(p => <option key={p._id} value={p._id}>{p.name} ({getStock(p._id)})</option>)}
+                      {products.map(p => {
+                        const stock = getStock(p._id);
+                        return (
+                          <option key={p._id} value={p._id} disabled={stock === 0}>
+                            {p.name} — {stock === 0 ? 'OUT OF STOCK' : `${stock} in stock`}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                   <input type="number" min="0.01" step="0.01" value={qty}
@@ -898,7 +917,14 @@ export default function SalesPage() {
                       if (p) setEditPrice(p.unitPrice);
                     }} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
                       <option value="">Select...</option>
-                      {products.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
+                      {products.map(p => {
+                        const stock = getStock(p._id);
+                        return (
+                          <option key={p._id} value={p._id} disabled={stock === 0}>
+                            {p.name} — {stock === 0 ? 'OUT OF STOCK' : `${stock} in stock`}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                   <input type="number" min="0.01" step="0.01" value={editQty}

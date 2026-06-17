@@ -9,6 +9,14 @@ import { sendResponse, sendError } from '../utils/apiResponse.js';
 const router = Router();
 router.use(authMiddleware);
 
+const parseItems = (items: any): SaleItemJson[] => {
+  if (Array.isArray(items)) return items;
+  if (typeof items === 'string') {
+    try { return JSON.parse(items); } catch { return []; }
+  }
+  return [];
+};
+
 const toSale = (s: SaleRow & { staff_name?: string }) => ({
   id:            s.id,
   _id:           s.id,
@@ -89,129 +97,219 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // ── POST /api/sales ───────────────────────────────────────────────────────────
-router.post('/', [
-  body('branchId').notEmpty(),
-  body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
-  body('items').isArray({ min: 1 }),
-  body('items.*.productId').notEmpty(),
-  body('items.*.quantity').isFloat({ min: 0.01 }),
-  body('items.*.unitPrice').isFloat({ min: 0 }),
-], async (req: Request, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
-  try {
-    const { branchId, paymentMethod, customerName, customerPhone, notes, saleDate, items, amountPaid } = req.body;
+router.post(
+  '/',
+  [
+    body('branchId').notEmpty(),
+    body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
+    body('items').isArray({ min: 1 }),
+    body('items.*.productId').notEmpty(),
+    body('items.*.quantity').isFloat({ min: 0.01 }),
+    body('items.*.unitPrice').isFloat({ min: 0 }),
+  ],
+  async (req: Request, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
+    try {
+      const {
+        branchId, paymentMethod, customerName, customerPhone,
+        notes, saleDate, items, amountPaid,
+      } = req.body;
 
-    const processedItems: SaleItemJson[] = items.map((item: any) => ({
-      product_id: item.productId,
-      quantity:   item.quantity,
-      unit_price: item.unitPrice,
-      subtotal:   item.quantity * item.unitPrice,
-    }));
-    const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
-    const paid    = paymentMethod === 'unpaid' ? 0 : paymentMethod === 'part' ? Number(amountPaid ?? 0) : totalAmount;
-    const balance = totalAmount - paid;
-    const staffName = (req.user as any)?.fullName ?? (req.user as any)?.email ?? 'Unknown';
+      const processedItems: SaleItemJson[] = items.map((item: any) => ({
+        product_id:   item.productId,
+        product_name: item.productName ?? '',
+        quantity:     item.quantity,
+        unit_price:   item.unitPrice,
+        subtotal:     item.quantity * item.unitPrice,
+      }));
+      const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
 
-    const [sale] = await sql<SaleRow[]>`
-      INSERT INTO sales
-        (branch_id, staff_id, staff_name, customer_name, customer_phone,
-         payment_method, total_amount, amount_paid, balance_due, notes, items, sale_date)
-      VALUES (
-        ${branchId}, ${req.userId!}, ${staffName},
-        ${customerName ?? null}, ${customerPhone ?? null},
-        ${paymentMethod}::payment_method, ${totalAmount}, ${paid}, ${balance},
-        ${notes ?? null}, ${JSON.stringify(processedItems)},
-        ${saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()}
-      )
-      RETURNING *
-    `;
-    return sendResponse(res, 201, 'Sale recorded', toSale(sale));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
-});
-
-// ── PUT /api/sales/:id  (edit — same-day only) ────────────────────────────────
-router.put('/:id', [
-  body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
-  body('items').isArray({ min: 1 }),
-  body('items.*.productId').notEmpty(),
-  body('items.*.quantity').isFloat({ min: 0.01 }),
-  body('items.*.unitPrice').isFloat({ min: 0 }),
-], async (req: Request, res: Response) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
-  try {
-    const saleId  = req.params.id;
-    const isAdmin = req.user?.role === 'admin';
-
-    const [existing] = await sql<SaleRow[]>`SELECT * FROM sales WHERE id = ${saleId}`;
-    if (!existing) return sendError(res, 404, 'Sale not found');
-
-    // Day lock — check using Africa/Lagos timezone
-    const [dateCheck] = await sql<[{ is_today: boolean }]>`
-      SELECT (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
-             = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today
-    `;
-    if (!dateCheck.is_today)
-      return sendError(res, 403, 'Sales can only be edited on the day they were made. This sale is now locked.');
-
-    if (!isAdmin && existing.staff_id !== req.userId)
-      return sendError(res, 403, 'You can only edit your own sales.');
-
-    const { paymentMethod, customerName, customerPhone, notes, items, amountPaid } = req.body;
-
-    const processedItems: SaleItemJson[] = items.map((item: any) => ({
-      product_id: item.productId,
-      quantity:   item.quantity,
-      unit_price: item.unitPrice,
-      subtotal:   item.quantity * item.unitPrice,
-    }));
-    const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
-    const paid        = paymentMethod === 'unpaid' ? 0 : paymentMethod === 'part' ? Number(amountPaid ?? 0) : totalAmount;
-    const balance     = totalAmount - paid;
-    const oldBalance  = num((existing as any).balance_due ?? 0);
-
-    await sql`
-      UPDATE sales SET
-        customer_name  = ${customerName ?? null},
-        customer_phone = ${customerPhone ?? null},
-        payment_method = ${paymentMethod}::payment_method,
-        total_amount   = ${totalAmount},
-        amount_paid    = ${paid},
-        balance_due    = ${balance},
-        notes          = ${notes ?? null},
-        items          = ${JSON.stringify(processedItems)},
-        updated_at     = NOW()
-      WHERE id = ${saleId}
-    `;
-
-    // Sync linked debtor when balance changes
-    if (balance !== oldBalance) {
-      const linked = await sql`SELECT id FROM debtors WHERE sale_id = ${saleId} AND is_cleared = false LIMIT 1`;
-      if (linked.length > 0) {
-        if (balance <= 0) {
-          await sql`UPDATE debtors SET amount_owed = 0, is_cleared = true, updated_at = NOW() WHERE sale_id = ${saleId}`;
-        } else {
-          await sql`UPDATE debtors SET amount_owed = ${balance}, updated_at = NOW() WHERE sale_id = ${saleId} AND is_cleared = false`;
-        }
-      } else if (customerPhone) {
-        if (balance <= 0) {
-          await sql`UPDATE debtors SET amount_owed = 0, is_cleared = true, updated_at = NOW()
-                    WHERE phone = ${customerPhone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
-        } else {
-          await sql`UPDATE debtors SET amount_owed = ${balance}, updated_at = NOW()
-                    WHERE phone = ${customerPhone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
+      // ── Stock check ────────────────────────────────────────────────────────
+      for (const item of processedItems) {
+        const [stock] = await sql<[{ quantity: string; name: string }]>`
+          SELECT bs.quantity, p.name
+          FROM branch_stock bs
+          JOIN products p ON p.id = bs.product_id
+          WHERE bs.branch_id = ${branchId} AND bs.product_id = ${item.product_id}
+        `;
+        const available = stock ? parseFloat(stock.quantity) : 0;
+        if (available < item.quantity) {
+          return sendError(res, 400,
+            `Insufficient stock for "${stock?.name ?? item.product_id}". Available: ${available}, Requested: ${item.quantity}`
+          );
         }
       }
-    }
 
-    const [withStaff] = await sql<(SaleRow & { staff_name: string })[]>`
-      SELECT s.*, u.full_name AS staff_name FROM sales s
-      JOIN users u ON u.id = s.staff_id WHERE s.id = ${saleId}
-    `;
-    return sendResponse(res, 200, 'Sale updated', toSale(withStaff));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
-});
+      const paid    = paymentMethod === 'unpaid' ? 0
+                    : paymentMethod === 'part'   ? Number(amountPaid ?? 0)
+                    : totalAmount;
+      const balance = totalAmount - paid;
+      const staffName = (req.user as any)?.fullName ?? (req.user as any)?.email ?? 'Unknown';
+
+      const [sale] = await sql<SaleRow[]>`
+        INSERT INTO sales
+          (branch_id, staff_id, staff_name, customer_name, customer_phone,
+           payment_method, total_amount, amount_paid, balance_due, notes, items, sale_date)
+        VALUES (
+          ${branchId}, ${req.userId!}, ${staffName},
+          ${customerName ?? null}, ${customerPhone ?? null},
+          ${paymentMethod}::payment_method, ${totalAmount},
+          ${paid}, ${balance},
+          ${notes ?? null}, ${JSON.stringify(processedItems)},
+          ${saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()}
+        )
+        RETURNING *
+      `;
+
+      // ── Deduct stock ───────────────────────────────────────────────────────
+      for (const item of processedItems) {
+        await sql`
+          UPDATE branch_stock
+          SET quantity = quantity - ${item.quantity}, updated_at = NOW()
+          WHERE branch_id = ${branchId} AND product_id = ${item.product_id}
+        `;
+      }
+
+      return sendResponse(res, 201, 'Sale recorded', toSale(sale));
+    } catch (err) { return sendError(res, 500, 'Server error', err); }
+  }
+);
+
+// ── PUT /api/sales/:id  (edit — same-day only) ────────────────────────────────
+router.put(
+  '/:id',
+  [
+    body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
+    body('items').isArray({ min: 1 }),
+    body('items.*.productId').notEmpty(),
+    body('items.*.quantity').isFloat({ min: 0.01 }),
+    body('items.*.unitPrice').isFloat({ min: 0 }),
+  ],
+  async (req: Request, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
+
+    try {
+      const saleId  = req.params.id;
+      const isAdmin = req.user?.role === 'admin';
+
+      const [existing] = await sql<SaleRow[]>`SELECT * FROM sales WHERE id = ${saleId}`;
+      if (!existing) return sendError(res, 404, 'Sale not found');
+
+      const [dateCheck] = await sql<[{ is_today: boolean }]>`
+        SELECT (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
+               = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today
+      `;
+      if (!dateCheck.is_today)
+        return sendError(res, 403, 'Sales can only be edited on the day they were made. This sale is locked.');
+
+      if (!isAdmin && existing.staff_id !== req.userId)
+        return sendError(res, 403, 'You can only edit your own sales.');
+
+      const { paymentMethod, customerName, customerPhone, notes, items, amountPaid } = req.body;
+
+      const newItems: SaleItemJson[] = items.map((item: any) => ({
+        product_id:   item.productId,
+        product_name: item.productName ?? '',
+        quantity:     item.quantity,
+        unit_price:   item.unitPrice,
+        subtotal:     item.quantity * item.unitPrice,
+      }));
+      const totalAmount = newItems.reduce((s, i) => s + i.subtotal, 0);
+
+      // Restore old stock quantities first, then check new quantities
+      const oldItems = parseItems(existing.items);
+      for (const old of oldItems) {
+        await sql`
+          UPDATE branch_stock
+          SET quantity = quantity + ${old.quantity}, updated_at = NOW()
+          WHERE branch_id = ${existing.branch_id} AND product_id = ${old.product_id}
+        `;
+      }
+
+      // Check new stock availability (after restoring old)
+      for (const item of newItems) {
+        const [stock] = await sql<[{ quantity: string; name: string }]>`
+          SELECT bs.quantity, p.name
+          FROM branch_stock bs
+          JOIN products p ON p.id = bs.product_id
+          WHERE bs.branch_id = ${existing.branch_id} AND bs.product_id = ${item.product_id}
+        `;
+        const available = stock ? parseFloat(stock.quantity) : 0;
+        if (available < item.quantity) {
+          // Roll back: re-deduct old stock
+          for (const old of oldItems) {
+            await sql`
+              UPDATE branch_stock
+              SET quantity = quantity - ${old.quantity}, updated_at = NOW()
+              WHERE branch_id = ${existing.branch_id} AND product_id = ${old.product_id}
+            `;
+          }
+          return sendError(res, 400,
+            `Insufficient stock for "${stock?.name ?? item.product_id}". Available: ${available}, Requested: ${item.quantity}`
+          );
+        }
+      }
+
+      const paid    = paymentMethod === 'unpaid' ? 0
+                    : paymentMethod === 'part'   ? Number(amountPaid ?? 0)
+                    : totalAmount;
+      const balance = totalAmount - paid;
+      const oldBalance = num((existing as any).balance_due ?? 0);
+
+      const [updated] = await sql<SaleRow[]>`
+        UPDATE sales SET
+          customer_name  = ${customerName ?? null},
+          customer_phone = ${customerPhone ?? null},
+          payment_method = ${paymentMethod}::payment_method,
+          total_amount   = ${totalAmount},
+          amount_paid    = ${paid},
+          balance_due    = ${balance},
+          notes          = ${notes ?? null},
+          items          = ${JSON.stringify(newItems)},
+          updated_at     = NOW()
+        WHERE id = ${saleId}
+        RETURNING *
+      `;
+
+      // Deduct new stock quantities
+      for (const item of newItems) {
+        await sql`
+          UPDATE branch_stock
+          SET quantity = quantity - ${item.quantity}, updated_at = NOW()
+          WHERE branch_id = ${existing.branch_id} AND product_id = ${item.product_id}
+        `;
+      }
+
+      // Sync debtor if balance changed
+      if (balance !== oldBalance) {
+        const debtorsById = await sql`
+          SELECT id FROM debtors WHERE sale_id = ${saleId} AND is_cleared = false LIMIT 1
+        `;
+        if (debtorsById.length > 0) {
+          if (balance <= 0) {
+            await sql`UPDATE debtors SET amount_owed = 0, is_cleared = true, updated_at = NOW() WHERE sale_id = ${saleId}`;
+          } else {
+            await sql`UPDATE debtors SET amount_owed = ${balance}, updated_at = NOW() WHERE sale_id = ${saleId} AND is_cleared = false`;
+          }
+        } else if (customerPhone) {
+          if (balance <= 0) {
+            await sql`UPDATE debtors SET amount_owed = 0, is_cleared = true, updated_at = NOW() WHERE phone = ${customerPhone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
+          } else {
+            await sql`UPDATE debtors SET amount_owed = ${balance}, updated_at = NOW() WHERE phone = ${customerPhone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
+          }
+        }
+      }
+
+      const [withStaff] = await sql<(SaleRow & { staff_name: string })[]>`
+        SELECT s.*, u.full_name AS staff_name FROM sales s
+        JOIN users u ON u.id = s.staff_id WHERE s.id = ${saleId}
+      `;
+      return sendResponse(res, 200, 'Sale updated', toSale(withStaff));
+    } catch (err) { return sendError(res, 500, 'Server error', err); }
+  }
+);
 
 // ── DELETE /api/sales/:id  (same-day only — staff own / admin any) ─────────────
 router.delete('/:id', async (req: Request, res: Response) => {
@@ -227,23 +325,36 @@ router.delete('/:id', async (req: Request, res: Response) => {
              = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today
     `;
     if (!dateCheck.is_today)
-      return sendError(res, 403, 'Sales can only be deleted on the day they were made. This sale is now locked.');
+      return sendError(res, 403, 'Sales can only be deleted on the day they were made. This sale is locked.');
 
     if (!isAdmin && existing.staff_id !== req.userId)
       return sendError(res, 403, 'You can only delete your own sales.');
 
-    // Clear linked debtors before deleting the sale
-    const linked = await sql`SELECT id FROM debtors WHERE sale_id = ${saleId} LIMIT 1`;
-    if (linked.length > 0) {
+    // Restore stock before deleting
+    const oldItems = parseItems(existing.items);
+    for (const item of oldItems) {
+      await sql`
+        UPDATE branch_stock
+        SET quantity = quantity + ${item.quantity}, updated_at = NOW()
+        WHERE branch_id = ${existing.branch_id} AND product_id = ${item.product_id}
+      `;
+    }
+
+    const debtorsById = await sql`SELECT id FROM debtors WHERE sale_id = ${saleId} LIMIT 1`;
+    if (debtorsById.length > 0) {
       await sql`UPDATE debtors SET is_cleared = true, amount_owed = 0, updated_at = NOW() WHERE sale_id = ${saleId}`;
     } else if ((existing as any).customer_phone) {
-      await sql`UPDATE debtors SET is_cleared = true, amount_owed = 0, updated_at = NOW()
-                WHERE phone = ${(existing as any).customer_phone} AND branch_id = ${existing.branch_id} AND is_cleared = false`;
+      await sql`
+        UPDATE debtors SET is_cleared = true, amount_owed = 0, updated_at = NOW()
+        WHERE phone = ${(existing as any).customer_phone}
+          AND branch_id = ${existing.branch_id} AND is_cleared = false
+      `;
     }
 
     await sql`DELETE FROM sales WHERE id = ${saleId}`;
     return sendResponse(res, 200, 'Sale deleted');
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
+
 
 export default router;
