@@ -6,12 +6,12 @@ import { CheckCircle, XCircle, Clock, Eye, X } from 'lucide-react';
 
 const statusColor = (s: string) =>
   s === 'approved' ? 'bg-green-100 text-green-700' :
-  s === 'rejected' ? 'bg-red-100 text-red-700' :
+  s === 'rejected' ? 'bg-red-100 text-red-700'    :
   'bg-amber-100 text-amber-700';
 
 const statusIcon = (s: string) =>
   s === 'approved' ? <CheckCircle className="w-4 h-4" /> :
-  s === 'rejected' ? <XCircle className="w-4 h-4" /> :
+  s === 'rejected' ? <XCircle className="w-4 h-4" />    :
   <Clock className="w-4 h-4" />;
 
 export default function ReportApprovalsPage() {
@@ -60,21 +60,16 @@ export default function ReportApprovalsPage() {
     }
   }
 
-  async function handleReview(status: 'approved' | 'rejected') {
-    if (!viewReport) return;
-    setSaving(true);
-    await updateOne(Collections.DAILY_REPORTS, { _id: { $oid: viewReport._id } }, {
-      $set: {
-        status,
-        reviewedBy:     user!.id,
-        reviewedByName: user!.fullName,
-        reviewedAt:     new Date().toISOString(),
-        reviewNotes:    reviewNotes.trim(),
-      },
-    });
-    await fetchReports();
-    setViewReport(null);
-    setSaving(false);
+  async function handleReview(status: 'approved' | 'rejected' | 'pending') {
+  if (!viewReport) return;
+  setSaving(true);
+  await updateOne(Collections.DAILY_REPORTS, { _id: viewReport._id }, {
+    status,
+    reviewNotes: reviewNotes.trim(),
+  });
+  await fetchReports();
+  setViewReport(null);
+  setSaving(false);
   }
 
   const fmt = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
@@ -177,15 +172,22 @@ export default function ReportApprovalsPage() {
                     onChange={e => setReviewNotes(e.target.value)}
                     rows={2}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm"
-                    placeholder="Optional notes for the submitter..."
+                    placeholder="Notes for the staff member..."
                   />
-                  <div className="flex gap-3 mt-3">
+                  <div className="flex gap-2 mt-3">
                     <button
                       onClick={() => handleReview('rejected')}
                       disabled={saving}
                       className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium text-sm transition-colors"
                     >
                       <XCircle className="w-4 h-4" />Reject
+                    </button>
+                    <button
+                      onClick={() => handleReview('pending')}
+                      disabled={saving}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
+                    >
+                      <Clock className="w-4 h-4" />Send Back
                     </button>
                     <button
                       onClick={() => handleReview('approved')}

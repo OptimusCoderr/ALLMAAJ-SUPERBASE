@@ -72,7 +72,13 @@ export async function find(
     const branchId = (f as any).branchId;
     if (!branchId) return [];
     const data = await apiFetch(`/api/branches/${branchId}/stock`);
-    return Array.isArray(data) ? data : [];
+    const rows = Array.isArray(data) ? data : [];
+    return rows.map((r: any) => ({
+      productId: r.product_id,
+      branchId:  r.branch_id,
+      quantity:  parseFloat(r.quantity),
+      product:   r.product,
+    }));
   }
 
   if (collection === Collections.WAREHOUSE_STOCK) {

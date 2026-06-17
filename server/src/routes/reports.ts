@@ -12,6 +12,7 @@ router.use(authMiddleware);
 // *_name fields are resolved via JOIN users — not stored in the row.
 const toReport = (r: DailyReportRow & { submitted_by_name?: string | null; reviewed_by_name?: string | null }) => ({
   id:                r.id,
+  _id:               r.id,   // ← ADD THIS
   branchId:          r.branch_id,
   submittedBy:       r.submitted_by,
   submittedByName:   r.submitted_by_name  ?? null,
@@ -19,7 +20,7 @@ const toReport = (r: DailyReportRow & { submitted_by_name?: string | null; revie
   totalCashSales:    num(r.total_cash_sales),
   totalPosSales:     num(r.total_pos_sales),
   totalUnpaidSales:  num(r.total_unpaid_sales),
-  totalSales:        num(r.total_sales),   // GENERATED column
+  totalSales:        num(r.total_sales),
   totalExpenses:     num(r.total_expenses),
   netIncome:         num(r.net_income),
   debtorCount:       r.debtor_count,
@@ -30,6 +31,7 @@ const toReport = (r: DailyReportRow & { submitted_by_name?: string | null; revie
   reviewedByName:    r.reviewed_by_name   ?? null,
   reviewedAt:        r.reviewed_at,
   reviewNotes:       r.review_notes,
+  saleIds:           (r as any).sale_ids ?? [],
   createdAt:         r.created_at,
   updatedAt:         r.updated_at,
 });
@@ -167,7 +169,8 @@ router.post('/daily', async (req: Request, res: Response) => {
 router.patch('/daily/:id/review', adminOnly, async (req: Request, res: Response) => {
   try {
     const { status, reviewNotes } = req.body;
-    if (!['approved', 'rejected'].includes(status)) return sendError(res, 400, 'Invalid status');
+    if (!['approved', 'rejected', 'pending'].includes(status))
+      return sendError(res, 400, 'Invalid status');
 
     const [report] = await sql<DailyReportRow[]>`
       UPDATE daily_reports SET
@@ -215,9 +218,14 @@ router.get('/debtors', async (req: Request, res: Response) => {
 router.post('/debtors', async (req: Request, res: Response) => {
   try {
     const { name, phone, amountOwed, branchId, saleId, notes } = req.body;
+    const createdByName = (req.user as any)?.fullName ?? 'Unknown';
     const [debtor] = await sql<DebtorRow[]>`
-      INSERT INTO debtors (name, phone, amount_owed, branch_id, created_by, sale_id, notes)
-      VALUES (${name}, ${phone}, ${amountOwed}, ${branchId}, ${req.userId!}, ${saleId ?? null}, ${notes ?? null})
+      INSERT INTO debtors (name, phone, amount_owed, branch_id, created_by, created_by_name, sale_id, notes)
+      VALUES (
+        ${name}, ${phone}, ${amountOwed}, ${branchId},
+        ${req.userId!}, ${createdByName},
+        ${saleId ?? null}, ${notes ?? null}
+      )
       RETURNING *
     `;
     return sendResponse(res, 201, 'Debtor recorded', toDebtor(debtor));
