@@ -79,13 +79,15 @@ export interface SaleRow {
   staff_id: string;
   customer_name: string | null;
   customer_phone: string | null;
-  payment_method: 'cash' | 'pos' | 'unpaid';
+  payment_method: 'cash' | 'pos' | 'unpaid' | 'part';  // ← add 'part'
   total_amount: string;
+  amount_paid: string;    // ← new
+  balance_due: string;    // ← new
   notes: string | null;
   items: SaleItemJson[];
   sale_date: string;
   created_at: string;
-  report_id: string | null;   // replaces daily_reports.sale_ids UUID[]
+  report_id: string | null;
 }
 
 export interface DebtorRow {

@@ -68,7 +68,14 @@ export async function find(
     return [];
   }
 
-    if (collection === Collections.WAREHOUSE_STOCK) {
+  if (collection === Collections.BRANCH_STOCK) {
+    const branchId = (f as any).branchId;
+    if (!branchId) return [];
+    const data = await apiFetch(`/api/branches/${branchId}/stock`);
+    return Array.isArray(data) ? data : [];
+  }
+
+  if (collection === Collections.WAREHOUSE_STOCK) {
     const warehouseId = (f as any).warehouseId;
     if (!warehouseId) return [];
     const data = await apiFetch(`/api/warehouses/${warehouseId}/stock`);

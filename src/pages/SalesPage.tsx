@@ -562,7 +562,7 @@ export default function SalesPage() {
           ) : (
             <div className="space-y-3">
               {recentSales.map(s => (
-                <div key={s._id} className="p-3 bg-slate-50 rounded-lg">
+                <div key={s.id ?? s._id} className="p-3 bg-slate-50 rounded-lg">
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-medium text-slate-800 text-sm">{fmt(s.totalAmount)}</span>
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${pmColors[s.paymentMethod] ?? 'bg-slate-100 text-slate-600'}`}>
