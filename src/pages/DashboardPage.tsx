@@ -12,11 +12,14 @@ interface Stats {
   pendingReports: number;
   activeDebtors: number;
   totalDebtorAmount: number;
+  clearedDebtors: number;
+  totalClearedAmount: number;
 }
 
 const EMPTY: Stats = {
   todaySales: 0, todayCash: 0, todayPos: 0, todayExpenses: 0,
   pendingReports: 0, activeDebtors: 0, totalDebtorAmount: 0,
+  clearedDebtors: 0, totalClearedAmount: 0,
 };
 
 export default function DashboardPage() {
@@ -45,7 +48,7 @@ export default function DashboardPage() {
       find(Collections.SALES, saleFilter),
       find(Collections.EXPENSES, expenseFilter),
       find(Collections.DAILY_REPORTS, { reportDate: { $gte: `${sevenDaysAgo}T00:00:00.000Z` } }),
-      find(Collections.DEPTORS, user?.role === 'admin' ? {} : { branchId: user?.branchId }),
+      find(Collections.DEBTORS, user?.role === 'admin' ? {} : { branchId: user?.branchId }),
     ]);
 
     setStats({
@@ -56,6 +59,8 @@ export default function DashboardPage() {
       pendingReports:  (reports as DailyReport[]).filter(r => r.status === 'pending').length,
       activeDebtors:   (debtors as Debtor[]).filter(d => !d.isCleared).length,
       totalDebtorAmount: (debtors as Debtor[]).filter(d => !d.isCleared).reduce((s, d) => s + Number(d.amountOwed), 0),
+      clearedDebtors:  (debtors as Debtor[]).filter(d => d.isCleared).length,
+      totalClearedAmount: (debtors as Debtor[]).filter(d => d.isCleared).reduce((s, d) => s + Number(d.amountOwed), 0),
     });
     setLoading(false);
   }
@@ -89,7 +94,7 @@ export default function DashboardPage() {
             { label: "Today's Total Sales", value: fmt(stats.todaySales), icon: <TrendingUp className="w-6 h-6" />, bg: 'bg-amber-500' },
             { label: 'Cash Sales',          value: fmt(stats.todayCash),  icon: <DollarSign className="w-6 h-6" />,  bg: 'bg-green-500' },
             { label: 'POS Sales',           value: fmt(stats.todayPos),   icon: <CreditCard className="w-6 h-6" />,  bg: 'bg-blue-500' },
-            { label: 'Today\'s Expenses',  value: fmt(stats.todayExpenses), icon: <Package className="w-6 h-6" />, bg: 'bg-red-500' },
+            { label: "Today's Expenses",    value: fmt(stats.todayExpenses), icon: <Package className="w-6 h-6" />, bg: 'bg-red-500' },
           ].map(c => (
             <div key={c.label} className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
               <div className="flex items-start justify-between">
@@ -134,7 +139,15 @@ export default function DashboardPage() {
               <span className="text-slate-600 text-sm">Total Amount Owed</span>
               <span className="font-semibold text-red-600">{fmt(stats.totalDebtorAmount)}</span>
             </div>
+            <div className="border-t border-slate-100 pt-3 flex items-center justify-between">
+              <span className="text-slate-600 text-sm">Cleared Debtors</span>
+              <span className="font-semibold text-blue-600">{stats.clearedDebtors}</span>
+            </div>
             <div className="flex items-center justify-between">
+              <span className="text-slate-600 text-sm">Total Cleared Amount</span>
+              <span className="font-semibold text-blue-600">{fmt(stats.totalClearedAmount)}</span>
+            </div>
+            <div className="border-t border-slate-100 pt-3 flex items-center justify-between">
               <span className="text-slate-600 text-sm">Your Role</span>
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${roleBadgeColor[user?.role || 'staff']}`}>
                 {user?.role}

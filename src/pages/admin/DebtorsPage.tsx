@@ -116,10 +116,10 @@ export default function DebtorsPage() {
           <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => !d.isCleared).length}</p>
           <p className="text-sm font-medium mt-1 text-red-600">{fmt(totalActive)}</p>
         </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-blue-100 bg-blue-50/30">
           <p className="text-slate-500 text-sm">Cleared Debtors</p>
           <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => d.isCleared).length}</p>
-          <p className="text-sm font-medium mt-1 text-green-600">{fmt(totalCleared)}</p>
+          <p className="text-sm font-medium mt-1 text-blue-600">{fmt(totalCleared)}</p>
         </div>
       </div>
 
@@ -178,7 +178,7 @@ export default function DebtorsPage() {
             return (
               <div
                 key={d._id}
-                className={`bg-white rounded-xl p-4 shadow-sm border ${d.isCleared ? 'border-green-100 opacity-75' : 'border-slate-100'}`}
+                className={`bg-white rounded-xl p-4 shadow-sm border ${d.isCleared ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100'}`}
               >
                 <div className="flex items-start justify-between gap-4">
                   {/* Left: avatar + info */}
@@ -199,7 +199,7 @@ export default function DebtorsPage() {
                         </span>
                         {/* Status badge */}
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                          d.isCleared ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
+                          d.isCleared ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
                         }`}>
                           {d.isCleared ? 'Cleared' : 'Active'}
                         </span>
@@ -225,7 +225,7 @@ export default function DebtorsPage() {
                         <p className="text-xs text-slate-400 mt-0.5">Recorded by {d.createdByName}</p>
                       )}
                       {d.isCleared && d.clearedByName && (
-                        <p className="text-xs text-green-600 mt-0.5">Cleared by {d.clearedByName}</p>
+                        <p className="text-xs text-blue-600 mt-0.5">Cleared by {d.clearedByName}</p>
                       )}
                     </div>
                   </div>
@@ -233,9 +233,12 @@ export default function DebtorsPage() {
                   {/* Right: amount + time + action */}
                   <div className="flex flex-col items-end gap-2 flex-shrink-0">
                     <div className="text-right">
-                      <p className="font-bold text-red-600 text-lg">{fmt(d.amountOwed)}</p>
+                      <p className={`font-bold text-lg ${d.isCleared ? 'text-blue-600' : 'text-red-600'}`}>{fmt(d.amountOwed)}</p>
                       {isPartPayment && d.totalSaleAmount != null && d.totalSaleAmount > 0 && (
                         <p className="text-xs text-slate-400">of {fmt(d.totalSaleAmount)} total</p>
+                      )}
+                      {d.isCleared && d.clearedAt && (
+                        <p className="text-xs text-blue-400 mt-0.5">{new Date(d.clearedAt).toLocaleDateString('en-NG')}</p>
                       )}
                     </div>
 
