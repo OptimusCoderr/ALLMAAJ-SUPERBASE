@@ -1,174 +1,721 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { find, insertOne, updateOne, Collections } from '../../lib/api';
 import type { User, Branch } from '../../lib/types';
-import { Plus, Edit2, Trash2, UserCheck, Search, Shield, X, Check } from 'lucide-react';
+import {
+  Plus, Edit2, X, Check, Search, Shield, RefreshCw,
+  Download, Users, UserCheck, UserX, Building2,
+  CheckCircle, XCircle, AlertCircle, Eye, EyeOff,
+  ToggleLeft, ToggleRight, Phone, Mail, KeyRound,
+} from 'lucide-react';
 
-type Form = { fullName: string; email: string; phone: string; password: string; role: 'admin' | 'staff'; branchId: string };
-const BLANK: Form = { fullName: '', email: '', phone: '', password: '', role: 'staff', branchId: '' };
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type UserForm = {
+  fullName: string; email: string; phone: string;
+  password: string; role: 'admin' | 'staff'; branchId: string;
+};
+const BLANK: UserForm = { fullName: '', email: '', phone: '', password: '', role: 'staff', branchId: '' };
+
+type RoleFilter   = 'all' | 'admin' | 'staff';
+type StatusFilter = 'all' | 'active' | 'inactive';
+interface Toast { id: number; message: string; type: 'success' | 'error' | 'info' }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function initials(name: string) {
+  return name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?';
+}
+
+const AVATAR_COLORS = [
+  'bg-amber-100 text-amber-700',
+  'bg-blue-100 text-blue-700',
+  'bg-green-100 text-green-700',
+  'bg-purple-100 text-purple-700',
+  'bg-rose-100 text-rose-700',
+  'bg-cyan-100 text-cyan-700',
+];
+
+function avatarColor(id: string) {
+  let n = 0;
+  for (let i = 0; i < id.length; i++) n += id.charCodeAt(i);
+  return AVATAR_COLORS[n % AVATAR_COLORS.length];
+}
+
+function exportCSV(users: User[], branches: Branch[]) {
+  const branchMap = Object.fromEntries(branches.map(b => [b._id, b.name]));
+  const header = ['Name', 'Email', 'Phone', 'Role', 'Branch', 'Status', 'Created'];
+  const rows = users.map(u => [
+    u.fullName,
+    u.email,
+    u.phone ?? '',
+    u.role,
+    branchMap[u.branchId ?? ''] ?? '',
+    u.isActive ? 'Active' : 'Inactive',
+    u.createdAt?.split('T')[0] ?? '',
+  ]);
+  const csv = [header, ...rows]
+    .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `staff-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+
+function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: number) => void }) {
+  return (
+    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+      {toasts.map(t => (
+        <div
+          key={t.id}
+          className={`flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium pointer-events-auto
+            ${t.type === 'success' ? 'bg-green-600 text-white' :
+              t.type === 'error'   ? 'bg-red-600 text-white'   :
+                                     'bg-slate-800 text-white'}`}
+        >
+          {t.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> :
+           t.type === 'error'   ? <XCircle className="w-4 h-4 shrink-0" />    :
+                                  <AlertCircle className="w-4 h-4 shrink-0" />}
+          {t.message}
+          <button onClick={() => onRemove(t.id)} className="ml-1 opacity-70 hover:opacity-100">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function StaffManagementPage() {
-  const [staff, setStaff]       = useState<User[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [search, setSearch]     = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing]   = useState<User | null>(null);
-  const [form, setForm]         = useState<Form>(BLANK);
-  const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState('');
+  const [staff, setStaff]           = useState<User[]>([]);
+  const [branches, setBranches]     = useState<Branch[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Filters
+  const [search, setSearch]             = useState('');
+  const [roleFilter, setRoleFilter]     = useState<RoleFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
+  const [branchFilter, setBranchFilter] = useState('all');
+
+  // Form
+  const [showForm, setShowForm]     = useState(false);
+  const [editing, setEditing]       = useState<User | null>(null);
+  const [form, setForm]             = useState<UserForm>(BLANK);
+  const [saving, setSaving]         = useState(false);
+  const [formError, setFormError]   = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Toasts
+  const [toasts, setToasts]   = useState<Toast[]>([]);
+  const [toastId, setToastId] = useState(0);
+
+  // ── Toast helper ─────────────────────────────────────────────────────────────
+  function toast(message: string, type: Toast['type'] = 'success') {
+    const id = toastId + 1;
+    setToastId(id);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+  }
+
+  // ── Fetch ─────────────────────────────────────────────────────────────────────
+  async function fetchAll(quiet = false) {
+    if (!quiet) setLoading(true);
+    else setRefreshing(true);
+    try {
+      const [s, b] = await Promise.all([
+        find(Collections.USERS,    {}, { sort: { createdAt: -1 } }),
+        find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }),
+      ]);
+      setStaff(s as User[]);
+      setBranches(b as Branch[]);
+    } catch {
+      toast('Failed to load staff', 'error');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => { fetchAll(); }, []);
 
-  async function fetchAll() {
-    const [s, b] = await Promise.all([
-      find(Collections.USERS, {}, { sort: { createdAt: -1 } }),
-      find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }),
-    ]);
-    setStaff(s as User[]);
-    setBranches(b as Branch[]);
-    setLoading(false);
-  }
+  // ── Stats ─────────────────────────────────────────────────────────────────────
+  const stats = useMemo(() => ({
+    total:    staff.length,
+    active:   staff.filter(u => u.isActive).length,
+    inactive: staff.filter(u => !u.isActive).length,
+    admins:   staff.filter(u => u.role === 'admin').length,
+    staffOnly: staff.filter(u => u.role === 'staff').length,
+    unassigned: staff.filter(u => u.isActive && !u.branchId).length,
+  }), [staff]);
 
-  function f(field: keyof Form) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setForm(prev => ({ ...prev, [field]: e.target.value }));
-  }
+  // ── Filtered ─────────────────────────────────────────────────────────────────
+  const filtered = useMemo(() => {
+    let out = staff;
+    if (statusFilter !== 'all') out = out.filter(u => statusFilter === 'active' ? u.isActive : !u.isActive);
+    if (roleFilter !== 'all')   out = out.filter(u => u.role === roleFilter);
+    if (branchFilter !== 'all') out = out.filter(u =>
+      branchFilter === 'none' ? !u.branchId : u.branchId === branchFilter
+    );
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      out = out.filter(u =>
+        u.fullName?.toLowerCase().includes(q) ||
+        u.email?.toLowerCase().includes(q) ||
+        (u.phone ?? '').includes(q)
+      );
+    }
+    return out;
+  }, [staff, search, roleFilter, statusFilter, branchFilter]);
 
+  // ── Branch lookup ─────────────────────────────────────────────────────────────
+  const branchMap = useMemo(() =>
+    Object.fromEntries(branches.map(b => [b._id, b.name])),
+  [branches]);
+
+  // ── Form helpers ──────────────────────────────────────────────────────────────
   function openNew() {
-    setEditing(null);
-    setForm(BLANK);
-    setShowForm(true);
-    setError('');
+    setEditing(null); setForm(BLANK); setFormError('');
+    setShowPassword(false); setShowForm(true);
   }
-
   function openEdit(u: User) {
     setEditing(u);
-    setForm({
-      fullName: u.fullName,
-      email: u.email,
-      phone: u.phone || '',
-      password: '',
-      role: u.role,
-      branchId: u.branchId || '',
-    });
-    setShowForm(true);
-    setError('');
+    setForm({ fullName: u.fullName, email: u.email, phone: u.phone ?? '',
+              password: '', role: u.role, branchId: u.branchId ?? '' });
+    setFormError(''); setShowPassword(false); setShowForm(true);
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.fullName.trim()) { setError('Full name is required'); return; }
-    if (!form.email.trim()) { setError('Email is required'); return; }
-    if (!editing && !form.password) { setError('Password is required for new users'); return; }
+    if (!form.fullName.trim()) { setFormError('Full name is required'); return; }
+    if (!form.email.trim())    { setFormError('Email is required'); return; }
+    if (!editing && !form.password) { setFormError('Password is required for new users'); return; }
+    if (form.password && form.password.length < 8) { setFormError('Password must be at least 8 characters'); return; }
 
-    setSaving(true);
-    setError('');
+    setSaving(true); setFormError('');
     try {
       const payload: any = {
-        fullName: form.fullName.trim(),
-        email: form.email.trim().toLowerCase(),
-        phone: form.phone.trim(),
-        role: form.role,
-        branchId: form.branchId || null,
+        fullName:  form.fullName.trim(),
+        email:     form.email.trim().toLowerCase(),
+        phone:     form.phone.trim(),
+        role:      form.role,
+        branchId:  form.branchId || null,
         updatedAt: new Date().toISOString(),
       };
-
       if (editing) {
         if (form.password) payload.password = form.password;
         await updateOne(Collections.USERS, { _id: { $oid: editing._id } }, { $set: payload });
+        toast(`"${payload.fullName}" updated`);
       } else {
-        payload.password = form.password;
-        payload.isActive = true;
+        payload.password  = form.password;
+        payload.isActive  = true;
         payload.createdAt = new Date().toISOString();
         await insertOne(Collections.USERS, payload);
+        toast(`"${payload.fullName}" created`);
       }
-      await fetchAll();
-      setShowForm(false);
-      setEditing(null);
+      await fetchAll(true);
+      setShowForm(false); setEditing(null);
     } catch (err: any) {
-      setError(err.message || 'Failed to save user');
+      setFormError(err.message || 'Failed to save user');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
-  async function toggleActive(u: User) {
-    await updateOne(Collections.USERS, { _id: { $oid: u._id } }, { $set: { isActive: !u.isActive } });
-    setStaff(prev => prev.map(x => x._id === u._id ? { ...x, isActive: !u.isActive } : x));
+  async function handleToggleActive(u: User) {
+    const next = !u.isActive;
+    try {
+      await updateOne(Collections.USERS, { _id: { $oid: u._id } }, { $set: { isActive: next } });
+      setStaff(prev => prev.map(x => x._id === u._id ? { ...x, isActive: next } : x));
+      toast(`"${u.fullName}" ${next ? 'activated' : 'deactivated'}`, next ? 'success' : 'info');
+    } catch (err: any) {
+      toast(err.message || 'Update failed', 'error');
+    }
   }
 
-  const filtered = staff.filter(s =>
-    s.fullName?.toLowerCase().includes(search.toLowerCase()) ||
-    s.email?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const roleColor = (r: string) =>
-    r === 'admin' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700';
-
+  // ────────────────────────────────────────────────────────────────────────────
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Staff Management</h1>
-          <p className="text-slate-500 text-sm mt-1">Create and manage user accounts</p>
+          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            <Users className="w-6 h-6 text-amber-500" />
+            Staff Management
+          </h1>
+          <p className="text-slate-500 text-sm mt-0.5">Create and manage user accounts and roles</p>
         </div>
-        <button onClick={openNew} className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
-          <Plus className="w-4 h-4" />Add User
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportCSV(filtered, branches)}
+            disabled={filtered.length === 0}
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-lg transition-colors disabled:opacity-40"
+          >
+            <Download className="w-4 h-4" /> Export
+          </button>
+          <button
+            onClick={() => fetchAll(true)}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-lg transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+          </button>
+          <button
+            onClick={openNew}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Add User
+          </button>
+        </div>
       </div>
 
+      {/* ── Stats bar ──────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3 shadow-sm">
+          <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+            <Users className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-slate-800">{stats.total}</p>
+            <p className="text-xs text-slate-500">Total Users</p>
+          </div>
+        </div>
+        <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3 shadow-sm">
+          <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center shrink-0">
+            <UserCheck className="w-5 h-5 text-green-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-slate-800">{stats.active}</p>
+            <p className="text-xs text-slate-500">Active</p>
+          </div>
+        </div>
+        <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3 shadow-sm">
+          <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+            <Shield className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-slate-800">{stats.admins}</p>
+            <p className="text-xs text-slate-500">Admins</p>
+          </div>
+        </div>
+        <div className={`border rounded-xl p-4 flex items-center gap-3 shadow-sm ${
+          stats.unassigned > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-100'
+        }`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+            stats.unassigned > 0 ? 'bg-amber-200' : 'bg-slate-100'
+          }`}>
+            <Building2 className={`w-5 h-5 ${stats.unassigned > 0 ? 'text-amber-700' : 'text-slate-400'}`} />
+          </div>
+          <div>
+            <p className={`text-2xl font-bold ${stats.unassigned > 0 ? 'text-amber-700' : 'text-slate-800'}`}>
+              {stats.unassigned}
+            </p>
+            <p className={`text-xs ${stats.unassigned > 0 ? 'text-amber-600' : 'text-slate-500'}`}>Unassigned</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Filters ────────────────────────────────────────────────────────── */}
+      <div className="bg-white border border-slate-100 rounded-xl shadow-sm p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* Search */}
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search name, email or phone…"
+              className="w-full pl-9 pr-9 py-2 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Role filter */}
+          <div className="flex gap-1.5 shrink-0">
+            {(['all', 'admin', 'staff'] as const).map(r => (
+              <button
+                key={r}
+                onClick={() => setRoleFilter(r)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+                  roleFilter === r
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {r === 'all' ? 'All Roles' : r}
+              </button>
+            ))}
+          </div>
+
+          {/* Status filter */}
+          <div className="flex gap-1.5 shrink-0">
+            {(['all', 'active', 'inactive'] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+                  statusFilter === s
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Branch filter */}
+        {branches.length > 0 && (
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { id: 'all',  label: 'All Branches' },
+              { id: 'none', label: 'No Branch' },
+              ...branches.map(b => ({ id: b._id, label: b.name })),
+            ].map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => setBranchFilter(opt.id)}
+                className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+                  branchFilter === opt.id
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Results count */}
+      {!loading && (
+        <p className="text-xs text-slate-400 px-1">
+          Showing <strong className="text-slate-600">{filtered.length}</strong> of {staff.length} users
+          {(search || roleFilter !== 'all' || statusFilter !== 'all' || branchFilter !== 'all') && ' (filtered)'}
+        </p>
+      )}
+
+      {/* ── Staff table ─────────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+        {loading ? (
+          <div className="p-5 space-y-3">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-[60px] bg-slate-100 rounded-xl animate-pulse" />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-14 text-slate-400">
+            <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <p className="font-semibold text-slate-500">
+              {search ? `No results for "${search}"` : 'No users found'}
+            </p>
+            <p className="text-sm mt-1">Try adjusting your filters.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-left border-b border-slate-100">
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500">User</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500 hidden md:table-cell">Contact</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500">Role</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500">Branch</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500">Status</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500 hidden lg:table-cell">Joined</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-slate-500">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.map(u => (
+                  <tr key={u._id} className={`hover:bg-slate-50/70 transition-colors ${!u.isActive ? 'opacity-55' : ''}`}>
+                    {/* User */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${avatarColor(u._id)}`}>
+                          {initials(u.fullName || 'U')}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-slate-800 truncate">{u.fullName || 'Unnamed'}</p>
+                          <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Contact (desktop) */}
+                    <td className="px-4 py-3 hidden md:table-cell">
+                      {u.phone
+                        ? <span className="flex items-center gap-1 text-slate-500 text-xs"><Phone className="w-3 h-3" />{u.phone}</span>
+                        : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
+
+                    {/* Role */}
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${
+                        u.role === 'admin'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {u.role === 'admin' ? '⚡ Admin' : 'Staff'}
+                      </span>
+                    </td>
+
+                    {/* Branch */}
+                    <td className="px-4 py-3">
+                      {u.branchId && branchMap[u.branchId]
+                        ? <span className="flex items-center gap-1 text-slate-600 text-xs font-medium">
+                            <Building2 className="w-3 h-3 text-slate-400" />
+                            {branchMap[u.branchId]}
+                          </span>
+                        : <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            u.isActive && u.role === 'staff'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'text-slate-300'
+                          }`}>
+                            {u.isActive && u.role === 'staff' ? 'Unassigned' : '—'}
+                          </span>}
+                    </td>
+
+                    {/* Status */}
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                        u.isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {u.isActive ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+
+                    {/* Joined */}
+                    <td className="px-4 py-3 text-xs text-slate-400 hidden lg:table-cell">
+                      {u.createdAt?.split('T')[0] ?? '—'}
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => openEdit(u)}
+                          className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                          title="Edit user"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleToggleActive(u)}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            u.isActive
+                              ? 'text-green-500 hover:text-slate-400 hover:bg-slate-100'
+                              : 'text-slate-300 hover:text-green-500 hover:bg-green-50'
+                          }`}
+                          title={u.isActive ? 'Deactivate' : 'Activate'}
+                        >
+                          {u.isActive
+                            ? <ToggleRight className="w-4 h-4" />
+                            : <ToggleLeft className="w-4 h-4" />}
+                        </button>
+                        {u.isActive
+                          ? <UserX className="w-3.5 h-3.5 text-slate-200" />
+                          : <UserCheck className="w-3.5 h-3.5 text-slate-200" />}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-50 border-t-2 border-slate-200">
+                <tr>
+                  <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-slate-500">
+                    {filtered.length} user{filtered.length !== 1 ? 's' : ''}
+                    {' · '}
+                    {filtered.filter(u => u.isActive).length} active
+                  </td>
+                  <td colSpan={4} className="px-4 py-2.5 text-xs text-slate-400 text-right">
+                    {filtered.filter(u => u.role === 'admin').length} admin{filtered.filter(u => u.role === 'admin').length !== 1 ? 's' : ''}
+                    {' · '}
+                    {filtered.filter(u => u.role === 'staff').length} staff
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── User form modal ─────────────────────────────────────────────────── */}
       {showForm && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-slate-800">{editing ? 'Edit User' : 'Create New User'}</h3>
-              <button onClick={() => { setShowForm(false); setEditing(null); }}><X className="w-5 h-5 text-slate-400" /></button>
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[95vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">
+                  {editing ? 'Edit User' : 'Create New User'}
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {editing ? 'Update account details' : 'Add a new staff or admin account'}
+                </p>
+              </div>
+              <button
+                onClick={() => { setShowForm(false); setEditing(null); }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
-            <form onSubmit={handleSave} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Full Name *</label>
-                <input type="text" value={form.fullName} onChange={f('fullName')} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+
+            {formError && (
+              <div className="mx-5 mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex items-center gap-2">
+                <XCircle className="w-4 h-4 shrink-0" />{formError}
               </div>
+            )}
+
+            <form onSubmit={handleSave} className="overflow-y-auto flex-1 p-5 space-y-4">
+              {/* Full name */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Email *</label>
-                <input type="email" value={form.email} onChange={f('email')} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
-                <input type="tel" value={form.phone} onChange={f('phone')}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Password {editing ? '(leave blank to keep current)' : '* (min 8 characters)'}
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Full Name <span className="text-red-500">*</span>
                 </label>
-                <input type="password" value={form.password} onChange={f('password')} required={!editing} minLength={8}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                <input
+                  type="text"
+                  value={form.fullName}
+                  onChange={e => setForm(p => ({ ...p, fullName: e.target.value }))}
+                  required
+                  autoFocus
+                  placeholder="e.g. Emeka Okafor"
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
               </div>
+
+              {/* Email */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Email <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                    required
+                    placeholder="email@example.com"
+                    className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Phone */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Phone</label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="tel"
+                    value={form.phone}
+                    onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
+                    placeholder="e.g. 08012345678"
+                    className="w-full pl-9 pr-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Password{' '}
+                  {editing
+                    ? <span className="text-slate-400 font-normal">(leave blank to keep current)</span>
+                    : <span className="text-red-500">*</span>}
+                </label>
+                <div className="relative">
+                  <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={form.password}
+                    onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
+                    required={!editing}
+                    minLength={8}
+                    placeholder={editing ? '••••••••' : 'Min 8 characters'}
+                    className="w-full pl-9 pr-10 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {form.password && form.password.length > 0 && form.password.length < 8 && (
+                  <p className="text-xs text-red-500 mt-1">Password must be at least 8 characters</p>
+                )}
+              </div>
+
+              {/* Role & Branch */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
-                  <select value={form.role} onChange={f('role')}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Role</label>
+                  <select
+                    value={form.role}
+                    onChange={e => setForm(p => ({ ...p, role: e.target.value as 'admin' | 'staff' }))}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
                     <option value="staff">Staff</option>
                     <option value="admin">Admin</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
-                  <select value={form.branchId} onChange={f('branchId')}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">Branch</label>
+                  <select
+                    value={form.branchId}
+                    onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  >
                     <option value="">No branch</option>
                     {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
                   </select>
                 </div>
               </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={saving} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
-                  {saving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
+
+              {/* Role info box */}
+              <div className={`p-3 rounded-xl text-xs border ${
+                form.role === 'admin'
+                  ? 'bg-red-50 border-red-100 text-red-700'
+                  : 'bg-blue-50 border-blue-100 text-blue-700'
+              }`}>
+                {form.role === 'admin'
+                  ? '⚡ Admins have full access: manage staff, approve reports, view all branches.'
+                  : '👤 Staff can record sales, submit daily reports, and manage their branch stock.'}
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setShowForm(false); setEditing(null); }}
+                  className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors"
+                >
+                  {saving
+                    ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    : <Check className="w-4 h-4" />}
                   {editing ? 'Save Changes' : 'Create User'}
                 </button>
               </div>
@@ -177,71 +724,7 @@ export default function StaffManagementPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-        <div className="relative mb-6">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search by name or email..."
-            className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-        </div>
-
-        {loading ? (
-          <div className="space-y-3">{[...Array(4)].map((_, i) => <div key={i} className="h-16 bg-slate-100 rounded-lg animate-pulse" />)}</div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-12 text-slate-400"><Shield className="w-12 h-12 mx-auto mb-3 opacity-40" /><p>No users found</p></div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left border-b border-slate-200">
-                  <th className="pb-3 font-medium text-slate-600">Name</th>
-                  <th className="pb-3 font-medium text-slate-600">Email</th>
-                  <th className="pb-3 font-medium text-slate-600">Phone</th>
-                  <th className="pb-3 font-medium text-slate-600">Role</th>
-                  <th className="pb-3 font-medium text-slate-600">Branch</th>
-                  <th className="pb-3 font-medium text-slate-600">Status</th>
-                  <th className="pb-3 font-medium text-slate-600">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map(s => (
-                  <tr key={s._id} className="hover:bg-slate-50">
-                    <td className="py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center text-xs font-bold text-amber-700">
-                          {(s.fullName || 'U').charAt(0).toUpperCase()}
-                        </div>
-                        <span className="font-medium text-slate-800">{s.fullName || 'Unnamed'}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 text-slate-500 text-xs">{s.email}</td>
-                    <td className="py-3 text-slate-500">{s.phone || '-'}</td>
-                    <td className="py-3">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium capitalize ${roleColor(s.role)}`}>
-                        {s.role}
-                      </span>
-                    </td>
-                    <td className="py-3 text-slate-500">{branches.find(b => b._id === s.branchId)?.name || '-'}</td>
-                    <td className="py-3">
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${s.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                        {s.isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="py-3">
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={() => openEdit(s)} className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
-                        <button onClick={() => toggleActive(s)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
-                          {s.isActive ? <Trash2 className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <ToastContainer toasts={toasts} onRemove={id => setToasts(prev => prev.filter(t => t.id !== id))} />
     </div>
   );
 }
