@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { find, Collections, getAuthToken } from '../lib/api';
 import type { Branch, Product } from '../lib/types';
-import { Search, Package, Plus, X, Check, Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
+import {
+  Search, Package, Plus, X, Check, Clock, CheckCircle, XCircle,
+  RefreshCw, TrendingDown, AlertTriangle, DollarSign, ArrowUpDown,
+} from 'lucide-react';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+
 function authFetch(path: string, token: string, options: RequestInit = {}) {
   return fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -14,6 +18,18 @@ function authFetch(path: string, token: string, options: RequestInit = {}) {
     if (!r.ok) throw new Error(j?.message || `HTTP ${r.status}`);
     return j?.data ?? j;
   });
+}
+
+function relativeTime(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
 }
 
 interface StockItem { productId: string; product: any; quantity: number; updatedAt: string; }
@@ -50,62 +66,73 @@ export default function BranchStockPage() {
   const token = getAuthToken() ?? '';
   const isAdmin = user?.role?.toLowerCase() === 'admin';
 
-  const [branches, setBranches]             = useState<Branch[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState(user?.branchId || '');
-  const [stock, setStock]                   = useState<StockItem[]>([]);
-  const [loading, setLoading]               = useState(false);
-  const [search, setSearch]                 = useState('');
-  const [products, setProducts]             = useState<Product[]>([]);
-  const [warehouses, setWarehouses]         = useState<any[]>([]);
+  const [stock, setStock] = useState<StockItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+
+  // Sort & filter state for stock table
+  const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'price' | 'updated'>('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [showLowOnly, setShowLowOnly] = useState(false);
+
+  // Toast notification
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   // Admin: all pending requests
-  const [requests, setRequests]             = useState<StockRequest[]>([]);
+  const [requests, setRequests] = useState<StockRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsBranchFilter, setRequestsBranchFilter] = useState('');
 
   // Staff: their own requests (all statuses)
-  const [myRequests, setMyRequests]         = useState<StockRequest[]>([]);
+  const [myRequests, setMyRequests] = useState<StockRequest[]>([]);
   const [myRequestsLoading, setMyRequestsLoading] = useState(false);
 
   const [tab, setTab] = useState<'stock' | 'requests' | 'my-requests'>('stock');
 
   // Staff request form
-  const [showReqForm, setShowReqForm]       = useState(false);
-  const [reqForm, setReqForm]               = useState({ productId: '', quantity: 1, notes: '' });
-  const [reqSaving, setReqSaving]           = useState(false);
-  const [reqError, setReqError]             = useState('');
+  const [showReqForm, setShowReqForm] = useState(false);
+  const [reqForm, setReqForm] = useState({ productId: '', quantity: 1, notes: '' });
+  const [reqSaving, setReqSaving] = useState(false);
+  const [reqError, setReqError] = useState('');
 
   // Admin direct add form
-  const [showAddForm, setShowAddForm]       = useState(false);
-  const [addForm, setAddForm]               = useState({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
-  const [addSaving, setAddSaving]           = useState(false);
-  const [addError, setAddError]             = useState('');
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
+  const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState('');
 
   // Admin approve modal
-  const [approving, setApproving]           = useState<StockRequest | null>(null);
-  const [approveForm, setApproveForm]       = useState({ sourceType: 'warehouse', warehouseId: '' });
-  const [approveSaving, setApproveSaving]   = useState(false);
-  const [approveError, setApproveError]     = useState('');
+  const [approving, setApproving] = useState<StockRequest | null>(null);
+  const [approveForm, setApproveForm] = useState({ sourceType: 'warehouse', warehouseId: '' });
+  const [approveSaving, setApproveSaving] = useState(false);
+  const [approveError, setApproveError] = useState('');
 
-  // Runs once — load branches and products (these don't depend on role)
-  {/* NEW */}
+  function showToast(msg: string, type: 'success' | 'error' = 'success') {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  }
+
   useEffect(() => {
     find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }).then(data => {
       setBranches(data as Branch[]);
       if (!selectedBranch && isAdmin && data[0]) setSelectedBranch((data[0] as Branch)._id);
     });
-  find(Collections.PRODUCTS, { isActive: true }).then(d => setProducts(d as Product[]));
+    find(Collections.PRODUCTS, { isActive: true }).then(d => setProducts(d as Product[]));
   }, []);
 
-// Runs when user/role is available — load role-specific data
   useEffect(() => {
-  if (!user) return; // wait until auth resolves
-  if (isAdmin) {
-    find(Collections.WAREHOUSES, {}).then(d => setWarehouses(d));
-    fetchRequests();
-  } else {
-    fetchMyRequests();
-  }
-  }, [user?.role]); // re-runs if role changes (e.g. after login)
+    if (!user) return;
+    if (isAdmin) {
+      find(Collections.WAREHOUSES, {}).then(d => setWarehouses(d));
+      fetchRequests();
+    } else {
+      fetchMyRequests();
+    }
+  }, [user?.role]);
 
   useEffect(() => { if (selectedBranch) fetchStock(); }, [selectedBranch]);
 
@@ -132,7 +159,6 @@ export default function BranchStockPage() {
   async function fetchRequests() {
     setRequestsLoading(true);
     try {
-      // Fetch ALL pending requests across all branches
       const data = await authFetch('/api/branches/stock-requests?status=pending', token);
       setRequests(Array.isArray(data) ? data : []);
     } catch {}
@@ -140,12 +166,12 @@ export default function BranchStockPage() {
   }
 
   async function fetchMyRequests() {
-  setMyRequestsLoading(true);
-  try {
-    const data = await authFetch('/api/branches/stock-requests/mine', token);
-    setMyRequests(Array.isArray(data) ? data : []);
-  } catch {}
-  setMyRequestsLoading(false);
+    setMyRequestsLoading(true);
+    try {
+      const data = await authFetch('/api/branches/stock-requests/mine', token);
+      setMyRequests(Array.isArray(data) ? data : []);
+    } catch {}
+    setMyRequestsLoading(false);
   }
 
   async function submitRequest(e: React.FormEvent) {
@@ -159,10 +185,9 @@ export default function BranchStockPage() {
       });
       setShowReqForm(false);
       setReqForm({ productId: '', quantity: 1, notes: '' });
-      // Refresh my requests so staff can see the new pending entry
       fetchMyRequests();
-      // Switch to the my-requests tab so they see the status immediately
       setTab('my-requests');
+      showToast('Stock request submitted successfully');
     } catch (err: any) { setReqError(err.message || 'Failed to submit'); }
     setReqSaving(false);
   }
@@ -180,6 +205,7 @@ export default function BranchStockPage() {
       setShowAddForm(false);
       setAddForm({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
       fetchStock();
+      showToast('Stock added successfully');
     } catch (err: any) { setAddError(err.message || 'Failed to add stock'); }
     setAddSaving(false);
   }
@@ -194,9 +220,11 @@ export default function BranchStockPage() {
         method: 'PATCH',
         body: JSON.stringify({ sourceType: approveForm.sourceType, warehouseId: approveForm.warehouseId || null }),
       });
+      const productName = approving.product_name;
       setApproving(null);
       fetchRequests();
       if (approving.branch_id === selectedBranch) fetchStock();
+      showToast(`Approved request for ${productName}`);
     } catch (err: any) { setApproveError(err.message || 'Failed to approve'); }
     setApproveSaving(false);
   }
@@ -206,20 +234,66 @@ export default function BranchStockPage() {
     try {
       await authFetch(`/api/branches/stock-requests/${req.id}/reject`, token, { method: 'PATCH' });
       fetchRequests();
+      showToast(`Rejected request for ${req.product_name}`, 'error');
     } catch (err: any) { alert(err.message || 'Failed to reject'); }
   }
 
-  const filtered = stock.filter(s =>
-    s.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
-    (s.product?.category || '').toLowerCase().includes(search.toLowerCase())
-  );
+  function toggleSort(col: typeof sortBy) {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(col); setSortDir('asc'); }
+  }
+
+  const filtered = useMemo(() => {
+    let items = stock.filter(s =>
+      s.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
+      (s.product?.category || '').toLowerCase().includes(search.toLowerCase())
+    );
+    if (showLowOnly) items = items.filter(s => s.quantity <= 20);
+    return [...items].sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === 'name')     cmp = (a.product?.name || '').localeCompare(b.product?.name || '');
+      else if (sortBy === 'quantity') cmp = a.quantity - b.quantity;
+      else if (sortBy === 'price')    cmp = (a.product?.unitPrice || 0) - (b.product?.unitPrice || 0);
+      else if (sortBy === 'updated')  cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [stock, search, showLowOnly, sortBy, sortDir]);
+
   const branchName = branches.find(b => b._id === selectedBranch)?.name || '';
   const fmt = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 
   const pendingMyRequests = myRequests.filter(r => r.status === 'pending').length;
 
+  // Summary stats for current branch
+  const critical  = stock.filter(s => s.quantity <= 5).length;
+  const low       = stock.filter(s => s.quantity > 5 && s.quantity <= 20).length;
+  const totalValue = stock.reduce((sum, s) => sum + s.quantity * (s.product?.unitPrice || 0), 0);
+
+  // Admin requests filtered by branch
+  const filteredRequests = requestsBranchFilter
+    ? requests.filter(r => r.branch_id === requestsBranchFilter)
+    : requests;
+
+  const requestBranches = useMemo(() => {
+    const map = new Map<string, string>();
+    requests.forEach(r => map.set(r.branch_id, r.branch_name));
+    return Array.from(map.entries());
+  }, [requests]);
+
+  function SortIcon({ col }: { col: typeof sortBy }) {
+    return <ArrowUpDown className={`w-3 h-3 inline ml-1 ${sortBy === col ? 'text-amber-500' : 'text-slate-300'}`} />;
+  }
+
   return (
     <div className="p-6 space-y-6">
+
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium animate-in fade-in slide-in-from-top-2 ${toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+          {toast.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> : <XCircle className="w-4 h-4 shrink-0" />}
+          {toast.msg}
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -241,6 +315,48 @@ export default function BranchStockPage() {
         </div>
       </div>
 
+      {/* Summary Stats — shown once stock is loaded */}
+      {stock.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+              <Package className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Total Products</p>
+              <p className="text-xl font-bold text-slate-800">{stock.length}</p>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Critical (≤5)</p>
+              <p className={`text-xl font-bold ${critical > 0 ? 'text-red-600' : 'text-slate-800'}`}>{critical}</p>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
+              <TrendingDown className="w-5 h-5 text-amber-500" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Low Stock (6–20)</p>
+              <p className={`text-xl font-bold ${low > 0 ? 'text-amber-600' : 'text-slate-800'}`}>{low}</p>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-green-50 flex items-center justify-center shrink-0">
+              <DollarSign className="w-5 h-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Total Value</p>
+              <p className="text-base font-bold text-slate-800 leading-tight">{fmt(totalValue)}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-2 border-b border-slate-200">
         <button onClick={() => setTab('stock')}
@@ -248,7 +364,6 @@ export default function BranchStockPage() {
           Stock
         </button>
 
-        {/* Admin sees pending requests tab */}
         {isAdmin && (
           <button onClick={() => { setTab('requests'); fetchRequests(); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${tab === 'requests' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
@@ -261,7 +376,6 @@ export default function BranchStockPage() {
           </button>
         )}
 
-        {/* Staff sees their own requests tab */}
         {!isAdmin && (
           <button onClick={() => { setTab('my-requests'); fetchMyRequests(); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${tab === 'my-requests' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
@@ -278,47 +392,77 @@ export default function BranchStockPage() {
       {/* Stock Tab */}
       {tab === 'stock' && (
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-          <div className="flex flex-col sm:flex-row gap-3 mb-6">
-            {/* NEW */}
-              {isAdmin ? (
-                <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                  className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                  {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-                </select>
-              ) : (
-                <div className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
-                  {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
-                </div>
-              )}
+          <div className="flex flex-col sm:flex-row gap-3 mb-4">
+            {isAdmin ? (
+              <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+              </select>
+            ) : (
+              <div className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
+                {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
+              </div>
+            )}
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search products..."
+                placeholder="Search products or category..."
                 className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
             </div>
+            {/* Low stock filter toggle */}
+            <button onClick={() => setShowLowOnly(v => !v)}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium border transition-colors ${showLowOnly ? 'bg-amber-500 border-amber-500 text-white' : 'border-slate-200 text-slate-600 hover:border-amber-300 hover:text-amber-600'}`}>
+              <AlertTriangle className="w-4 h-4" />Low Stock
+            </button>
           </div>
 
           {branchName && (
-            <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
-              <Package className="w-5 h-5 text-amber-500" />{branchName} — {filtered.length} products
-            </h3>
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h3 className="font-semibold text-slate-700 flex items-center gap-2">
+                <Package className="w-5 h-5 text-amber-500" />
+                {branchName} — {filtered.length} product{filtered.length !== 1 ? 's' : ''}
+              </h3>
+              {/* Stock level legend */}
+              <div className="flex items-center gap-3 text-xs text-slate-400">
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />Critical ≤5</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />Low ≤20</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />OK &gt;20</span>
+              </div>
+            </div>
           )}
 
           {loading ? (
             <div className="space-y-2">{[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-slate-100 rounded-lg animate-pulse" />)}</div>
           ) : filtered.length === 0 ? (
-            <div className="text-center py-12 text-slate-400"><Package className="w-12 h-12 mx-auto mb-3 opacity-40" /><p>No stock records found</p></div>
+            <div className="text-center py-12 text-slate-400">
+              <Package className="w-12 h-12 mx-auto mb-3 opacity-40" />
+              <p>{search || showLowOnly ? 'No products match your filters' : 'No stock records found'}</p>
+              {(search || showLowOnly) && (
+                <button onClick={() => { setSearch(''); setShowLowOnly(false); }}
+                  className="mt-2 text-amber-500 text-sm hover:underline">
+                  Clear filters
+                </button>
+              )}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left border-b border-slate-200">
-                    <th className="pb-3 font-medium text-slate-600">Product</th>
+                    <th className="pb-3 font-medium text-slate-600 cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('name')}>
+                      Product<SortIcon col="name" />
+                    </th>
                     <th className="pb-3 font-medium text-slate-600">Category</th>
                     <th className="pb-3 font-medium text-slate-600">Unit</th>
-                    <th className="pb-3 font-medium text-slate-600 text-right">Quantity</th>
-                    <th className="pb-3 font-medium text-slate-600 text-right">Price</th>
-                    <th className="pb-3 font-medium text-slate-600">Updated</th>
+                    <th className="pb-3 font-medium text-slate-600 text-right cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('quantity')}>
+                      Quantity<SortIcon col="quantity" />
+                    </th>
+                    <th className="pb-3 font-medium text-slate-600 text-right cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('price')}>
+                      Price<SortIcon col="price" />
+                    </th>
+                    <th className="pb-3 font-medium text-slate-600 cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('updated')}>
+                      Updated<SortIcon col="updated" />
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -327,11 +471,19 @@ export default function BranchStockPage() {
                       <td className="py-3 font-medium text-slate-800">{item.product?.name}</td>
                       <td className="py-3 text-slate-500">{item.product?.category || '-'}</td>
                       <td className="py-3 text-slate-500">{item.product?.unit}</td>
-                      <td className={`py-3 text-right font-semibold ${item.quantity <= 5 ? 'text-red-600' : item.quantity <= 20 ? 'text-amber-600' : 'text-green-600'}`}>
-                        {item.quantity.toLocaleString()}
+                      <td className="py-3 text-right">
+                        <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded-full text-xs font-bold ${
+                          item.quantity <= 5  ? 'bg-red-100 text-red-700' :
+                          item.quantity <= 20 ? 'bg-amber-100 text-amber-700' :
+                                               'bg-green-100 text-green-700'
+                        }`}>
+                          {item.quantity.toLocaleString()}
+                        </span>
                       </td>
                       <td className="py-3 text-right text-slate-600">{fmt(item.product?.unitPrice || 0)}</td>
-                      <td className="py-3 text-slate-400 text-xs">{new Date(item.updatedAt).toLocaleDateString()}</td>
+                      <td className="py-3 text-slate-400 text-xs" title={new Date(item.updatedAt).toLocaleString()}>
+                        {relativeTime(item.updatedAt)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -344,36 +496,56 @@ export default function BranchStockPage() {
       {/* Admin: Pending Requests Tab */}
       {tab === 'requests' && isAdmin && (
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-slate-700">Pending Stock Requests</h3>
-            <button onClick={fetchRequests} disabled={requestsLoading}
-              className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
-              <RefreshCw className={`w-4 h-4 ${requestsLoading ? 'animate-spin' : ''}`} /> Refresh
-            </button>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div>
+              <h3 className="font-semibold text-slate-700">Pending Stock Requests</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {filteredRequests.length} request{filteredRequests.length !== 1 ? 's' : ''}
+                {requestBranches.length > 1 ? ` from ${requestBranches.length} branches` : ''}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Branch filter — only shows when there are multiple branches in the request list */}
+              {requestBranches.length > 1 && (
+                <select value={requestsBranchFilter} onChange={e => setRequestsBranchFilter(e.target.value)}
+                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                  <option value="">All branches</option>
+                  {requestBranches.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+              )}
+              <button onClick={fetchRequests} disabled={requestsLoading}
+                className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
+                <RefreshCw className={`w-4 h-4 ${requestsLoading ? 'animate-spin' : ''}`} /> Refresh
+              </button>
+            </div>
           </div>
 
           {requestsLoading ? (
             <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-slate-100 rounded-xl animate-pulse" />)}</div>
-          ) : requests.length === 0 ? (
+          ) : filteredRequests.length === 0 ? (
             <div className="text-center py-12 text-slate-400">
               <Clock className="w-12 h-12 mx-auto mb-3 opacity-40" />
-              <p>No pending requests</p>
+              <p>{requestsBranchFilter ? 'No pending requests for this branch' : 'No pending requests'}</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {requests.map(req => (
-                <div key={req.id} className="border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+              {filteredRequests.map(req => (
+                <div key={req.id} className="border border-slate-200 border-l-4 border-l-amber-400 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="font-semibold text-slate-800">{req.product_name}</span>
                       <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{req.quantity} {req.product_unit}</span>
                       <StatusBadge status={req.status} />
                     </div>
                     <p className="text-sm text-slate-500">Branch: <span className="font-medium text-slate-700">{req.branch_name}</span></p>
-                    <p className="text-sm text-slate-500">Requested by: <span className="font-medium text-slate-700">{req.requested_by_name}</span> · {new Date(req.created_at).toLocaleDateString()}</p>
-                    {req.notes && <p className="text-xs text-slate-400 mt-1">Note: {req.notes}</p>}
+                    <p className="text-sm text-slate-500">
+                      By <span className="font-medium text-slate-700">{req.requested_by_name}</span>
+                      {' · '}
+                      <span title={new Date(req.created_at).toLocaleString()}>{relativeTime(req.created_at)}</span>
+                    </p>
+                    {req.notes && <p className="text-xs text-slate-400 mt-1 italic">"{req.notes}"</p>}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 shrink-0">
                     <button onClick={() => { setApproving(req); setApproveForm({ sourceType: 'warehouse', warehouseId: '' }); setApproveError(''); }}
                       className="flex items-center gap-1.5 px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors">
                       <CheckCircle className="w-4 h-4" />Approve
@@ -394,7 +566,10 @@ export default function BranchStockPage() {
       {tab === 'my-requests' && !isAdmin && (
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-slate-700">My Stock Requests</h3>
+            <div>
+              <h3 className="font-semibold text-slate-700">My Stock Requests</h3>
+              <p className="text-xs text-slate-400 mt-0.5">{myRequests.length} total · {pendingMyRequests} pending</p>
+            </div>
             <button onClick={fetchMyRequests} disabled={myRequestsLoading}
               className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
               <RefreshCw className={`w-4 h-4 ${myRequestsLoading ? 'animate-spin' : ''}`} /> Refresh
@@ -411,15 +586,23 @@ export default function BranchStockPage() {
           ) : (
             <div className="space-y-3">
               {myRequests.map(req => (
-                <div key={req.id} className="border border-slate-200 rounded-xl p-4">
+                <div key={req.id} className={`border rounded-xl p-4 border-l-4 ${
+                  req.status === 'approved' || req.status === 'accepted'
+                    ? 'border-slate-100 border-l-green-400'
+                    : req.status === 'rejected'
+                    ? 'border-red-50 border-l-red-400'
+                    : 'border-slate-200 border-l-amber-400'
+                }`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="font-semibold text-slate-800">{req.product_name}</span>
                         <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{req.quantity} {req.product_unit}</span>
                       </div>
-                      <p className="text-xs text-slate-400">{new Date(req.created_at).toLocaleString()}</p>
-                      {req.notes && <p className="text-xs text-slate-500 mt-1">Note: {req.notes}</p>}
+                      <p className="text-xs text-slate-400" title={new Date(req.created_at).toLocaleString()}>
+                        {relativeTime(req.created_at)}
+                      </p>
+                      {req.notes && <p className="text-xs text-slate-500 mt-1 italic">"{req.notes}"</p>}
                     </div>
                     <StatusBadge status={req.status} />
                   </div>
@@ -466,11 +649,14 @@ export default function BranchStockPage() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
                 <textarea value={reqForm.notes} onChange={e => setReqForm(f => ({ ...f, notes: e.target.value }))} rows={2}
+                  placeholder="Optional — reason for request, urgency, etc."
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
               </div>
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowReqForm(false)} className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={reqSaving} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
+                <button type="button" onClick={() => setShowReqForm(false)}
+                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+                <button type="submit" disabled={reqSaving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
                   {reqSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
                   Submit Request
                 </button>
@@ -533,8 +719,10 @@ export default function BranchStockPage() {
                 </div>
               )}
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowAddForm(false)} className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={addSaving} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
+                <button type="button" onClick={() => setShowAddForm(false)}
+                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+                <button type="submit" disabled={addSaving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
                   {addSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
                   Add Stock
                 </button>
@@ -577,8 +765,10 @@ export default function BranchStockPage() {
                 </div>
               )}
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setApproving(null)} className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={approveSaving} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
+                <button type="button" onClick={() => setApproving(null)}
+                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+                <button type="submit" disabled={approveSaving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
                   {approveSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                   Approve & Add Stock
                 </button>
