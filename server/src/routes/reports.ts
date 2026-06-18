@@ -118,7 +118,11 @@ router.get('/daily/:id', async (req: Request, res: Response) => {
 // POST /api/reports/daily  (upsert — one report per branch per day)
 router.post('/daily', async (req: Request, res: Response) => {
   try {
-    const { branchId, reportDate } = req.body;
+      const { reportDate } = req.body;
+      const branchId = req.user?.role !== 'admin' && req.user?.branchId
+          ? req.user.branchId
+          : req.body.branchId;
+
     if (!branchId || !reportDate) return sendError(res, 400, 'branchId and reportDate are required');
 
     const {
@@ -237,9 +241,14 @@ router.get('/debtors', async (req: Request, res: Response) => {
 });
 
 // POST /api/reports/debtors
+// NEW
 router.post('/debtors', async (req: Request, res: Response) => {
   try {
-    const { name, phone, amountOwed, branchId, saleId, notes } = req.body;
+    const { name, phone, amountOwed, saleId, notes } = req.body;
+    const branchId = req.user?.role !== 'admin' && req.user?.branchId
+      ? req.user.branchId
+      : req.body.branchId;
+
     const [debtor] = await sql<DebtorRow[]>`
       INSERT INTO debtors (name, phone, amount_owed, branch_id, created_by, sale_id, notes)
       VALUES (
@@ -306,9 +315,14 @@ router.get('/expenses', async (req: Request, res: Response) => {
 });
 
 // POST /api/reports/expenses
+// NEW
 router.post('/expenses', async (req: Request, res: Response) => {
   try {
-    const { branchId, description, amount, category, expenseDate, notes } = req.body;
+    const { description, amount, category, expenseDate, notes } = req.body;
+    const branchId = req.user?.role !== 'admin' && req.user?.branchId
+      ? req.user.branchId
+      : req.body.branchId;
+      
     const [expense] = await sql<ExpenseRow[]>`
       INSERT INTO expenses (branch_id, description, amount, category, recorded_by, expense_date, notes)
       VALUES (

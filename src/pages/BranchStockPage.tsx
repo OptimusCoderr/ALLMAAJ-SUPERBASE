@@ -87,11 +87,12 @@ export default function BranchStockPage() {
   const [approveError, setApproveError]     = useState('');
 
   // Runs once — load branches and products (these don't depend on role)
+  {/* NEW */}
   useEffect(() => {
-  find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }).then(data => {
-    setBranches(data as Branch[]);
-    if (!selectedBranch && data[0]) setSelectedBranch((data[0] as Branch)._id);
-  });
+    find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }).then(data => {
+      setBranches(data as Branch[]);
+      if (!selectedBranch && isAdmin && data[0]) setSelectedBranch((data[0] as Branch)._id);
+    });
   find(Collections.PRODUCTS, { isActive: true }).then(d => setProducts(d as Product[]));
   }, []);
 
@@ -278,11 +279,17 @@ export default function BranchStockPage() {
       {tab === 'stock' && (
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
           <div className="flex flex-col sm:flex-row gap-3 mb-6">
-            <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-              disabled={!isAdmin}
-              className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-slate-50">
-              {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-            </select>
+            {/* NEW */}
+              {isAdmin ? (
+                <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                  className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                  {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                </select>
+              ) : (
+                <div className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
+                  {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
+                </div>
+              )}
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input type="text" value={search} onChange={e => setSearch(e.target.value)}

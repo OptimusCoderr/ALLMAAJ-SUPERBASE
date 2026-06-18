@@ -41,10 +41,16 @@ router.post('/', adminOnly, [body('name').trim().notEmpty()], async (req: Reques
 // ── Stock Requests (MUST be before /:id to avoid route conflict) ──────────────
 
 // Staff or admin creates a stock request
+//POST /api/branches/stock-requests
+// NEW
 router.post('/stock-requests', async (req: Request, res: Response) => {
   try {
-    const { branchId, productId, quantity, notes } = req.body;
+    const { productId, quantity, notes } = req.body;
+    const branchId = req.user?.role !== 'admin' && req.user?.branchId
+      ? req.user.branchId
+      : req.body.branchId;
     if (!branchId || !productId || !quantity) return sendError(res, 400, 'branchId, productId and quantity are required');
+    
     const [row] = await sql`
       INSERT INTO stock_requests (branch_id, product_id, quantity, requested_by, requested_by_name, notes)
       VALUES (${branchId}, ${productId}, ${Number(quantity)}, ${req.user!.id}, ${req.user!.fullName || req.user!.email}, ${notes ?? null})

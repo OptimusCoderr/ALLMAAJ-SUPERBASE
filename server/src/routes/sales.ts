@@ -36,7 +36,7 @@ const toSale = (s: SaleRow & { staff_name?: string }) => ({
   reportId:      s.report_id,
 });
 
-// ── GET /api/sales ────────────────────────────────────────────────────────────
+
 // ── GET /api/sales ────────────────────────────────────────────────────────────
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -122,11 +122,18 @@ router.post(
   async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
+   // NEW — staff branch is locked to their JWT branchId
     try {
       const {
-        branchId, paymentMethod, customerName, customerPhone,
+        paymentMethod, customerName, customerPhone,
         notes, saleDate, items, amountPaid,
       } = req.body;
+
+      const branchId = req.user?.role !== 'admin' && req.user?.branchId
+        ? req.user.branchId
+        : req.body.branchId;
+
+      if (!branchId) return sendError(res, 400, 'Branch is required');
 
       const processedItems: SaleItemJson[] = items.map((item: any) => ({
         product_id:   item.productId,

@@ -1,83 +1,108 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { find, insertOne, updateOne, Collections } from '../lib/api';
 import type { Product, Branch, BranchStock, Expense, Debtor } from '../lib/types';
-import { Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt, Pencil, Lock, Send, AlertTriangle, X } from 'lucide-react';
+import {
+  Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
+  Pencil, Lock, Send, AlertTriangle, X,
+} from 'lucide-react';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface CartItem { product: Product; quantity: number; unitPrice: number }
-
-type Tab = 'sale' | 'debtor' | 'expense';
+type Tab           = 'sale' | 'debtor' | 'expense';
 type PaymentMethod = 'cash' | 'pos' | 'part' | 'unpaid';
 
-const pmColors: Record<string, string> = {
+interface EditSaleState {
+  sale: any;
+  cart: CartItem[];
+  pm: PaymentMethod;
+  customerName: string; customerPhone: string;
+  amountPaid: number;   notes: string;
+  addProduct: string;   addQty: number; addPrice: number;
+  loading: boolean;     error: string;
+}
+interface EditExpenseState {
+  expense: Expense;
+  desc: string; amount: string; category: string; notes: string;
+  loading: boolean; error: string;
+}
+interface EditDebtorState {
+  debtor: Debtor;
+  name: string; phone: string; amount: string; notes: string;
+  loading: boolean; error: string;
+}
+
+// ── Pure helpers ──────────────────────────────────────────────────────────────
+
+const PM_COLORS: Record<string, string> = {
   cash:   'bg-green-100 text-green-700',
   pos:    'bg-blue-100 text-blue-700',
   part:   'bg-orange-100 text-orange-700',
   unpaid: 'bg-red-100 text-red-700',
 };
-
-const pmLabels: Record<string, string> = {
+const PM_LABELS: Record<string, string> = {
   cash: 'Cash', pos: 'POS', part: 'Part Payment', unpaid: 'Unpaid',
 };
-
-function isToday(dateStr: string): boolean {
-  if (!dateStr) return false;
-  const d = new Date(dateStr);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth()    === now.getMonth()    &&
-    d.getDate()     === now.getDate()
-  );
-}
-
-function safeItems(raw: any): any[] {
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string') {
-    try { return JSON.parse(raw); } catch { return []; }
-  }
-  return [];
-}
-
+const EXPENSE_CATS = ['transport', 'utilities', 'supplies', 'maintenance', 'other'] as const;
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
-function getToken(): string {
-  return (
-    sessionStorage.getItem('bt_session') ||
-    localStorage.getItem('bt_session') ||
-    ''
-  );
+function fmt(n: number) {
+  return `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 }
+function getToken() {
+  return sessionStorage.getItem('bt_session') || localStorage.getItem('bt_session') || '';
+}
+function isToday(dateStr: string): boolean {
+  if (!dateStr) return false;
+  const d = new Date(dateStr), now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+         d.getMonth()    === now.getMonth()    &&
+         d.getDate()     === now.getDate();
+}
+function safeItems(raw: any): any[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') { try { return JSON.parse(raw); } catch { return []; } }
+  return [];
+}
+function pmButtonStyle(m: PaymentMethod, current: PaymentMethod) {
+  const on = current === m;
+  const c: Record<PaymentMethod, string> = {
+    cash:   on ? 'bg-green-500 text-white border-green-500'   : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    pos:    on ? 'bg-blue-500 text-white border-blue-500'     : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    part:   on ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    unpaid: on ? 'bg-red-500 text-white border-red-500'       : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+  };
+  return `flex-1 py-2 rounded-lg text-sm font-medium transition-colors border ${c[m]}`;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SalesPage() {
   const { user } = useAuth();
-  const navigate = useNavigate();
+  const isAdmin = user?.role === 'admin';
 
-  const [tab, setTab]           = useState<Tab>('sale');
-  const [products, setProducts] = useState<Product[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
+  const [tab, setTab]                 = useState<Tab>('sale');
+  const [products, setProducts]       = useState<Product[]>([]);
+  const [branches, setBranches]       = useState<Branch[]>([]);
   const [branchStock, setBranchStock] = useState<BranchStock[]>([]);
   const [todaySales, setTodaySales]       = useState<any[]>([]);
   const [todayExpenses, setTodayExpenses] = useState<Expense[]>([]);
   const [todayDebtors, setTodayDebtors]   = useState<Debtor[]>([]);
-  const [rightTab, setRightTab]           = useState<'sales' | 'expenses' | 'debtors'>('sales');
+  const [rightTab, setRightTab] = useState<'sales' | 'expenses' | 'debtors'>('sales');
 
   // Sale form
   const [selectedBranch, setSelectedBranch]   = useState(user?.branchId || '');
   const [paymentMethod, setPaymentMethod]     = useState<PaymentMethod>('cash');
   const [customerName, setCustomerName]       = useState('');
   const [customerPhone, setCustomerPhone]     = useState('');
-  const [amountPaid, setAmountPaid]           = useState<number>(0);
+  const [amountPaid, setAmountPaid]           = useState(0);
   const [notes, setNotes]                     = useState('');
   const [saleDate, setSaleDate]               = useState(new Date().toISOString().split('T')[0]);
   const [selectedProduct, setSelectedProduct] = useState('');
   const [qty, setQty]     = useState(1);
   const [price, setPrice] = useState(0);
   const [cart, setCart]   = useState<CartItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState('');
-  const [error, setError]     = useState('');
 
   // Debtor form
   const [debtorName, setDebtorName]     = useState('');
@@ -88,47 +113,31 @@ export default function SalesPage() {
   // Expense form
   const [expenseDesc, setExpenseDesc]         = useState('');
   const [expenseAmount, setExpenseAmount]     = useState('');
-  const [expenseCategory, setExpenseCategory] = useState('other');
+  const [expenseCategory, setExpenseCategory] = useState<typeof EXPENSE_CATS[number]>('other');
   const [expenseNotes, setExpenseNotes]       = useState('');
 
-  // Edit sale modal
-  const [editSale, setEditSale]                       = useState<any | null>(null);
-  const [editCart, setEditCart]                       = useState<CartItem[]>([]);
-  const [editPaymentMethod, setEditPaymentMethod]     = useState<PaymentMethod>('cash');
-  const [editCustomerName, setEditCustomerName]       = useState('');
-  const [editCustomerPhone, setEditCustomerPhone]     = useState('');
-  const [editAmountPaid, setEditAmountPaid]           = useState<number>(0);
-  const [editNotes, setEditNotes]                     = useState('');
-  const [editSelectedProduct, setEditSelectedProduct] = useState('');
-  const [editQty, setEditQty]       = useState(1);
-  const [editPrice, setEditPrice]   = useState(0);
-  const [editLoading, setEditLoading] = useState(false);
-  const [editError, setEditError]     = useState('');
+  // Shared form feedback
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState('');
+  const [error, setError]     = useState('');
 
-  // Edit expense modal
-  const [editExpense, setEditExpense]                 = useState<Expense | null>(null);
-  const [editExpenseDesc, setEditExpenseDesc]         = useState('');
-  const [editExpenseAmount, setEditExpenseAmount]     = useState('');
-  const [editExpenseCategory, setEditExpenseCategory] = useState('other');
-  const [editExpenseNotes, setEditExpenseNotes]       = useState('');
-  const [editExpenseLoading, setEditExpenseLoading]   = useState(false);
-  const [editExpenseError, setEditExpenseError]       = useState('');
+  // Edit modals — consolidated (replaces 24 individual useState calls)
+  const [editSale, setEditSale]       = useState<EditSaleState | null>(null);
+  const [editExpense, setEditExpense] = useState<EditExpenseState | null>(null);
+  const [editDebtor, setEditDebtor]   = useState<EditDebtorState | null>(null);
 
-  // Edit debtor modal
-  const [editDebtor, setEditDebtor]             = useState<Debtor | null>(null);
-  const [editDebtorName, setEditDebtorName]     = useState('');
-  const [editDebtorPhone, setEditDebtorPhone]   = useState('');
-  const [editDebtorAmount, setEditDebtorAmount] = useState('');
-  const [editDebtorNotes, setEditDebtorNotes]   = useState('');
-  const [editDebtorLoading, setEditDebtorLoading] = useState(false);
-  const [editDebtorError, setEditDebtorError]     = useState('');
-
+  // Daily report
   const [reportLoading, setReportLoading] = useState(false);
-  const [reportSuccess, setReportSuccess] = useState('');
-  const [reportError, setReportError]     = useState('');
+  const [reportMsg, setReportMsg]         = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => { fetchData(); }, [user]);
   useEffect(() => { if (selectedBranch) fetchStock(selectedBranch); }, [selectedBranch]);
+
+  function switchTab(t: Tab) {
+    setTab(t);
+    setError('');
+    setSuccess('');
+  }
 
   async function fetchData() {
     const [prods, brs] = await Promise.all([
@@ -153,13 +162,11 @@ export default function SalesPage() {
     const today = new Date().toISOString().split('T')[0];
     const start = `${today}T00:00:00.000Z`;
     const end   = `${today}T23:59:59.999Z`;
-
     const [salesData, expensesData, debtorsData] = await Promise.all([
       find(Collections.SALES,    { branchId, saleDate:    { $gte: start } }, { sort: { createdAt: -1 }, limit: 100 }),
       find(Collections.EXPENSES, { branchId, expenseDate: { $gte: start, $lte: end } }),
       find(Collections.DEBTORS,  { branchId, isCleared: false }),
     ]);
-
     setTodaySales((salesData as any[]).filter(s => !s.reportId));
     setTodayExpenses(expensesData as Expense[]);
     setTodayDebtors(debtorsData as Debtor[]);
@@ -169,22 +176,17 @@ export default function SalesPage() {
     return branchStock.find(s => s.productId === productId)?.quantity ?? 0;
   }
 
+  // ── Cart ──────────────────────────────────────────────────────────────────
+
   function addToCart() {
     const product = products.find(p => p._id === selectedProduct);
     if (!product) return;
-
     const alreadyInCart = cart.find(c => c.product._id === selectedProduct)?.quantity ?? 0;
     const available = getStock(selectedProduct);
-
     if (alreadyInCart + qty > available) {
       setError(`Not enough stock for "${product.name}". Available: ${available - alreadyInCart}`);
       return;
     }
-    if (available === 0) {
-      setError(`"${product.name}" is out of stock.`);
-      return;
-    }
-
     const idx = cart.findIndex(c => c.product._id === selectedProduct);
     if (idx >= 0) {
       setCart(cart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + qty } : c));
@@ -194,6 +196,7 @@ export default function SalesPage() {
     setSelectedProduct('');
     setQty(1);
     setPrice(0);
+    setError('');
   }
 
   function updateItem(idx: number, field: 'quantity' | 'unitPrice', value: number) {
@@ -204,6 +207,8 @@ export default function SalesPage() {
   const hasDebt = paymentMethod === 'unpaid' || paymentMethod === 'part';
   const paid    = paymentMethod === 'unpaid' ? 0 : paymentMethod === 'part' ? amountPaid : total;
   const balance = total - paid;
+
+  // ── Sale submit ────────────────────────────────────────────────────────────
 
   async function handleSale(e: React.FormEvent) {
     e.preventDefault();
@@ -216,56 +221,34 @@ export default function SalesPage() {
     if (paymentMethod === 'part' && (amountPaid <= 0 || amountPaid >= total)) {
       setError('Amount paid must be greater than 0 and less than the total'); return;
     }
-
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       const newSaleId = await insertOne(Collections.SALES, {
-        branchId:      selectedBranch,
-        staffId:       user!.id,
-        staffName:     user!.fullName,
-        customerName:  customerName.trim(),
-        customerPhone: customerPhone.trim(),
-        paymentMethod,
-        totalAmount:   total,
-        amountPaid:    paid,
-        balanceDue:    balance,
-        notes:         notes.trim(),
+        branchId: selectedBranch, staffId: user!.id, staffName: user!.fullName,
+        customerName: customerName.trim(), customerPhone: customerPhone.trim(),
+        paymentMethod, totalAmount: total, amountPaid: paid, balanceDue: balance,
+        notes: notes.trim(),
         items: cart.map(c => ({
-          productId:   c.product._id,
-          productName: c.product.name,
-          quantity:    c.quantity,
-          unitPrice:   c.unitPrice,
-          subtotal:    c.quantity * c.unitPrice,
+          productId: c.product._id, productName: c.product.name,
+          quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
         })),
         saleDate: new Date(`${saleDate}T12:00:00.000Z`).toISOString(),
       });
-
       if (hasDebt && balance > 0) {
         const itemsSummary = cart.map(c => `${c.product.name} x${c.quantity}`).join(', ');
         await insertOne(Collections.DEBTORS, {
-          name:          customerName.trim(),
-          phone:         customerPhone.trim(),
-          amountOwed:    balance,
-          totalAmount:   total,
-          amountPaid:    paid,
-          branchId:      selectedBranch,
-          createdBy:     user!.id,
-          createdByName: user!.fullName,
-          isCleared:     false,
-          saleId:        newSaleId,
+          name: customerName.trim(), phone: customerPhone.trim(),
+          amountOwed: balance, totalAmount: total, amountPaid: paid,
+          branchId: selectedBranch, createdBy: user!.id, createdByName: user!.fullName,
+          isCleared: false, saleId: newSaleId,
           notes: `Sale: ${itemsSummary}${notes.trim() ? ` | ${notes.trim()}` : ''}`,
         });
       }
-
       const debtMsg = hasDebt && balance > 0 ? ` Debtor of ${fmt(balance)} auto-recorded.` : '';
       setSuccess(`Sale recorded!${debtMsg}`);
       setCart([]);
-      setCustomerName('');
-      setCustomerPhone('');
-      setNotes('');
-      setAmountPaid(0);
-      setPaymentMethod('cash');
+      setCustomerName(''); setCustomerPhone(''); setNotes('');
+      setAmountPaid(0); setPaymentMethod('cash');
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
@@ -274,29 +257,23 @@ export default function SalesPage() {
     setLoading(false);
   }
 
+  // ── Debtor submit ──────────────────────────────────────────────────────────
+
   async function handleDebtor(e: React.FormEvent) {
     e.preventDefault();
     if (!debtorName.trim())                             { setError('Debtor name is required'); return; }
     if (!debtorPhone.trim())                            { setError('Phone number is required'); return; }
     if (!debtorAmount || parseFloat(debtorAmount) <= 0) { setError('Amount owed is required'); return; }
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       await insertOne(Collections.DEBTORS, {
-        name:          debtorName.trim(),
-        phone:         debtorPhone.trim(),
-        amountOwed:    parseFloat(debtorAmount),
-        branchId:      selectedBranch,
-        createdBy:     user!.id,
-        createdByName: user!.fullName,
-        isCleared:     false,
-        notes:         debtorNotes.trim(),
+        name: debtorName.trim(), phone: debtorPhone.trim(),
+        amountOwed: parseFloat(debtorAmount), branchId: selectedBranch,
+        createdBy: user!.id, createdByName: user!.fullName,
+        isCleared: false, notes: debtorNotes.trim(),
       });
       setSuccess('Debtor recorded!');
-      setDebtorName('');
-      setDebtorPhone('');
-      setDebtorAmount('');
-      setDebtorNotes('');
+      setDebtorName(''); setDebtorPhone(''); setDebtorAmount(''); setDebtorNotes('');
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
@@ -305,27 +282,22 @@ export default function SalesPage() {
     setLoading(false);
   }
 
+  // ── Expense submit ─────────────────────────────────────────────────────────
+
   async function handleExpense(e: React.FormEvent) {
     e.preventDefault();
     if (!expenseDesc.trim())                              { setError('Description is required'); return; }
     if (!expenseAmount || parseFloat(expenseAmount) <= 0) { setError('Amount is required'); return; }
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       await insertOne(Collections.EXPENSES, {
-        branchId:       selectedBranch,
-        description:    expenseDesc.trim(),
-        amount:         parseFloat(expenseAmount),
-        category:       expenseCategory,
-        recordedBy:     user!.id,
-        recordedByName: user!.fullName,
-        expenseDate:    new Date().toISOString(),
-        notes:          expenseNotes.trim(),
+        branchId: selectedBranch, description: expenseDesc.trim(),
+        amount: parseFloat(expenseAmount), category: expenseCategory,
+        recordedBy: user!.id, recordedByName: user!.fullName,
+        expenseDate: new Date().toISOString(), notes: expenseNotes.trim(),
       });
       setSuccess('Expense recorded!');
-      setExpenseDesc('');
-      setExpenseAmount('');
-      setExpenseNotes('');
+      setExpenseDesc(''); setExpenseAmount(''); setExpenseNotes('');
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
@@ -334,20 +306,19 @@ export default function SalesPage() {
     setLoading(false);
   }
 
+  // ── Daily report ───────────────────────────────────────────────────────────
+
   async function handleSubmitDailyReport() {
-    if (!selectedBranch) { setReportError('No branch selected'); return; }
-    setReportLoading(true);
-    setReportError('');
+    if (!selectedBranch) { setReportMsg({ ok: false, text: 'No branch selected' }); return; }
+    setReportLoading(true); setReportMsg(null);
     try {
       const today = new Date().toISOString().split('T')[0];
       const start = `${today}T00:00:00.000Z`;
       const end   = `${today}T23:59:59.999Z`;
-
       const [expensesData, debtorsData] = await Promise.all([
         find(Collections.EXPENSES, { branchId: selectedBranch, expenseDate: { $gte: start, $lte: end } }),
         find(Collections.DEBTORS,  { branchId: selectedBranch, isCleared: false }),
       ]);
-
       const totalCashSales    = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0);
       const totalPosSales     = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0);
       const totalPartSales    = todaySales.filter(s => s.paymentMethod === 'part').reduce((a, s) => a + Number(s.totalAmount), 0);
@@ -361,126 +332,84 @@ export default function SalesPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({
-          branchId: selectedBranch,
-          reportDate: today,
-          totalCashSales,
-          totalPosSales,
-          totalUnpaidSales,
-          totalPartSales,
-          totalExpenses,
-          netIncome,
-          debtorCount,
-          totalDebtorAmount,
+          branchId: selectedBranch, reportDate: today,
+          totalCashSales, totalPosSales, totalUnpaidSales, totalPartSales,
+          totalExpenses, netIncome, debtorCount, totalDebtorAmount,
         }),
       });
-
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
-
-      setReportSuccess('Daily report submitted! Awaiting admin review.');
+      setReportMsg({ ok: true, text: 'Daily report submitted! Awaiting admin review.' });
       setTodaySales([]);
-      setTimeout(() => setReportSuccess(''), 6000);
+      setTimeout(() => setReportMsg(null), 6000);
     } catch (err: any) {
-      setReportError(err.message || 'Failed to submit report');
-      setTimeout(() => setReportError(''), 6000);
+      setReportMsg({ ok: false, text: err.message || 'Failed to submit report' });
+      setTimeout(() => setReportMsg(null), 6000);
     }
     setReportLoading(false);
   }
 
-  // ── Sale edit helpers ─────────────────────────────────────────────────────────
+  // ── Edit Sale ─────────────────────────────────────────────────────────────
 
   function openEditSale(sale: any) {
-    setEditSale(sale);
-    setEditPaymentMethod(sale.paymentMethod as PaymentMethod);
-    setEditCustomerName(sale.customerName || '');
-    setEditCustomerPhone(sale.customerPhone || '');
-    setEditAmountPaid(sale.amountPaid ?? 0);
-    setEditNotes(sale.notes || '');
-    setEditError('');
-
-    const rawItems = safeItems(sale.items);
-    const rebuilt: CartItem[] = rawItems.map((item: any) => {
+    const rebuilt: CartItem[] = safeItems(sale.items).map((item: any) => {
       const productId = item.product_id || item.productId;
       const found = products.find(p => p._id === productId);
       const fallback: Product = {
-        _id:      productId,
-        name:     item.productName || item.product_name || productId,
-        unitPrice: item.unit_price ?? item.unitPrice ?? 0,
-        unit:     '',
-        isActive: true,
+        _id: productId, name: item.productName || item.product_name || productId,
+        unitPrice: item.unit_price ?? item.unitPrice ?? 0, unit: '', isActive: true,
       } as unknown as Product;
-      return {
-        product:   found || fallback,
-        quantity:  item.quantity,
-        unitPrice: item.unit_price ?? item.unitPrice ?? 0,
-      };
+      return { product: found || fallback, quantity: item.quantity, unitPrice: item.unit_price ?? item.unitPrice ?? 0 };
     });
-    setEditCart(rebuilt);
-    setEditSelectedProduct('');
-    setEditQty(1);
-    setEditPrice(0);
+    setEditSale({
+      sale, cart: rebuilt, pm: sale.paymentMethod as PaymentMethod,
+      customerName: sale.customerName || '', customerPhone: sale.customerPhone || '',
+      amountPaid: sale.amountPaid ?? 0, notes: sale.notes || '',
+      addProduct: '', addQty: 1, addPrice: 0,
+      loading: false, error: '',
+    });
   }
-
-  function closeEditSale() { setEditSale(null); setEditCart([]); setEditError(''); }
 
   function addToEditCart() {
-    const product = products.find(p => p._id === editSelectedProduct);
+    if (!editSale?.addProduct) return;
+    const product = products.find(p => p._id === editSale.addProduct);
     if (!product) return;
-    const idx = editCart.findIndex(c => c.product._id === editSelectedProduct);
-    if (idx >= 0) {
-      setEditCart(editCart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + editQty } : c));
-    } else {
-      setEditCart([...editCart, { product, quantity: editQty, unitPrice: editPrice || product.unitPrice }]);
-    }
-    setEditSelectedProduct('');
-    setEditQty(1);
-    setEditPrice(0);
+    const idx = editSale.cart.findIndex(c => c.product._id === editSale.addProduct);
+    const newCart = idx >= 0
+      ? editSale.cart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + editSale.addQty } : c)
+      : [...editSale.cart, { product, quantity: editSale.addQty, unitPrice: editSale.addPrice || product.unitPrice }];
+    setEditSale({ ...editSale, cart: newCart, addProduct: '', addQty: 1, addPrice: 0 });
   }
-
-  function updateEditItem(idx: number, field: 'quantity' | 'unitPrice', value: number) {
-    setEditCart(editCart.map((c, i) => i === idx ? { ...c, [field]: value } : c));
-  }
-
-  const editTotal   = editCart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
-  const editHasDebt = editPaymentMethod === 'unpaid' || editPaymentMethod === 'part';
-  const editPaid    = editPaymentMethod === 'unpaid' ? 0 : editPaymentMethod === 'part' ? editAmountPaid : editTotal;
-  const editBalance = editTotal - editPaid;
 
   async function handleSaveEdit() {
     if (!editSale) return;
-    if (!editCart.length) { setEditError('Add at least one item'); return; }
-    if (editHasDebt) {
-      if (!editCustomerName.trim())  { setEditError('Customer name is required for part/unpaid sales'); return; }
-      if (!editCustomerPhone.trim()) { setEditError('Customer phone is required for part/unpaid sales'); return; }
+    if (!editSale.cart.length) { setEditSale({ ...editSale, error: 'Add at least one item' }); return; }
+    const eHasDebt = editSale.pm === 'unpaid' || editSale.pm === 'part';
+    if (eHasDebt && !editSale.customerName.trim()) { setEditSale({ ...editSale, error: 'Customer name required' }); return; }
+    if (eHasDebt && !editSale.customerPhone.trim()) { setEditSale({ ...editSale, error: 'Customer phone required' }); return; }
+    const eTotal   = editSale.cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
+    const ePaid    = editSale.pm === 'unpaid' ? 0 : editSale.pm === 'part' ? editSale.amountPaid : eTotal;
+    const eBalance = eTotal - ePaid;
+    if (editSale.pm === 'part' && (editSale.amountPaid <= 0 || editSale.amountPaid >= eTotal)) {
+      setEditSale({ ...editSale, error: 'Amount paid must be > 0 and < total' }); return;
     }
-    if (editPaymentMethod === 'part' && (editAmountPaid <= 0 || editAmountPaid >= editTotal)) {
-      setEditError('Amount paid must be greater than 0 and less than the total'); return;
-    }
-
-    setEditLoading(true);
-    setEditError('');
+    setEditSale({ ...editSale, loading: true, error: '' });
     try {
-      const saleId = editSale._id || editSale.id;
+      const saleId = editSale.sale._id || editSale.sale.id;
       const res = await fetch(`${BASE}/api/sales/${saleId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({
-          paymentMethod:  editPaymentMethod,
-          customerName:   editCustomerName.trim(),
-          customerPhone:  editCustomerPhone.trim(),
-          amountPaid:     editPaid,
-          balanceDue:     editBalance,
-          notes:          editNotes.trim(),
-          items: editCart.map(c => ({
-            productId:   c.product._id,
-            productName: c.product.name,
-            quantity:    c.quantity,
-            unitPrice:   c.unitPrice,
-            subtotal:    c.quantity * c.unitPrice,
+          paymentMethod: editSale.pm,
+          customerName: editSale.customerName.trim(), customerPhone: editSale.customerPhone.trim(),
+          amountPaid: ePaid, balanceDue: eBalance, notes: editSale.notes.trim(),
+          items: editSale.cart.map(c => ({
+            productId: c.product._id, productName: c.product.name,
+            quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
           })),
-          totalAmount: editTotal,
+          totalAmount: eTotal,
         }),
       });
       if (!res.ok) {
@@ -488,23 +417,20 @@ export default function SalesPage() {
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
       setSuccess('Sale updated successfully!');
-      closeEditSale();
+      setEditSale(null);
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 4000);
     } catch (err: any) {
-      setEditError(err.message || 'Failed to update sale');
+      setEditSale(prev => prev ? { ...prev, loading: false, error: err.message || 'Failed to update' } : null);
     }
-    setEditLoading(false);
   }
 
   async function handleDeleteSale(id: string) {
-    if (!window.confirm('Are you sure you want to delete this sale? This cannot be undone.')) return;
-    setLoading(true);
-    setError('');
+    if (!window.confirm('Delete this sale? This cannot be undone.')) return;
+    setLoading(true); setError('');
     try {
       const res = await fetch(`${BASE}/api/sales/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${getToken()}` },
+        method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -519,59 +445,49 @@ export default function SalesPage() {
     setLoading(false);
   }
 
-  function canEditOrDelete(sale: any): boolean {
-    if (!isToday(sale.saleDate)) return false;
-    if (user?.role === 'admin') return true;
-    return sale.staffId === user?.id;
+  function canEditOrDelete(sale: any) {
+    return isToday(sale.saleDate) && (isAdmin || sale.staffId === user?.id);
   }
 
-  // ── Expense edit helpers ──────────────────────────────────────────────────────
+  // ── Edit Expense ──────────────────────────────────────────────────────────
 
   function openEditExpense(e: Expense) {
-    setEditExpense(e);
-    setEditExpenseDesc(e.description || '');
-    setEditExpenseAmount(String(e.amount));
-    setEditExpenseCategory(e.category || 'other');
-    setEditExpenseNotes((e as any).notes || '');
-    setEditExpenseError('');
+    setEditExpense({
+      expense: e, desc: e.description || '', amount: String(e.amount),
+      category: e.category || 'other', notes: (e as any).notes || '',
+      loading: false, error: '',
+    });
   }
-
-  function closeEditExpense() { setEditExpense(null); setEditExpenseError(''); }
 
   async function handleSaveEditExpense() {
     if (!editExpense) return;
-    if (!editExpenseDesc.trim())                               { setEditExpenseError('Description is required'); return; }
-    if (!editExpenseAmount || parseFloat(editExpenseAmount) <= 0) { setEditExpenseError('Amount is required'); return; }
-    setEditExpenseLoading(true);
-    setEditExpenseError('');
+    if (!editExpense.desc.trim())                                   { setEditExpense({ ...editExpense, error: 'Description required' }); return; }
+    if (!editExpense.amount || parseFloat(editExpense.amount) <= 0) { setEditExpense({ ...editExpense, error: 'Amount required' }); return; }
+    setEditExpense({ ...editExpense, loading: true, error: '' });
     try {
       await updateOne(
         Collections.EXPENSES,
-        { _id: { $oid: (editExpense as any)._id } },
+        { _id: { $oid: (editExpense.expense as any)._id } },
         { $set: {
-          description: editExpenseDesc.trim(),
-          amount:      parseFloat(editExpenseAmount),
-          category:    editExpenseCategory,
-          notes:       editExpenseNotes.trim(),
-          updatedAt:   new Date().toISOString(),
+          description: editExpense.desc.trim(), amount: parseFloat(editExpense.amount),
+          category: editExpense.category, notes: editExpense.notes.trim(),
+          updatedAt: new Date().toISOString(),
         }},
       );
       setSuccess('Expense updated!');
-      closeEditExpense();
+      setEditExpense(null);
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
-      setEditExpenseError(err.message || 'Failed to update expense');
+      setEditExpense(prev => prev ? { ...prev, loading: false, error: err.message || 'Failed' } : null);
     }
-    setEditExpenseLoading(false);
   }
 
   async function handleDeleteExpense(e: Expense) {
-    if (!window.confirm(`Delete expense "${e.description}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete expense "${e.description}"?`)) return;
     try {
       const res = await fetch(`${BASE}/api/expenses/${(e as any)._id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${getToken()}` },
+        method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -585,54 +501,46 @@ export default function SalesPage() {
     }
   }
 
-  // ── Debtor edit helpers ───────────────────────────────────────────────────────
+  // ── Edit Debtor ───────────────────────────────────────────────────────────
 
   function openEditDebtor(d: Debtor) {
-    setEditDebtor(d);
-    setEditDebtorName(d.name || '');
-    setEditDebtorPhone(d.phone || '');
-    setEditDebtorAmount(String(d.amountOwed));
-    setEditDebtorNotes(d.notes || '');
-    setEditDebtorError('');
+    setEditDebtor({
+      debtor: d, name: d.name || '', phone: d.phone || '',
+      amount: String(d.amountOwed), notes: d.notes || '',
+      loading: false, error: '',
+    });
   }
-
-  function closeEditDebtor() { setEditDebtor(null); setEditDebtorError(''); }
 
   async function handleSaveEditDebtor() {
     if (!editDebtor) return;
-    if (!editDebtorName.trim())                                { setEditDebtorError('Name is required'); return; }
-    if (!editDebtorPhone.trim())                               { setEditDebtorError('Phone is required'); return; }
-    if (!editDebtorAmount || parseFloat(editDebtorAmount) <= 0) { setEditDebtorError('Amount owed is required'); return; }
-    setEditDebtorLoading(true);
-    setEditDebtorError('');
+    if (!editDebtor.name.trim())                                   { setEditDebtor({ ...editDebtor, error: 'Name required' }); return; }
+    if (!editDebtor.phone.trim())                                  { setEditDebtor({ ...editDebtor, error: 'Phone required' }); return; }
+    if (!editDebtor.amount || parseFloat(editDebtor.amount) <= 0) { setEditDebtor({ ...editDebtor, error: 'Amount owed required' }); return; }
+    setEditDebtor({ ...editDebtor, loading: true, error: '' });
     try {
       await updateOne(
         Collections.DEBTORS,
-        { _id: { $oid: (editDebtor as any)._id } },
+        { _id: { $oid: (editDebtor.debtor as any)._id } },
         { $set: {
-          name:       editDebtorName.trim(),
-          phone:      editDebtorPhone.trim(),
-          amountOwed: parseFloat(editDebtorAmount),
-          notes:      editDebtorNotes.trim(),
-          updatedAt:  new Date().toISOString(),
+          name: editDebtor.name.trim(), phone: editDebtor.phone.trim(),
+          amountOwed: parseFloat(editDebtor.amount), notes: editDebtor.notes.trim(),
+          updatedAt: new Date().toISOString(),
         }},
       );
       setSuccess('Debtor updated!');
-      closeEditDebtor();
+      setEditDebtor(null);
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
-      setEditDebtorError(err.message || 'Failed to update debtor');
+      setEditDebtor(prev => prev ? { ...prev, loading: false, error: err.message || 'Failed' } : null);
     }
-    setEditDebtorLoading(false);
   }
 
   async function handleDeleteDebtor(d: Debtor) {
-    if (!window.confirm(`Delete debtor record for "${d.name}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete debtor record for "${d.name}"?`)) return;
     try {
-      const res = await fetch(`${BASE}/api/debtors/${(d as any)._id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${getToken()}` },
+      const res = await fetch(`${BASE}/api/reports/debtors/${(d as any)._id}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -646,29 +554,24 @@ export default function SalesPage() {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // ── Derived totals ────────────────────────────────────────────────────────
 
-  const fmt = (n: number) =>
-    `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
+  const totalTodaySales    = todaySales.reduce((s, x) => s + Number(x.totalAmount), 0);
+  const totalTodayCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + Number(x.totalAmount), 0);
+  const totalTodayPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((s, x) => s + Number(x.totalAmount), 0);
+  const totalTodayExpenses = todayExpenses.reduce((s, e) => s + Number(e.amount), 0);
+  const totalTodayDebt     = todayDebtors.reduce((s, d) => s + Number(d.amountOwed), 0);
+
+  // Edit sale derived values
+  const eTotal   = editSale?.cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0) ?? 0;
+  const eHasDebt = editSale?.pm === 'unpaid' || editSale?.pm === 'part';
 
   const tabStyle = (t: Tab) =>
     `flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
       tab === t ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
     }`;
 
-  const pmButtonStyle = (m: PaymentMethod, current: PaymentMethod) => {
-    const active = current === m;
-    const colors: Record<PaymentMethod, string> = {
-      cash:   active ? 'bg-green-500 text-white border-green-500'   : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-      pos:    active ? 'bg-blue-500 text-white border-blue-500'     : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-      part:   active ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-      unpaid: active ? 'bg-red-500 text-white border-red-500'       : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-    };
-    return `flex-1 py-2 rounded-lg text-sm font-medium transition-colors border ${colors[m]}`;
-  };
-
-  const totalTodayExpenses = todayExpenses.reduce((s, e) => s + Number(e.amount), 0);
-  const totalTodayDebt     = todayDebtors.reduce((s, d) => s + Number(d.amountOwed), 0);
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-6 space-y-6">
@@ -685,31 +588,41 @@ export default function SalesPage() {
         </div>
       )}
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{error}</div>
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex items-start justify-between gap-2">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="flex-shrink-0 text-red-400 hover:text-red-600 mt-0.5">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       )}
 
       <div className="flex gap-2">
-        <button onClick={() => setTab('sale')}    className={tabStyle('sale')}>   <ShoppingCart className="w-4 h-4" />Sale</button>
-        <button onClick={() => setTab('debtor')}  className={tabStyle('debtor')}> <UserPlus className="w-4 h-4" />Debtor</button>
-        <button onClick={() => setTab('expense')} className={tabStyle('expense')}><Receipt className="w-4 h-4" />Expense</button>
+        <button onClick={() => switchTab('sale')}    className={tabStyle('sale')}>   <ShoppingCart className="w-4 h-4" />Sale</button>
+        <button onClick={() => switchTab('debtor')}  className={tabStyle('debtor')}> <UserPlus className="w-4 h-4" />Debtor</button>
+        <button onClick={() => switchTab('expense')} className={tabStyle('expense')}><Receipt className="w-4 h-4" />Expense</button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
-        {/* ── Left panel ─────────────────────────────────────────────────────── */}
+        {/* ── Left panel ──────────────────────────────────────────────────── */}
         <div className="xl:col-span-2">
 
           {/* SALE FORM */}
           {tab === 'sale' && (
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 space-y-5">
+            <form onSubmit={handleSale} className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
-                  <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                    disabled={user?.role !== 'admin'}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-slate-50">
-                    {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-                  </select>
+                  {isAdmin ? (
+                    <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                      {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                    </select>
+                  ) : (
+                    <div className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
+                      {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Sale Date</label>
@@ -722,7 +635,7 @@ export default function SalesPage() {
                     {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
                       <button key={m} type="button" onClick={() => { setPaymentMethod(m); setAmountPaid(0); }}
                         className={pmButtonStyle(m, paymentMethod)}>
-                        {pmLabels[m]}
+                        {PM_LABELS[m]}
                       </button>
                     ))}
                   </div>
@@ -754,7 +667,7 @@ export default function SalesPage() {
                       const p = products.find(p => p._id === e.target.value);
                       if (p) setPrice(p.unitPrice);
                     }} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
-                      <option value="">Select...</option>
+                      <option value="">Select product...</option>
                       {products.map(p => {
                         const stock = getStock(p._id);
                         return (
@@ -767,10 +680,12 @@ export default function SalesPage() {
                   </div>
                   <input type="number" min="0.01" step="0.01" value={qty}
                     onChange={e => setQty(Number(e.target.value))}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
                     className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Qty" />
                   <input type="number" min="0" step="0.01" value={price}
                     onChange={e => setPrice(Number(e.target.value))}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Price" />
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
+                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Price override" />
                   <button type="button" onClick={addToCart} disabled={!selectedProduct}
                     className="flex items-center justify-center gap-1 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors">
                     <Plus className="w-4 h-4" />Add
@@ -780,6 +695,13 @@ export default function SalesPage() {
 
               {cart.length > 0 && (
                 <div className="border-t border-slate-100 pt-5 space-y-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-slate-700">{cart.length} item{cart.length !== 1 ? 's' : ''} in cart</span>
+                    <button type="button" onClick={() => setCart([])}
+                      className="text-xs text-red-400 hover:text-red-600 transition-colors">
+                      Clear cart
+                    </button>
+                  </div>
                   <div className="space-y-2">
                     {cart.map((item, idx) => (
                       <div key={idx} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
@@ -794,7 +716,7 @@ export default function SalesPage() {
                         <span className="font-semibold text-slate-600 text-sm w-24 text-right">
                           {fmt(item.quantity * item.unitPrice)}
                         </span>
-                        <button onClick={() => setCart(cart.filter((_, i) => i !== idx))}
+                        <button type="button" onClick={() => setCart(cart.filter((_, i) => i !== idx))}
                           className="text-slate-300 hover:text-red-500">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -869,14 +791,14 @@ export default function SalesPage() {
                     )}
                   </div>
 
-                  <button onClick={handleSale} disabled={loading}
+                  <button type="submit" disabled={loading}
                     className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
                     {loading && <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                     {hasDebt ? 'Submit Sale & Record Debt' : 'Submit Sale'}
                   </button>
                 </div>
               )}
-            </div>
+            </form>
           )}
 
           {/* DEBTOR FORM */}
@@ -906,11 +828,16 @@ export default function SalesPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
-                    <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                      disabled={user?.role !== 'admin'}
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-slate-50">
-                      {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-                    </select>
+                    {isAdmin ? (
+                      <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                        {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                      </select>
+                    ) : (
+                      <div className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
+                        {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -950,13 +877,11 @@ export default function SalesPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
-                    <select value={expenseCategory} onChange={e => setExpenseCategory(e.target.value)}
+                    <select value={expenseCategory} onChange={e => setExpenseCategory(e.target.value as any)}
                       className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                      <option value="transport">Transport</option>
-                      <option value="utilities">Utilities</option>
-                      <option value="supplies">Supplies</option>
-                      <option value="maintenance">Maintenance</option>
-                      <option value="other">Other</option>
+                      {EXPENSE_CATS.map(c => (
+                        <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -975,7 +900,7 @@ export default function SalesPage() {
           )}
         </div>
 
-        {/* ── Right panel ───────────────────────────────────────────────────── */}
+        {/* ── Right panel ──────────────────────────────────────────────────── */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 h-fit overflow-hidden">
           <div className="p-4 bg-amber-50 border-b border-amber-100">
             <div className="flex items-start gap-2 mb-3">
@@ -991,17 +916,36 @@ export default function SalesPage() {
                 : <Send className="w-4 h-4" />}
               {reportLoading ? 'Submitting...' : 'Submit Daily Report'}
             </button>
-            {reportSuccess && <p className="text-xs text-green-700 font-medium mt-1 text-center">{reportSuccess}</p>}
-            {reportError   && <p className="text-xs text-red-600 font-medium mt-1 text-center">{reportError}</p>}
+            {reportMsg && (
+              <p className={`text-xs font-medium mt-1 text-center ${reportMsg.ok ? 'text-green-700' : 'text-red-600'}`}>
+                {reportMsg.text}
+              </p>
+            )}
           </div>
 
+          {todaySales.length > 0 && (
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <p className="text-xs text-slate-400">Total</p>
+                <p className="text-xs font-bold text-amber-600">{fmt(totalTodaySales)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">Cash</p>
+                <p className="text-xs font-bold text-green-600">{fmt(totalTodayCash)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-400">POS</p>
+                <p className="text-xs font-bold text-blue-600">{fmt(totalTodayPos)}</p>
+              </div>
+            </div>
+          )}
+
           <div className="p-4">
-            {/* Mini-tabs */}
             <div className="flex gap-1 mb-4">
               {([
                 { key: 'sales',    label: `Sales (${todaySales.length})` },
                 { key: 'expenses', label: `Expenses (${todayExpenses.length})` },
-                { key: 'debtors',  label: `Debtors (${todayDebtors.length})` },
+                { key: 'debtors',  label: `Active Debtors (${todayDebtors.length})` },
               ] as const).map(t => (
                 <button key={t.key} onClick={() => setRightTab(t.key)}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -1027,8 +971,8 @@ export default function SalesPage() {
                         <div className="flex items-center justify-between mb-1">
                           <span className="font-semibold text-slate-800 text-sm">{fmt(s.totalAmount)}</span>
                           <div className="flex items-center gap-1">
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${pmColors[s.paymentMethod] ?? 'bg-slate-100 text-slate-600'}`}>
-                              {pmLabels[s.paymentMethod] ?? s.paymentMethod}
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${PM_COLORS[s.paymentMethod] ?? 'bg-slate-100 text-slate-600'}`}>
+                              {PM_LABELS[s.paymentMethod] ?? s.paymentMethod}
                             </span>
                             {locked && (
                               <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-500 font-medium">
@@ -1070,9 +1014,7 @@ export default function SalesPage() {
                   })}
                   <div className="pt-2 border-t border-slate-100 flex justify-between text-sm">
                     <span className="text-slate-500 font-medium">Total Sales</span>
-                    <span className="font-bold text-amber-600">
-                      {fmt(todaySales.reduce((s, x) => s + Number(x.totalAmount), 0))}
-                    </span>
+                    <span className="font-bold text-amber-600">{fmt(totalTodaySales)}</span>
                   </div>
                 </div>
               )
@@ -1090,9 +1032,7 @@ export default function SalesPage() {
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-slate-800 truncate">{e.description}</p>
                           <p className="text-xs text-slate-400 mt-0.5 capitalize">{e.category}</p>
-                          {e.recordedByName && (
-                            <p className="text-xs text-slate-400">By: {e.recordedByName}</p>
-                          )}
+                          {e.recordedByName && <p className="text-xs text-slate-400">By: {e.recordedByName}</p>}
                         </div>
                         <span className="text-sm font-bold text-red-600 flex-shrink-0">{fmt(Number(e.amount))}</span>
                       </div>
@@ -1128,9 +1068,7 @@ export default function SalesPage() {
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-slate-800 truncate">{d.name}</p>
                           <p className="text-xs text-blue-600">{d.phone}</p>
-                          {d.createdByName && (
-                            <p className="text-xs text-slate-400">By: {d.createdByName}</p>
-                          )}
+                          {d.createdByName && <p className="text-xs text-slate-400">By: {d.createdByName}</p>}
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className="text-sm font-bold text-red-600">{fmt(Number(d.amountOwed))}</p>
@@ -1171,24 +1109,23 @@ export default function SalesPage() {
                 <h2 className="text-lg font-bold text-slate-800">Edit Sale</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Changes will sync linked debtor balances automatically.</p>
               </div>
-              <button onClick={closeEditSale}
+              <button onClick={() => setEditSale(null)}
                 className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <div className="p-6 space-y-5">
-              {editError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editError}</div>
+              {editSale.error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editSale.error}</div>
               )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Payment Method</label>
                 <div className="grid grid-cols-4 gap-2">
                   {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
                     <button key={m} type="button"
-                      onClick={() => { setEditPaymentMethod(m); setEditAmountPaid(0); }}
-                      className={pmButtonStyle(m, editPaymentMethod)}>
-                      {pmLabels[m]}
+                      onClick={() => setEditSale({ ...editSale, pm: m, amountPaid: 0 })}
+                      className={pmButtonStyle(m, editSale.pm)}>
+                      {PM_LABELS[m]}
                     </button>
                   ))}
                 </div>
@@ -1196,18 +1133,20 @@ export default function SalesPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Customer Name {editHasDebt && <span className="text-red-500">*</span>}
+                    Customer Name {eHasDebt && <span className="text-red-500">*</span>}
                   </label>
-                  <input type="text" value={editCustomerName} onChange={e => setEditCustomerName(e.target.value)}
-                    placeholder={editHasDebt ? 'Required for debt tracking' : 'Optional'}
+                  <input type="text" value={editSale.customerName}
+                    onChange={e => setEditSale({ ...editSale, customerName: e.target.value })}
+                    placeholder={eHasDebt ? 'Required for debt tracking' : 'Optional'}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Customer Phone {editHasDebt && <span className="text-red-500">*</span>}
+                    Customer Phone {eHasDebt && <span className="text-red-500">*</span>}
                   </label>
-                  <input type="tel" value={editCustomerPhone} onChange={e => setEditCustomerPhone(e.target.value)}
-                    placeholder={editHasDebt ? 'Required for debt tracking' : 'Optional'}
+                  <input type="tel" value={editSale.customerPhone}
+                    onChange={e => setEditSale({ ...editSale, customerPhone: e.target.value })}
+                    placeholder={eHasDebt ? 'Required for debt tracking' : 'Optional'}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
               </div>
@@ -1215,11 +1154,12 @@ export default function SalesPage() {
                 <h4 className="font-medium text-slate-800 mb-3 text-sm">Products</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
                   <div className="sm:col-span-1">
-                    <select value={editSelectedProduct} onChange={e => {
-                      setEditSelectedProduct(e.target.value);
-                      const p = products.find(p => p._id === e.target.value);
-                      if (p) setEditPrice(p.unitPrice);
-                    }} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    <select value={editSale.addProduct}
+                      onChange={e => {
+                        const p = products.find(p => p._id === e.target.value);
+                        setEditSale({ ...editSale, addProduct: e.target.value, addPrice: p?.unitPrice ?? 0 });
+                      }}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
                       <option value="">Select...</option>
                       {products.map(p => {
                         const stock = getStock(p._id);
@@ -1231,80 +1171,84 @@ export default function SalesPage() {
                       })}
                     </select>
                   </div>
-                  <input type="number" min="0.01" step="0.01" value={editQty}
-                    onChange={e => setEditQty(Number(e.target.value))}
+                  <input type="number" min="0.01" step="0.01" value={editSale.addQty}
+                    onChange={e => setEditSale({ ...editSale, addQty: Number(e.target.value) })}
                     className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Qty" />
-                  <input type="number" min="0" step="0.01" value={editPrice}
-                    onChange={e => setEditPrice(Number(e.target.value))}
+                  <input type="number" min="0" step="0.01" value={editSale.addPrice}
+                    onChange={e => setEditSale({ ...editSale, addPrice: Number(e.target.value) })}
                     className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Price" />
-                  <button type="button" onClick={addToEditCart} disabled={!editSelectedProduct}
+                  <button type="button" onClick={addToEditCart} disabled={!editSale.addProduct}
                     className="flex items-center justify-center gap-1 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors">
                     <Plus className="w-4 h-4" />Add
                   </button>
                 </div>
                 <div className="space-y-2">
-                  {editCart.map((item, idx) => (
+                  {editSale.cart.map((item, idx) => (
                     <div key={idx} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
                       <div className="flex-1 font-medium text-slate-800 text-sm">{item.product.name}</div>
                       <input type="number" min="0.01" step="0.01" value={item.quantity}
-                        onChange={e => updateEditItem(idx, 'quantity', Number(e.target.value))}
+                        onChange={e => setEditSale({
+                          ...editSale,
+                          cart: editSale.cart.map((c, i) => i === idx ? { ...c, quantity: Number(e.target.value) } : c),
+                        })}
                         className="w-20 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
                       <input type="number" min="0" step="0.01" value={item.unitPrice}
-                        onChange={e => updateEditItem(idx, 'unitPrice', Number(e.target.value))}
+                        onChange={e => setEditSale({
+                          ...editSale,
+                          cart: editSale.cart.map((c, i) => i === idx ? { ...c, unitPrice: Number(e.target.value) } : c),
+                        })}
                         className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
                       <span className="font-semibold text-slate-600 text-sm w-24 text-right">
                         {fmt(item.quantity * item.unitPrice)}
                       </span>
-                      <button onClick={() => setEditCart(editCart.filter((_, i) => i !== idx))}
+                      <button type="button"
+                        onClick={() => setEditSale({ ...editSale, cart: editSale.cart.filter((_, i) => i !== idx) })}
                         className="text-slate-300 hover:text-red-500">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   ))}
-                  {editCart.length === 0 && (
+                  {editSale.cart.length === 0 && (
                     <p className="text-xs text-slate-400 text-center py-3">No items. Add a product above.</p>
                   )}
                 </div>
               </div>
-              {editPaymentMethod === 'part' && (
+              {editSale.pm === 'part' && (
                 <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-2">
                   <label className="block text-sm font-medium text-orange-800">Amount Paid by Customer (₦) *</label>
-                  <input type="number" min="0.01" step="0.01" value={editAmountPaid || ''}
-                    onChange={e => setEditAmountPaid(Number(e.target.value))}
+                  <input type="number" min="0.01" step="0.01" value={editSale.amountPaid || ''}
+                    onChange={e => setEditSale({ ...editSale, amountPaid: Number(e.target.value) })}
                     className="w-full px-3 py-2.5 border border-orange-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400" />
                   <div className="flex justify-between text-sm pt-1">
                     <span className="text-orange-700">Balance Owed:</span>
-                    <span className="font-bold text-red-600">{fmt(Math.max(0, editTotal - editAmountPaid))}</span>
+                    <span className="font-bold text-red-600">{fmt(Math.max(0, eTotal - editSale.amountPaid))}</span>
                   </div>
                 </div>
               )}
-              {editPaymentMethod === 'unpaid' && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <div className="flex justify-between text-sm">
-                    <span className="font-semibold text-red-800">Full Amount Owed:</span>
-                    <span className="font-bold text-red-600">{fmt(editTotal)}</span>
-                  </div>
+              {editSale.pm === 'unpaid' && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex justify-between text-sm">
+                  <span className="font-semibold text-red-800">Full Amount Owed:</span>
+                  <span className="font-bold text-red-600">{fmt(eTotal)}</span>
                 </div>
               )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
-                <textarea value={editNotes} onChange={e => setEditNotes(e.target.value)} rows={2}
+                <textarea value={editSale.notes} onChange={e => setEditSale({ ...editSale, notes: e.target.value })} rows={2}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm" />
               </div>
               <div className="p-3 bg-slate-50 rounded-lg flex items-center justify-between">
                 <span className="font-semibold text-slate-700">New Total</span>
-                <span className="text-xl font-bold text-amber-600">{fmt(editTotal)}</span>
+                <span className="text-xl font-bold text-amber-600">{fmt(eTotal)}</span>
               </div>
             </div>
-
             <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button onClick={closeEditSale} disabled={editLoading}
+              <button onClick={() => setEditSale(null)} disabled={editSale.loading}
                 className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={handleSaveEdit} disabled={editLoading || editCart.length === 0}
+              <button onClick={handleSaveEdit} disabled={editSale.loading || editSale.cart.length === 0}
                 className="flex-1 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2">
-                {editLoading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {editSale.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save Changes
               </button>
             </div>
@@ -1318,55 +1262,53 @@ export default function SalesPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <h2 className="text-lg font-bold text-slate-800">Edit Expense</h2>
-              <button onClick={closeEditExpense}
+              <button onClick={() => setEditExpense(null)}
                 className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <div className="p-6 space-y-4">
-              {editExpenseError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editExpenseError}</div>
+              {editExpense.error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editExpense.error}</div>
               )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Description *</label>
-                <input type="text" value={editExpenseDesc} onChange={e => setEditExpenseDesc(e.target.value)}
+                <input type="text" value={editExpense.desc}
+                  onChange={e => setEditExpense({ ...editExpense, desc: e.target.value })}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Amount (₦) *</label>
-                  <input type="number" min="0.01" step="0.01" value={editExpenseAmount}
-                    onChange={e => setEditExpenseAmount(e.target.value)}
+                  <input type="number" min="0.01" step="0.01" value={editExpense.amount}
+                    onChange={e => setEditExpense({ ...editExpense, amount: e.target.value })}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
-                  <select value={editExpenseCategory} onChange={e => setEditExpenseCategory(e.target.value)}
+                  <select value={editExpense.category}
+                    onChange={e => setEditExpense({ ...editExpense, category: e.target.value })}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                    <option value="transport">Transport</option>
-                    <option value="utilities">Utilities</option>
-                    <option value="supplies">Supplies</option>
-                    <option value="maintenance">Maintenance</option>
-                    <option value="other">Other</option>
+                    {EXPENSE_CATS.map(c => (
+                      <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+                    ))}
                   </select>
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
-                <textarea value={editExpenseNotes} onChange={e => setEditExpenseNotes(e.target.value)} rows={2}
+                <textarea value={editExpense.notes} onChange={e => setEditExpense({ ...editExpense, notes: e.target.value })} rows={2}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm" />
               </div>
             </div>
-
             <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button onClick={closeEditExpense} disabled={editExpenseLoading}
+              <button onClick={() => setEditExpense(null)} disabled={editExpense.loading}
                 className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={handleSaveEditExpense} disabled={editExpenseLoading}
+              <button onClick={handleSaveEditExpense} disabled={editExpense.loading}
                 className="flex-1 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2">
-                {editExpenseLoading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {editExpense.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save Changes
               </button>
             </div>
@@ -1380,49 +1322,49 @@ export default function SalesPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <h2 className="text-lg font-bold text-slate-800">Edit Debtor</h2>
-              <button onClick={closeEditDebtor}
+              <button onClick={() => setEditDebtor(null)}
                 className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-
             <div className="p-6 space-y-4">
-              {editDebtorError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editDebtorError}</div>
+              {editDebtor.error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editDebtor.error}</div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
-                  <input type="text" value={editDebtorName} onChange={e => setEditDebtorName(e.target.value)}
+                  <input type="text" value={editDebtor.name}
+                    onChange={e => setEditDebtor({ ...editDebtor, name: e.target.value })}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Phone *</label>
-                  <input type="tel" value={editDebtorPhone} onChange={e => setEditDebtorPhone(e.target.value)}
+                  <input type="tel" value={editDebtor.phone}
+                    onChange={e => setEditDebtor({ ...editDebtor, phone: e.target.value })}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Amount Owed (₦) *</label>
-                <input type="number" min="0.01" step="0.01" value={editDebtorAmount}
-                  onChange={e => setEditDebtorAmount(e.target.value)}
+                <input type="number" min="0.01" step="0.01" value={editDebtor.amount}
+                  onChange={e => setEditDebtor({ ...editDebtor, amount: e.target.value })}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
-                <textarea value={editDebtorNotes} onChange={e => setEditDebtorNotes(e.target.value)} rows={2}
+                <textarea value={editDebtor.notes} onChange={e => setEditDebtor({ ...editDebtor, notes: e.target.value })} rows={2}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm" />
               </div>
             </div>
-
             <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button onClick={closeEditDebtor} disabled={editDebtorLoading}
+              <button onClick={() => setEditDebtor(null)} disabled={editDebtor.loading}
                 className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={handleSaveEditDebtor} disabled={editDebtorLoading}
+              <button onClick={handleSaveEditDebtor} disabled={editDebtor.loading}
                 className="flex-1 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2">
-                {editDebtorLoading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {editDebtor.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save Changes
               </button>
             </div>
