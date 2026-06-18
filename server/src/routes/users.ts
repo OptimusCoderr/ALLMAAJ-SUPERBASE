@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { body, validationResult } from 'express-validator';
+import { body, param, validationResult } from 'express-validator';
 import bcrypt from 'bcryptjs';
 import sql from '../db/client.js';
 import type { UserRow } from '../db/types.js';
@@ -10,7 +10,7 @@ const router = Router();
 router.use(authMiddleware);
 
 const toUser = (u: UserRow) => ({
-  _id:       u.id,   // <-- ADD THIS LINE
+  _id:       u.id,
   id:        u.id,
   fullName:  u.full_name,
   email:     u.email,
@@ -30,7 +30,10 @@ router.get('/', adminOnly, async (_req: Request, res: Response) => {
       ORDER BY created_at DESC
     `;
     return sendResponse(res, 200, 'Users fetched', users.map(toUser));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    console.error('GET /api/users error:', (err as Error).message);
+    return sendError(res, 500, 'Server error');
+  }
 });
 
 // ── POST /api/users ───────────────────────────────────────────────────────────
@@ -38,18 +41,22 @@ router.post(
   '/',
   adminOnly,
   [
-    body('email').isEmail().normalizeEmail(),
-    body('password').isLength({ min: 8 }),
-    body('fullName').trim().notEmpty(),
+    body('email').isEmail().normalizeEmail().isLength({ max: 254 }),
+    // No .escape() on password — special chars are valid and bcrypt hashes the raw value
+    body('password')
+      .isLength({ min: 8, max: 128 })
+      .withMessage('Password must be 8–128 characters'),
+    body('fullName').trim().notEmpty().isLength({ max: 100 }).escape(),
+    body('phone').optional().trim().isLength({ max: 20 }),
     body('role').isIn(['admin', 'manager', 'staff']),
+    body('branchId').optional({ nullable: true }).isUUID().withMessage('Invalid branch ID'),
   ],
   async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
 
     try {
-      const { email, password, fullName, phone, role } = req.body;
-      const branchId = req.body.branchId || null;
+      const { email, password, fullName, phone, role, branchId } = req.body;
       const rounds = parseInt(process.env.BCRYPT_ROUNDS || '12');
       const hash   = await bcrypt.hash(password, rounds);
 
@@ -62,63 +69,112 @@ router.post(
         RETURNING id, email, full_name, phone, role, branch_id
       `;
       return sendResponse(res, 201, 'User created', toUser(user));
-    // AFTER:
     } catch (err: any) {
-      console.error('POST /api/users error:', err);
+      console.error('POST /api/users error:', err.message);
       if (err.code === '23505') return sendError(res, 409, 'Email already in use');
-      return sendError(res, 500, err?.message || 'Server error', err);
+      return sendError(res, 500, 'Server error');
     }
   }
 );
 
 // ── PUT /api/users/:id ────────────────────────────────────────────────────────
-router.put('/:id', adminOnly, async (req: Request, res: Response) => {
-  try {
-    const { password, fullName, phone, role, branchId, email } = req.body;
+router.put(
+  '/:id',
+  adminOnly,
+  [
+    param('id').isUUID().withMessage('Invalid user ID'),
+    body('email').optional().isEmail().normalizeEmail().isLength({ max: 254 }),
+    body('password').optional().isLength({ min: 8, max: 128 }).withMessage('Password must be 8–128 characters'),
+    body('fullName').optional().trim().notEmpty().isLength({ max: 100 }).escape(),
+    body('phone').optional().trim().isLength({ max: 20 }),
+    body('role').optional().isIn(['admin', 'manager', 'staff']),
+    body('branchId').optional({ nullable: true }).isUUID().withMessage('Invalid branch ID'),
+  ],
+  async (req: Request, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
 
-    // Build update set dynamically to avoid overwriting unchanged fields
-    const updates: Record<string, unknown> = { updated_at: new Date() };
-    if (fullName  !== undefined) updates.full_name  = fullName;
-    if (phone     !== undefined) updates.phone      = phone;
-    if (role      !== undefined) updates.role       = role;
-    if (branchId  !== undefined) updates.branch_id  = branchId;
-    if (email     !== undefined) updates.email      = email.toLowerCase();
-    if (password) {
-      const rounds = parseInt(process.env.BCRYPT_ROUNDS || '12');
-      updates.password = await bcrypt.hash(password, rounds);
+    try {
+      const { password, fullName, phone, role, branchId, email } = req.body;
+
+      let passwordHash: string | undefined;
+      if (password) {
+        const rounds = parseInt(process.env.BCRYPT_ROUNDS || '12');
+        passwordHash = await bcrypt.hash(password, rounds);
+      }
+
+      const [user] = await sql<UserRow[]>`
+        UPDATE users SET
+          full_name  = COALESCE(${fullName  ?? null}, full_name),
+          phone      = COALESCE(${phone     ?? null}, phone),
+          role       = COALESCE(${role      ?? null}::user_role, role),
+          branch_id  = COALESCE(${branchId  ?? null}::uuid, branch_id),
+          email      = COALESCE(${email     ? email.toLowerCase() : null}, email),
+          password   = COALESCE(${passwordHash ?? null}, password),
+          updated_at = now()
+        WHERE id = ${req.params.id}
+        RETURNING id, email, full_name, phone, role, branch_id, is_active, created_at, updated_at
+      `;
+      if (!user) return sendError(res, 404, 'User not found');
+      return sendResponse(res, 200, 'User updated', toUser(user));
+    } catch (err: any) {
+      console.error('PUT /api/users/:id error:', err.message);
+      if (err.code === '23505') return sendError(res, 409, 'Email already in use');
+      return sendError(res, 500, 'Server error');
     }
+  }
+);
 
-    // postgres.js doesn't support dynamic SET from objects natively,
-    // so we build the query with individual fields checked:
+
+// ── DELETE /api/users/:id ─────────────────────────────────────────────────────
+router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
+  try {
+    if (req.params.id === req.userId) {
+      return sendError(res, 400, 'You cannot delete your own account');
+    }
     const [user] = await sql<UserRow[]>`
-      UPDATE users SET
-        full_name  = COALESCE(${updates.full_name  as string  ?? null}, full_name),
-        phone      = COALESCE(${updates.phone      as string  ?? null}, phone),
-        role       = COALESCE(${updates.role       as string  ?? null}::user_role, role),
-        branch_id  = COALESCE(${updates.branch_id  as string  ?? null}::uuid, branch_id),
-        email      = COALESCE(${updates.email      as string  ?? null}, email),
-        password   = COALESCE(${updates.password   as string  ?? null}, password),
-        updated_at = now()
-      WHERE id = ${req.params.id}
-      RETURNING id, email, full_name, phone, role, branch_id, is_active, created_at, updated_at
+      DELETE FROM users WHERE id = ${req.params.id} RETURNING id, full_name
     `;
     if (!user) return sendError(res, 404, 'User not found');
-    return sendResponse(res, 200, 'User updated', toUser(user));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+    return sendResponse(res, 200, `"${user.full_name}" deleted`);
+  } catch (err: any) {
+    if (err.code === '23503') {
+      return sendError(res, 409, 'Cannot delete this user — they have sales or records linked to their account. Deactivate them instead.');
+    }
+    return sendError(res, 500, 'Server error', err);
+  }
 });
+
+
 
 // ── PATCH /api/users/:id/toggle-active ───────────────────────────────────────
-router.patch('/:id/toggle-active', adminOnly, async (req: Request, res: Response) => {
-  try {
-    const [user] = await sql<UserRow[]>`
-      UPDATE users
-      SET is_active = NOT is_active, updated_at = now()
-      WHERE id = ${req.params.id}
-      RETURNING id, is_active
-    `;
-    if (!user) return sendError(res, 404, 'User not found');
-    return sendResponse(res, 200, 'User status toggled', { isActive: user.is_active });
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
-});
+router.patch(
+  '/:id/toggle-active',
+  adminOnly,
+  [param('id').isUUID().withMessage('Invalid user ID')],
+  async (req: Request, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
+
+    // Prevent an admin from deactivating their own account
+    if (req.params.id === req.userId) {
+      return sendError(res, 400, 'You cannot deactivate your own account');
+    }
+
+    try {
+      const [user] = await sql<UserRow[]>`
+        UPDATE users
+        SET is_active = NOT is_active, updated_at = now()
+        WHERE id = ${req.params.id}
+        RETURNING id, is_active
+      `;
+      if (!user) return sendError(res, 404, 'User not found');
+      return sendResponse(res, 200, 'User status toggled', { isActive: user.is_active });
+    } catch (err) {
+      console.error('PATCH /api/users/:id/toggle-active error:', (err as Error).message);
+      return sendError(res, 500, 'Server error');
+    }
+  }
+);
 
 export default router;

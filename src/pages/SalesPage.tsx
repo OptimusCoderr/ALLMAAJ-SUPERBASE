@@ -4,22 +4,27 @@ import { find, insertOne, updateOne, Collections } from '../lib/api';
 import type { Product, Branch, BranchStock, Expense, Debtor } from '../lib/types';
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
-  Pencil, Lock, Send, AlertTriangle, X,
+  Pencil, Lock, Send, AlertTriangle, X, Wrench,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface CartItem { product: Product; quantity: number; unitPrice: number }
+interface ServiceCartItem { serviceName: string; serviceNotes: string; quantity: number; unitPrice: number }
 type Tab           = 'sale' | 'debtor' | 'expense';
 type PaymentMethod = 'cash' | 'pos' | 'part' | 'unpaid';
+
+const SERVICE_SUGGESTIONS = ['Monogramming', 'Large Format Printing', 'Sublimation', 'Graphics Design'];
 
 interface EditSaleState {
   sale: any;
   cart: CartItem[];
+  serviceCart: ServiceCartItem[];
   pm: PaymentMethod;
   customerName: string; customerPhone: string;
   amountPaid: number;   notes: string;
   addProduct: string;   addQty: number; addPrice: number;
+  addService: string;   addServiceNotes: string; addServiceQty: number; addServicePrice: number;
   loading: boolean;     error: string;
 }
 interface EditExpenseState {
@@ -104,6 +109,13 @@ export default function SalesPage() {
   const [price, setPrice] = useState(0);
   const [cart, setCart]   = useState<CartItem[]>([]);
 
+  // Service form
+  const [serviceCart, setServiceCart]         = useState<ServiceCartItem[]>([]);
+  const [selectedService, setSelectedService] = useState('');
+  const [serviceNotes, setServiceNotes]       = useState('');
+  const [serviceQty, setServiceQty]           = useState(1);
+  const [servicePrice, setServicePrice]       = useState(0);
+
   // Debtor form
   const [debtorName, setDebtorName]     = useState('');
   const [debtorPhone, setDebtorPhone]   = useState('');
@@ -121,7 +133,7 @@ export default function SalesPage() {
   const [success, setSuccess] = useState('');
   const [error, setError]     = useState('');
 
-  // Edit modals — consolidated (replaces 24 individual useState calls)
+  // Edit modals
   const [editSale, setEditSale]       = useState<EditSaleState | null>(null);
   const [editExpense, setEditExpense] = useState<EditExpenseState | null>(null);
   const [editDebtor, setEditDebtor]   = useState<EditDebtorState | null>(null);
@@ -203,7 +215,25 @@ export default function SalesPage() {
     setCart(cart.map((c, i) => i === idx ? { ...c, [field]: value } : c));
   }
 
-  const total   = cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
+  function addToServiceCart() {
+    if (!selectedService.trim()) return;
+    setServiceCart([...serviceCart, {
+      serviceName: selectedService.trim(), serviceNotes: serviceNotes.trim(),
+      quantity: serviceQty, unitPrice: servicePrice,
+    }]);
+    setSelectedService('');
+    setServiceNotes('');
+    setServiceQty(1);
+    setServicePrice(0);
+  }
+
+  function updateServiceItem(idx: number, field: 'quantity' | 'unitPrice', value: number) {
+    setServiceCart(serviceCart.map((s, i) => i === idx ? { ...s, [field]: value } : s));
+  }
+
+  const productTotal = cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
+  const serviceTotal = serviceCart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
+  const total        = productTotal + serviceTotal;
   const hasDebt = paymentMethod === 'unpaid' || paymentMethod === 'part';
   const paid    = paymentMethod === 'unpaid' ? 0 : paymentMethod === 'part' ? amountPaid : total;
   const balance = total - paid;
@@ -212,7 +242,7 @@ export default function SalesPage() {
 
   async function handleSale(e: React.FormEvent) {
     e.preventDefault();
-    if (!cart.length)    { setError('Add at least one item'); return; }
+    if (!cart.length && !serviceCart.length) { setError('Add at least one product or service'); return; }
     if (!selectedBranch) { setError('Select a branch'); return; }
     if (hasDebt) {
       if (!customerName.trim())  { setError('Customer name is required for part/unpaid sales'); return; }
@@ -228,14 +258,24 @@ export default function SalesPage() {
         customerName: customerName.trim(), customerPhone: customerPhone.trim(),
         paymentMethod, totalAmount: total, amountPaid: paid, balanceDue: balance,
         notes: notes.trim(),
-        items: cart.map(c => ({
-          productId: c.product._id, productName: c.product.name,
-          quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
-        })),
+        items: [
+          ...cart.map(c => ({
+            productId: c.product._id, productName: c.product.name,
+            quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
+          })),
+          ...serviceCart.map(s => ({
+            productId: null, productName: s.serviceName, itemType: 'service',
+            serviceNotes: s.serviceNotes,
+            quantity: s.quantity, unitPrice: s.unitPrice, subtotal: s.quantity * s.unitPrice,
+          })),
+        ],
         saleDate: new Date(`${saleDate}T12:00:00.000Z`).toISOString(),
       });
       if (hasDebt && balance > 0) {
-        const itemsSummary = cart.map(c => `${c.product.name} x${c.quantity}`).join(', ');
+        const itemsSummary = [
+          ...cart.map(c => `${c.product.name} x${c.quantity}`),
+          ...serviceCart.map(s => `${s.serviceName} x${s.quantity}`),
+        ].join(', ');
         await insertOne(Collections.DEBTORS, {
           name: customerName.trim(), phone: customerPhone.trim(),
           amountOwed: balance, totalAmount: total, amountPaid: paid,
@@ -247,6 +287,7 @@ export default function SalesPage() {
       const debtMsg = hasDebt && balance > 0 ? ` Debtor of ${fmt(balance)} auto-recorded.` : '';
       setSuccess(`Sale recorded!${debtMsg}`);
       setCart([]);
+      setServiceCart([]);
       setCustomerName(''); setCustomerPhone(''); setNotes('');
       setAmountPaid(0); setPaymentMethod('cash');
       fetchTodayData(selectedBranch);
@@ -354,20 +395,33 @@ export default function SalesPage() {
   // ── Edit Sale ─────────────────────────────────────────────────────────────
 
   function openEditSale(sale: any) {
-    const rebuilt: CartItem[] = safeItems(sale.items).map((item: any) => {
-      const productId = item.product_id || item.productId;
-      const found = products.find(p => p._id === productId);
-      const fallback: Product = {
-        _id: productId, name: item.productName || item.product_name || productId,
-        unitPrice: item.unit_price ?? item.unitPrice ?? 0, unit: '', isActive: true,
-      } as unknown as Product;
-      return { product: found || fallback, quantity: item.quantity, unitPrice: item.unit_price ?? item.unitPrice ?? 0 };
-    });
+    const allItems = safeItems(sale.items);
+    const rebuilt: CartItem[] = allItems
+      .filter((item: any) => item.itemType !== 'service' && (item.product_id || item.productId))
+      .map((item: any) => {
+        const productId = item.product_id || item.productId;
+        const found = products.find(p => p._id === productId);
+        const fallback: Product = {
+          _id: productId, name: item.productName || item.product_name || productId,
+          unitPrice: item.unit_price ?? item.unitPrice ?? 0, unit: '', isActive: true,
+        } as unknown as Product;
+        return { product: found || fallback, quantity: item.quantity, unitPrice: item.unit_price ?? item.unitPrice ?? 0 };
+      });
+    const rebuiltServices: ServiceCartItem[] = allItems
+      .filter((item: any) => item.itemType === 'service')
+      .map((item: any) => ({
+        serviceName: item.productName || item.product_name || '',
+        serviceNotes: item.serviceNotes || '',
+        quantity: item.quantity,
+        unitPrice: item.unit_price ?? item.unitPrice ?? 0,
+      }));
     setEditSale({
-      sale, cart: rebuilt, pm: sale.paymentMethod as PaymentMethod,
+      sale, cart: rebuilt, serviceCart: rebuiltServices,
+      pm: sale.paymentMethod as PaymentMethod,
       customerName: sale.customerName || '', customerPhone: sale.customerPhone || '',
       amountPaid: sale.amountPaid ?? 0, notes: sale.notes || '',
       addProduct: '', addQty: 1, addPrice: 0,
+      addService: '', addServiceNotes: '', addServiceQty: 1, addServicePrice: 0,
       loading: false, error: '',
     });
   }
@@ -385,11 +439,12 @@ export default function SalesPage() {
 
   async function handleSaveEdit() {
     if (!editSale) return;
-    if (!editSale.cart.length) { setEditSale({ ...editSale, error: 'Add at least one item' }); return; }
+    if (!editSale.cart.length && !editSale.serviceCart.length) { setEditSale({ ...editSale, error: 'Add at least one product or service' }); return; }
     const eHasDebt = editSale.pm === 'unpaid' || editSale.pm === 'part';
     if (eHasDebt && !editSale.customerName.trim()) { setEditSale({ ...editSale, error: 'Customer name required' }); return; }
     if (eHasDebt && !editSale.customerPhone.trim()) { setEditSale({ ...editSale, error: 'Customer phone required' }); return; }
-    const eTotal   = editSale.cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
+    const eTotal   = editSale.cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0)
+                   + editSale.serviceCart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
     const ePaid    = editSale.pm === 'unpaid' ? 0 : editSale.pm === 'part' ? editSale.amountPaid : eTotal;
     const eBalance = eTotal - ePaid;
     if (editSale.pm === 'part' && (editSale.amountPaid <= 0 || editSale.amountPaid >= eTotal)) {
@@ -405,10 +460,17 @@ export default function SalesPage() {
           paymentMethod: editSale.pm,
           customerName: editSale.customerName.trim(), customerPhone: editSale.customerPhone.trim(),
           amountPaid: ePaid, balanceDue: eBalance, notes: editSale.notes.trim(),
-          items: editSale.cart.map(c => ({
-            productId: c.product._id, productName: c.product.name,
-            quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
-          })),
+          items: [
+            ...editSale.cart.map(c => ({
+              productId: c.product._id, productName: c.product.name,
+              quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
+            })),
+            ...editSale.serviceCart.map(s => ({
+              productId: null, productName: s.serviceName, itemType: 'service',
+              serviceNotes: s.serviceNotes,
+              quantity: s.quantity, unitPrice: s.unitPrice, subtotal: s.quantity * s.unitPrice,
+            })),
+          ],
           totalAmount: eTotal,
         }),
       });
@@ -563,7 +625,8 @@ export default function SalesPage() {
   const totalTodayDebt     = todayDebtors.reduce((s, d) => s + Number(d.amountOwed), 0);
 
   // Edit sale derived values
-  const eTotal   = editSale?.cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0) ?? 0;
+  const eTotal   = (editSale?.cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0) ?? 0)
+                 + (editSale?.serviceCart.reduce((s, c) => s + c.quantity * c.unitPrice, 0) ?? 0);
   const eHasDebt = editSale?.pm === 'unpaid' || editSale?.pm === 'part';
 
   const tabStyle = (t: Tab) =>
@@ -658,6 +721,7 @@ export default function SalesPage() {
                 </div>
               </div>
 
+              {/* Add Products */}
               <div className="border-t border-slate-100 pt-5">
                 <h4 className="font-medium text-slate-800 mb-3">Add Products</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
@@ -693,18 +757,60 @@ export default function SalesPage() {
                 </div>
               </div>
 
-              {cart.length > 0 && (
+              {/* Add Services */}
+              <div className="border-t border-slate-100 pt-5">
+                <h4 className="font-medium text-slate-800 mb-3 flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-purple-500" />Add Services
+                </h4>
+                <datalist id="service-suggestions">
+                  {SERVICE_SUGGESTIONS.map(s => <option key={s} value={s} />)}
+                </datalist>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-2">
+                  <div className="sm:col-span-2">
+                    <input
+                      list="service-suggestions"
+                      value={selectedService}
+                      onChange={e => setSelectedService(e.target.value)}
+                      placeholder="Service name or select suggestion…"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                    />
+                  </div>
+                  <input type="number" min="1" step="1" value={serviceQty}
+                    onChange={e => setServiceQty(Number(e.target.value))}
+                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" placeholder="Qty" />
+                  <input type="number" min="0" step="0.01" value={servicePrice}
+                    onChange={e => setServicePrice(Number(e.target.value))}
+                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" placeholder="Price (₦)" />
+                </div>
+                <div className="flex gap-3">
+                  <textarea
+                    value={serviceNotes}
+                    onChange={e => setServiceNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Service notes / description (optional)"
+                    className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
+                  />
+                  <button type="button" onClick={addToServiceCart} disabled={!selectedService.trim()}
+                    className="flex items-center justify-center gap-1 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors self-end">
+                    <Plus className="w-4 h-4" />Add
+                  </button>
+                </div>
+              </div>
+
+              {(cart.length > 0 || serviceCart.length > 0) && (
                 <div className="border-t border-slate-100 pt-5 space-y-3">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-slate-700">{cart.length} item{cart.length !== 1 ? 's' : ''} in cart</span>
-                    <button type="button" onClick={() => setCart([])}
+                    <span className="text-sm font-medium text-slate-700">
+                      {cart.length + serviceCart.length} item{(cart.length + serviceCart.length) !== 1 ? 's' : ''} in cart
+                    </span>
+                    <button type="button" onClick={() => { setCart([]); setServiceCart([]); }}
                       className="text-xs text-red-400 hover:text-red-600 transition-colors">
                       Clear cart
                     </button>
                   </div>
                   <div className="space-y-2">
                     {cart.map((item, idx) => (
-                      <div key={idx} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+                      <div key={`p-${idx}`} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
                         <div className="flex-1 font-medium text-slate-800 text-sm">{item.product.name}</div>
                         <input type="number" min="0.01" step="0.01" value={item.quantity}
                           onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
@@ -720,6 +826,34 @@ export default function SalesPage() {
                           className="text-slate-300 hover:text-red-500">
                           <Trash2 className="w-4 h-4" />
                         </button>
+                      </div>
+                    ))}
+                    {serviceCart.map((item, idx) => (
+                      <div key={`s-${idx}`} className="border-b border-slate-100 last:border-0 py-2">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <Wrench className="w-3 h-3 text-purple-500 flex-shrink-0" />
+                              <span className="font-medium text-slate-800 text-sm truncate">{item.serviceName}</span>
+                            </div>
+                            {item.serviceNotes && (
+                              <p className="text-xs text-slate-400 mt-0.5 truncate pl-4">{item.serviceNotes}</p>
+                            )}
+                          </div>
+                          <input type="number" min="1" step="1" value={item.quantity}
+                            onChange={e => updateServiceItem(idx, 'quantity', Number(e.target.value))}
+                            className="w-20 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
+                          <input type="number" min="0" step="0.01" value={item.unitPrice}
+                            onChange={e => updateServiceItem(idx, 'unitPrice', Number(e.target.value))}
+                            className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
+                          <span className="font-semibold text-purple-600 text-sm w-24 text-right">
+                            {fmt(item.quantity * item.unitPrice)}
+                          </span>
+                          <button type="button" onClick={() => setServiceCart(serviceCart.filter((_, i) => i !== idx))}
+                            className="text-slate-300 hover:text-red-500">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -797,6 +931,11 @@ export default function SalesPage() {
                     {hasDebt ? 'Submit Sale & Record Debt' : 'Submit Sale'}
                   </button>
                 </div>
+              )}
+              {!cart.length && !serviceCart.length && (
+                <p className="text-center text-sm text-slate-400 py-4">
+                  Add products or services above to begin a sale.
+                </p>
               )}
             </form>
           )}
@@ -1150,6 +1289,8 @@ export default function SalesPage() {
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
               </div>
+
+              {/* Edit: Products */}
               <div className="border-t border-slate-100 pt-4">
                 <h4 className="font-medium text-slate-800 mb-3 text-sm">Products</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
@@ -1208,11 +1349,107 @@ export default function SalesPage() {
                       </button>
                     </div>
                   ))}
-                  {editSale.cart.length === 0 && (
-                    <p className="text-xs text-slate-400 text-center py-3">No items. Add a product above.</p>
+                  {editSale.cart.length === 0 && editSale.serviceCart.length === 0 && (
+                    <p className="text-xs text-slate-400 text-center py-3">No items. Add a product or service.</p>
                   )}
                 </div>
               </div>
+
+              {/* Edit: Services */}
+              <div className="border-t border-slate-100 pt-4">
+                <h4 className="font-medium text-slate-800 mb-3 text-sm flex items-center gap-2">
+                  <Wrench className="w-3.5 h-3.5 text-purple-500" />Services
+                </h4>
+                <datalist id="edit-service-suggestions">
+                  {SERVICE_SUGGESTIONS.map(s => <option key={s} value={s} />)}
+                </datalist>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-2">
+                  <div className="sm:col-span-2">
+                    <input
+                      list="edit-service-suggestions"
+                      value={editSale.addService}
+                      onChange={e => setEditSale({ ...editSale, addService: e.target.value })}
+                      placeholder="Service name or select…"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                    />
+                  </div>
+                  <input type="number" min="1" step="1" value={editSale.addServiceQty}
+                    onChange={e => setEditSale({ ...editSale, addServiceQty: Number(e.target.value) })}
+                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" placeholder="Qty" />
+                                    <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-purple-400">
+                    <span className="px-2 py-2 bg-slate-100 text-slate-500 text-sm font-medium border-r border-slate-200 select-none">₦</span>
+                    <input type="number" min="0" step="0.01" value={editSale.addServicePrice}
+                      onChange={e => setEditSale({ ...editSale, addServicePrice: Number(e.target.value) })}
+                      className="px-3 py-2 text-slate-800 text-sm focus:outline-none w-28" placeholder="Price" />
+                  </div>
+
+                </div>
+                <div className="flex gap-3 mb-3">
+                  <textarea
+                    value={editSale.addServiceNotes}
+                    onChange={e => setEditSale({ ...editSale, addServiceNotes: e.target.value })}
+                    rows={2}
+                    placeholder="Service notes / description (optional)"
+                    className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
+                  />
+                  <button type="button"
+                    disabled={!editSale.addService.trim()}
+                    onClick={() => {
+                      if (!editSale.addService.trim()) return;
+                      setEditSale({
+                        ...editSale,
+                        serviceCart: [...editSale.serviceCart, {
+                          serviceName: editSale.addService.trim(),
+                          serviceNotes: editSale.addServiceNotes.trim(),
+                          quantity: editSale.addServiceQty,
+                          unitPrice: editSale.addServicePrice,
+                        }],
+                        addService: '', addServiceNotes: '', addServiceQty: 1, addServicePrice: 0,
+                      });
+                    }}
+                    className="flex items-center justify-center gap-1 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors self-end">
+                    <Plus className="w-4 h-4" />Add
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {editSale.serviceCart.map((item, idx) => (
+                    <div key={idx} className="py-2 border-b border-slate-100 last:border-0">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <Wrench className="w-3 h-3 text-purple-500 flex-shrink-0" />
+                            <span className="font-medium text-slate-800 text-sm truncate">{item.serviceName}</span>
+                          </div>
+                          {item.serviceNotes && (
+                            <p className="text-xs text-slate-400 mt-0.5 pl-4 truncate">{item.serviceNotes}</p>
+                          )}
+                        </div>
+                        <input type="number" min="1" step="1" value={item.quantity}
+                          onChange={e => setEditSale({
+                            ...editSale,
+                            serviceCart: editSale.serviceCart.map((s, i) => i === idx ? { ...s, quantity: Number(e.target.value) } : s),
+                          })}
+                          className="w-20 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
+                        <input type="number" min="0" step="0.01" value={item.unitPrice}
+                          onChange={e => setEditSale({
+                            ...editSale,
+                            serviceCart: editSale.serviceCart.map((s, i) => i === idx ? { ...s, unitPrice: Number(e.target.value) } : s),
+                          })}
+                          className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
+                        <span className="font-semibold text-purple-600 text-sm w-24 text-right">
+                          {fmt(item.quantity * item.unitPrice)}
+                        </span>
+                        <button type="button"
+                          onClick={() => setEditSale({ ...editSale, serviceCart: editSale.serviceCart.filter((_, i) => i !== idx) })}
+                          className="text-slate-300 hover:text-red-500">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {editSale.pm === 'part' && (
                 <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-2">
                   <label className="block text-sm font-medium text-orange-800">Amount Paid by Customer (₦) *</label>
@@ -1246,7 +1483,7 @@ export default function SalesPage() {
                 className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={handleSaveEdit} disabled={editSale.loading || editSale.cart.length === 0}
+              <button onClick={handleSaveEdit} disabled={editSale.loading || (editSale.cart.length === 0 && editSale.serviceCart.length === 0)}
                 className="flex-1 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2">
                 {editSale.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save Changes

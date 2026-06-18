@@ -147,7 +147,7 @@ export default function ProductsPage() {
 
   // ── Categories list ───────────────────────────────────────────────────────────
   const categories = useMemo(() =>
-    ['all', ...Array.from(new Set(products.map(p => p.category).filter(Boolean))).sort()],
+    ['all', ...Array.from(new Set(products.map(p => p.category).filter((c): c is string => Boolean(c)))).sort()],
   [products]);
 
   // ── Filtered list ─────────────────────────────────────────────────────────────
