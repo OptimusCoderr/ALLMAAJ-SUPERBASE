@@ -172,6 +172,22 @@ router.post('/daily', async (req: Request, res: Response) => {
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
+// DELETE /api/reports/daily/:id  (admin only)
+router.delete('/daily/:id', adminOnly, async (req: Request, res: Response) => {
+  try {
+    // Unlink any sales that were tied to this report
+    await sql`
+      UPDATE sales SET report_id = NULL WHERE report_id = ${req.params.id}
+    `;
+    const [deleted] = await sql<DailyReportRow[]>`
+      DELETE FROM daily_reports WHERE id = ${req.params.id} RETURNING *
+    `;
+    if (!deleted) return sendError(res, 404, 'Report not found');
+    return sendResponse(res, 200, 'Report deleted', { id: req.params.id });
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+
 // PATCH /api/reports/daily/:id/review  (admin only)
 router.patch('/daily/:id/review', adminOnly, async (req: Request, res: Response) => {
   try {
