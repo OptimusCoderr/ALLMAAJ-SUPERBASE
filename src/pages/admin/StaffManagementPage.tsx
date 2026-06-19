@@ -1,11 +1,12 @@
 import { useEffect, useState, useMemo } from 'react';
-import { find, insertOne, updateOne, Collections } from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
+import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { User, Branch } from '../../lib/types';
 import {
   Plus, Edit2, X, Check, Search, Shield, RefreshCw,
   Download, Users, UserCheck, UserX, Building2,
   CheckCircle, XCircle, AlertCircle, Eye, EyeOff,
-  ToggleLeft, ToggleRight, Phone, Mail, KeyRound,
+  ToggleLeft, ToggleRight, Phone, Mail, KeyRound, Trash2,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function StaffManagementPage() {
+  const { user: currentUser } = useAuth();
   const [staff, setStaff]           = useState<User[]>([]);
   const [branches, setBranches]     = useState<Branch[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -106,18 +108,18 @@ export default function StaffManagementPage() {
   const [branchFilter, setBranchFilter] = useState('all');
 
   // Form
-  const [showForm, setShowForm]     = useState(false);
-  const [editing, setEditing]       = useState<User | null>(null);
-  const [form, setForm]             = useState<UserForm>(BLANK);
-  const [saving, setSaving]         = useState(false);
-  const [formError, setFormError]   = useState('');
+  const [showForm, setShowForm]         = useState(false);
+  const [editing, setEditing]           = useState<User | null>(null);
+  const [form, setForm]                 = useState<UserForm>(BLANK);
+  const [saving, setSaving]             = useState(false);
+  const [formError, setFormError]       = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   // Toasts
   const [toasts, setToasts]   = useState<Toast[]>([]);
   const [toastId, setToastId] = useState(0);
 
-  // ── Toast helper ─────────────────────────────────────────────────────────────
+  // ── Toast helper ──────────────────────────────────────────────────────────
   function toast(message: string, type: Toast['type'] = 'success') {
     const id = toastId + 1;
     setToastId(id);
@@ -125,7 +127,7 @@ export default function StaffManagementPage() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
   }
 
-  // ── Fetch ─────────────────────────────────────────────────────────────────────
+  // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll(quiet = false) {
     if (!quiet) setLoading(true);
     else setRefreshing(true);
@@ -146,17 +148,17 @@ export default function StaffManagementPage() {
 
   useEffect(() => { fetchAll(); }, []);
 
-  // ── Stats ─────────────────────────────────────────────────────────────────────
+  // ── Stats ─────────────────────────────────────────────────────────────────
   const stats = useMemo(() => ({
-    total:    staff.length,
-    active:   staff.filter(u => u.isActive).length,
-    inactive: staff.filter(u => !u.isActive).length,
-    admins:   staff.filter(u => u.role === 'admin').length,
-    staffOnly: staff.filter(u => u.role === 'staff').length,
+    total:      staff.length,
+    active:     staff.filter(u => u.isActive).length,
+    inactive:   staff.filter(u => !u.isActive).length,
+    admins:     staff.filter(u => u.role === 'admin').length,
+    staffOnly:  staff.filter(u => u.role === 'staff').length,
     unassigned: staff.filter(u => u.isActive && !u.branchId).length,
   }), [staff]);
 
-  // ── Filtered ─────────────────────────────────────────────────────────────────
+  // ── Filtered ──────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let out = staff;
     if (statusFilter !== 'all') out = out.filter(u => statusFilter === 'active' ? u.isActive : !u.isActive);
@@ -175,12 +177,12 @@ export default function StaffManagementPage() {
     return out;
   }, [staff, search, roleFilter, statusFilter, branchFilter]);
 
-  // ── Branch lookup ─────────────────────────────────────────────────────────────
+  // ── Branch lookup ─────────────────────────────────────────────────────────
   const branchMap = useMemo(() =>
     Object.fromEntries(branches.map(b => [b._id, b.name])),
   [branches]);
 
-  // ── Form helpers ──────────────────────────────────────────────────────────────
+  // ── Form helpers ──────────────────────────────────────────────────────────
   function openNew() {
     setEditing(null); setForm(BLANK); setFormError('');
     setShowPassword(false); setShowForm(true);
@@ -211,7 +213,7 @@ export default function StaffManagementPage() {
       };
       if (editing) {
         if (form.password) payload.password = form.password;
-        await updateOne(Collections.USERS, { _id: { $oid: editing._id } }, { $set: payload });
+        await updateOne(Collections.USERS, { _id: editing._id }, { $set: payload });
         toast(`"${payload.fullName}" updated`);
       } else {
         payload.password  = form.password;
@@ -232,7 +234,7 @@ export default function StaffManagementPage() {
   async function handleToggleActive(u: User) {
     const next = !u.isActive;
     try {
-      await updateOne(Collections.USERS, { _id: { $oid: u._id } }, { $set: { isActive: next } });
+      await updateOne(Collections.USERS, { _id: u._id }, { $set: { isActive: next } });
       setStaff(prev => prev.map(x => x._id === u._id ? { ...x, isActive: next } : x));
       toast(`"${u.fullName}" ${next ? 'activated' : 'deactivated'}`, next ? 'success' : 'info');
     } catch (err: any) {
@@ -240,7 +242,24 @@ export default function StaffManagementPage() {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
+  async function handleDelete(u: User) {
+    if (u._id === currentUser?.id) {
+      toast('You cannot delete your own account', 'error');
+      return;
+    }
+    if (!window.confirm(
+      `Delete "${u.fullName}"?\n\nThis is permanent. If this user has sales or records linked to them, the delete will be blocked — deactivate them instead.`
+    )) return;
+    try {
+      await deleteOne(Collections.USERS, { _id: u._id });
+      setStaff(prev => prev.filter(x => x._id !== u._id));
+      toast(`"${u.fullName}" deleted`);
+    } catch (err: any) {
+      toast(err.message || 'Delete failed', 'error');
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
 
@@ -443,6 +462,7 @@ export default function StaffManagementPage() {
               <tbody className="divide-y divide-slate-100">
                 {filtered.map(u => (
                   <tr key={u._id} className={`hover:bg-slate-50/70 transition-colors ${!u.isActive ? 'opacity-55' : ''}`}>
+
                     {/* User */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -527,9 +547,14 @@ export default function StaffManagementPage() {
                             ? <ToggleRight className="w-4 h-4" />
                             : <ToggleLeft className="w-4 h-4" />}
                         </button>
-                        {u.isActive
-                          ? <UserX className="w-3.5 h-3.5 text-slate-200" />
-                          : <UserCheck className="w-3.5 h-3.5 text-slate-200" />}
+                        <button
+                          onClick={() => handleDelete(u)}
+                          disabled={u._id === currentUser?.id}
+                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                          title={u._id === currentUser?.id ? 'Cannot delete your own account' : 'Delete user'}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
