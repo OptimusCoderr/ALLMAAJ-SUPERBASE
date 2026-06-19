@@ -25,5 +25,4 @@ dist-ssr
 *.sw?
 .env
 /src/scripts/createAdmin.ts
-/src/scripts/seed.ts
 createAdmin.ts

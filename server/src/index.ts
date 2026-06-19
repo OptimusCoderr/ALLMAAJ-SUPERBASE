@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'crypto';
+import { seedAdmin } from './scripts/seed.js'; 
 
 import authRoutes      from './routes/auth.js';
 import productRoutes   from './routes/products.js';
@@ -160,6 +161,9 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 app.listen(PORT, () => {
   console.log(`ALLMAAJ API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   sql`SELECT 1`
-    .then(() => console.log('Database connected ✓'))
-    .catch(e  => { console.error('Database connection failed:', e.message); process.exit(1); });
+    .then(() => {
+      console.log('Database connected ✓');
+      return seedAdmin();  // ← add this line
+    })
+    .catch(e => { console.error('Database connection failed:', e.message); process.exit(1); });
 });
