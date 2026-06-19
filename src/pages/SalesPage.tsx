@@ -4,7 +4,7 @@ import { find, insertOne, updateOne, Collections } from '../lib/api';
 import type { Product, Branch, BranchStock, Expense, Debtor } from '../lib/types';
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
-  Pencil, Lock, Send, AlertTriangle, X, Wrench,
+  Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -139,8 +139,9 @@ export default function SalesPage() {
   const [editDebtor, setEditDebtor]   = useState<EditDebtorState | null>(null);
 
   // Daily report
-  const [reportLoading, setReportLoading] = useState(false);
-  const [reportMsg, setReportMsg]         = useState<{ ok: boolean; text: string } | null>(null);
+  const [reportLoading, setReportLoading]     = useState(false);
+  const [reportMsg, setReportMsg]             = useState<{ ok: boolean; text: string } | null>(null);
+  const [reportConfirmOpen, setReportConfirmOpen] = useState(false);
 
   useEffect(() => { fetchData(); }, [user]);
   useEffect(() => { if (selectedBranch) fetchStock(selectedBranch); }, [selectedBranch]);
@@ -351,6 +352,7 @@ export default function SalesPage() {
 
   async function handleSubmitDailyReport() {
     if (!selectedBranch) { setReportMsg({ ok: false, text: 'No branch selected' }); return; }
+    setReportConfirmOpen(false);
     setReportLoading(true); setReportMsg(null);
     try {
       const today = new Date().toISOString().split('T')[0];
@@ -391,6 +393,21 @@ export default function SalesPage() {
     }
     setReportLoading(false);
   }
+
+  // ── Report summary (for confirm modal) ────────────────────────────────────
+  const rsCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const rsPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const rsPart     = todaySales.filter(s => s.paymentMethod === 'part').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const rsUnpaid   = todaySales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const rsExpenses = todayExpenses.reduce((a, e) => a + Number(e.amount), 0);
+  const reportSummary = {
+    cash: rsCash, pos: rsPos, part: rsPart, unpaid: rsUnpaid,
+    expenses: rsExpenses,
+    debtors:  todayDebtors.length,
+    debtAmt:  todayDebtors.reduce((a, d) => a + Number(d.amountOwed), 0),
+    net:      rsCash + rsPos + rsPart - rsExpenses,
+  };
+
 
   // ── Edit Sale ─────────────────────────────────────────────────────────────
 
@@ -630,23 +647,30 @@ export default function SalesPage() {
   const eHasDebt = editSale?.pm === 'unpaid' || editSale?.pm === 'part';
 
   const tabStyle = (t: Tab) =>
-    `flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-      tab === t ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+    `flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+      tab === t
+        ? 'bg-amber-500 text-white shadow-sm'
+        : 'bg-white text-slate-600 border border-slate-200 hover:border-amber-300 hover:text-amber-600'
     }`;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800">Record Transactions</h1>
-        <p className="text-slate-500 text-sm mt-1">
-          Staff: <span className="font-medium text-slate-700">{user?.fullName}</span>
-        </p>
+    <div className="p-4 sm:p-6 space-y-5">
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Record Transactions</h1>
+          <p className="text-slate-400 text-sm mt-0.5">
+            {user?.fullName} &middot; {branches.find(b => b._id === selectedBranch)?.name || 'Branch'}
+          </p>
+        </div>
       </div>
 
+      {/* Feedback banners */}
       {success && (
-        <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-xl text-green-700">
+        <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-xl text-green-700 font-medium">
           <CheckCircle className="w-5 h-5 flex-shrink-0" />{success}
         </div>
       )}
@@ -659,10 +683,11 @@ export default function SalesPage() {
         </div>
       )}
 
-      <div className="flex gap-2">
-        <button onClick={() => switchTab('sale')}    className={tabStyle('sale')}>   <ShoppingCart className="w-4 h-4" />Sale</button>
-        <button onClick={() => switchTab('debtor')}  className={tabStyle('debtor')}> <UserPlus className="w-4 h-4" />Debtor</button>
-        <button onClick={() => switchTab('expense')} className={tabStyle('expense')}><Receipt className="w-4 h-4" />Expense</button>
+      {/* Tabs */}
+      <div className="flex gap-2 flex-wrap">
+        <button onClick={() => switchTab('sale')}    className={tabStyle('sale')}>   <ShoppingCart className="w-4 h-4" />New Sale</button>
+        <button onClick={() => switchTab('debtor')}  className={tabStyle('debtor')}> <UserPlus className="w-4 h-4" />Add Debtor</button>
+        <button onClick={() => switchTab('expense')} className={tabStyle('expense')}><Receipt className="w-4 h-4" />Add Expense</button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -672,28 +697,35 @@ export default function SalesPage() {
 
           {/* SALE FORM */}
           {tab === 'sale' && (
-            <form onSubmit={handleSale} className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
-                  {isAdmin ? (
-                    <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                      {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-                    </select>
-                  ) : (
-                    <div className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
-                      {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
-                    </div>
-                  )}
+            <form onSubmit={handleSale} className="bg-white rounded-2xl shadow-sm border border-slate-100 divide-y divide-slate-100">
+
+              {/* Section: Branch / Date / Payment */}
+              <div className="p-6 space-y-4">
+                <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">Sale Details</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Branch</label>
+                    {isAdmin ? (
+                      <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50">
+                        {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                      </select>
+                    ) : (
+                      <div className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-700 bg-slate-50 text-sm font-medium">
+                        {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Sale Date</label>
+                    <input type="date" value={saleDate} onChange={e => setSaleDate(e.target.value)}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
+                  </div>
                 </div>
+
+                {/* Payment method */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Sale Date</label>
-                  <input type="date" value={saleDate} onChange={e => setSaleDate(e.target.value)}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Payment Method</label>
                   <div className="grid grid-cols-4 gap-2">
                     {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
                       <button key={m} type="button" onClick={() => { setPaymentMethod(m); setAmountPaid(0); }}
@@ -703,40 +735,50 @@ export default function SalesPage() {
                     ))}
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Customer Name {hasDebt && <span className="text-red-500">*</span>}
-                  </label>
-                  <input type="text" value={customerName} onChange={e => setCustomerName(e.target.value)}
-                    placeholder={hasDebt ? 'Required for debt tracking' : 'Optional'}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Customer Phone {hasDebt && <span className="text-red-500">*</span>}
-                  </label>
-                  <input type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)}
-                    placeholder={hasDebt ? 'Required for debt tracking' : 'Optional'}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+
+                {/* Customer fields (always shown, required only for debt) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+                      Customer Name {hasDebt && <span className="text-red-500 normal-case font-medium">*required</span>}
+                    </label>
+                    <input type="text" value={customerName} onChange={e => setCustomerName(e.target.value)}
+                      placeholder={hasDebt ? 'Required for debt tracking' : 'Optional'}
+                      className={`w-full px-3 py-2.5 border rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 bg-slate-50 ${
+                        hasDebt ? 'border-orange-300 focus:ring-orange-400' : 'border-slate-200 focus:ring-amber-400'
+                      }`} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+                      Customer Phone {hasDebt && <span className="text-red-500 normal-case font-medium">*required</span>}
+                    </label>
+                    <input type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)}
+                      placeholder={hasDebt ? 'Required for debt tracking' : 'Optional'}
+                      className={`w-full px-3 py-2.5 border rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 bg-slate-50 ${
+                        hasDebt ? 'border-orange-300 focus:ring-orange-400' : 'border-slate-200 focus:ring-amber-400'
+                      }`} />
+                  </div>
                 </div>
               </div>
 
-              {/* Add Products */}
-              <div className="border-t border-slate-100 pt-5">
-                <h4 className="font-medium text-slate-800 mb-3">Add Products</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
-                  <div className="sm:col-span-1">
+              {/* Section: Add Products */}
+              <div className="p-6 space-y-3">
+                <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
+                  <ShoppingCart className="w-4 h-4 text-amber-500" />Products
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div className="sm:col-span-2">
                     <select value={selectedProduct} onChange={e => {
                       setSelectedProduct(e.target.value);
                       const p = products.find(p => p._id === e.target.value);
                       if (p) setPrice(p.unitPrice);
-                    }} className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
-                      <option value="">Select product...</option>
+                    }} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50">
+                      <option value="">Select product…</option>
                       {products.map(p => {
                         const stock = getStock(p._id);
                         return (
                           <option key={p._id} value={p._id} disabled={stock === 0}>
-                            {p.name} — {stock === 0 ? 'OUT OF STOCK' : `${stock} in stock`}
+                            {p.name} {stock === 0 ? '(OUT OF STOCK)' : `· ${stock} left`}
                           </option>
                         );
                       })}
@@ -745,91 +787,113 @@ export default function SalesPage() {
                   <input type="number" min="0.01" step="0.01" value={qty}
                     onChange={e => setQty(Number(e.target.value))}
                     onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Qty" />
-                  <input type="number" min="0" step="0.01" value={price}
-                    onChange={e => setPrice(Number(e.target.value))}
-                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Price override" />
-                  <button type="button" onClick={addToCart} disabled={!selectedProduct}
-                    className="flex items-center justify-center gap-1 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors">
-                    <Plus className="w-4 h-4" />Add
-                  </button>
+                    className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Qty" />
+                  <div className="flex gap-2">
+                    <input type="number" min="0" step="0.01" value={price}
+                      onChange={e => setPrice(Number(e.target.value))}
+                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
+                      className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Price (₦)" />
+                    <button type="button" onClick={addToCart} disabled={!selectedProduct}
+                      className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-xl text-sm font-semibold transition-colors flex items-center gap-1">
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Add Services */}
-              <div className="border-t border-slate-100 pt-5">
-                <h4 className="font-medium text-slate-800 mb-3 flex items-center gap-2">
-                  <Wrench className="w-4 h-4 text-purple-500" />Add Services
-                </h4>
-                <datalist id="service-suggestions">
-                  {SERVICE_SUGGESTIONS.map(s => <option key={s} value={s} />)}
-                </datalist>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-2">
+              {/* Section: Add Services */}
+              <div className="p-6 space-y-3">
+                <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-purple-500" />Services
+                </h3>
+
+                {/* Pill suggestions */}
+                <div className="flex flex-wrap gap-2">
+                  {SERVICE_SUGGESTIONS.map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setSelectedService(selectedService === s ? '' : s)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                        selectedService === s
+                          ? 'bg-purple-500 text-white border-purple-500 shadow-sm'
+                          : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:border-purple-300'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom service name + controls */}
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                   <div className="sm:col-span-2">
                     <input
-                      list="service-suggestions"
+                      type="text"
                       value={selectedService}
                       onChange={e => setSelectedService(e.target.value)}
-                      placeholder="Service name or select suggestion…"
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      placeholder="Or type a custom service name…"
+                      className="w-full px-3 py-2.5 border border-purple-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-purple-50/30 placeholder:text-slate-400"
                     />
                   </div>
                   <input type="number" min="1" step="1" value={serviceQty}
                     onChange={e => setServiceQty(Number(e.target.value))}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" placeholder="Qty" />
-                  <input type="number" min="0" step="0.01" value={servicePrice}
-                    onChange={e => setServicePrice(Number(e.target.value))}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" placeholder="Price (₦)" />
-                </div>
-                <div className="flex gap-3">
-                  <textarea
-                    value={serviceNotes}
-                    onChange={e => setServiceNotes(e.target.value)}
-                    rows={2}
-                    placeholder="Service notes / description (optional)"
-                    className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
-                  />
-                  <button type="button" onClick={addToServiceCart} disabled={!selectedService.trim()}
-                    className="flex items-center justify-center gap-1 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors self-end">
-                    <Plus className="w-4 h-4" />Add
-                  </button>
-                </div>
-              </div>
-
-              {(cart.length > 0 || serviceCart.length > 0) && (
-                <div className="border-t border-slate-100 pt-5 space-y-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-slate-700">
-                      {cart.length + serviceCart.length} item{(cart.length + serviceCart.length) !== 1 ? 's' : ''} in cart
-                    </span>
-                    <button type="button" onClick={() => { setCart([]); setServiceCart([]); }}
-                      className="text-xs text-red-400 hover:text-red-600 transition-colors">
-                      Clear cart
+                    className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-slate-50" placeholder="Qty" />
+                  <div className="flex gap-2">
+                    <input type="number" min="0" step="0.01" value={servicePrice}
+                      onChange={e => setServicePrice(Number(e.target.value))}
+                      className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-slate-50" placeholder="Price (₦)" />
+                    <button type="button" onClick={addToServiceCart} disabled={!selectedService.trim()}
+                      className="px-4 py-2.5 bg-purple-500 hover:bg-purple-600 disabled:bg-slate-200 text-white rounded-xl text-sm font-semibold transition-colors flex items-center gap-1">
+                      <Plus className="w-4 h-4" />
                     </button>
                   </div>
-                  <div className="space-y-2">
+                </div>
+                <textarea
+                  value={serviceNotes}
+                  onChange={e => setServiceNotes(e.target.value)}
+                  rows={2}
+                  placeholder="Service notes / description (optional)"
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none bg-slate-50"
+                />
+              </div>
+
+              {/* Cart + Submit */}
+              {(cart.length > 0 || serviceCart.length > 0) && (
+                <div className="p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">
+                      Cart · {cart.length + serviceCart.length} item{(cart.length + serviceCart.length) !== 1 ? 's' : ''}
+                    </h3>
+                    <button type="button" onClick={() => { setCart([]); setServiceCart([]); }}
+                      className="text-xs text-red-400 hover:text-red-600 font-medium transition-colors">
+                      Clear all
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
                     {cart.map((item, idx) => (
-                      <div key={`p-${idx}`} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
-                        <div className="flex-1 font-medium text-slate-800 text-sm">{item.product.name}</div>
+                      <div key={`p-${idx}`} className="flex items-center gap-3 py-2.5 px-3 bg-slate-50 rounded-xl">
+                        <div className="flex-1 font-medium text-slate-800 text-sm truncate">{item.product.name}</div>
+                        <span className="text-xs text-slate-400 hidden sm:block">{(item.product as any).unit}</span>
                         <input type="number" min="0.01" step="0.01" value={item.quantity}
                           onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
-                          className="w-20 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
-                        <span className="text-xs text-slate-400">{(item.product as any).unit}</span>
+                          className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                        <span className="text-slate-300 text-xs">×</span>
                         <input type="number" min="0" step="0.01" value={item.unitPrice}
                           onChange={e => updateItem(idx, 'unitPrice', Number(e.target.value))}
-                          className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
-                        <span className="font-semibold text-slate-600 text-sm w-24 text-right">
+                          className="w-24 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                        <span className="font-bold text-slate-700 text-sm w-24 text-right">
                           {fmt(item.quantity * item.unitPrice)}
                         </span>
                         <button type="button" onClick={() => setCart(cart.filter((_, i) => i !== idx))}
-                          className="text-slate-300 hover:text-red-500">
+                          className="text-slate-300 hover:text-red-500 transition-colors">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     ))}
                     {serviceCart.map((item, idx) => (
-                      <div key={`s-${idx}`} className="border-b border-slate-100 last:border-0 py-2">
+                      <div key={`s-${idx}`} className="py-2.5 px-3 bg-purple-50/60 rounded-xl">
                         <div className="flex items-center gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
@@ -837,20 +901,21 @@ export default function SalesPage() {
                               <span className="font-medium text-slate-800 text-sm truncate">{item.serviceName}</span>
                             </div>
                             {item.serviceNotes && (
-                              <p className="text-xs text-slate-400 mt-0.5 truncate pl-4">{item.serviceNotes}</p>
+                              <p className="text-xs text-slate-400 mt-0.5 pl-4 truncate">{item.serviceNotes}</p>
                             )}
                           </div>
                           <input type="number" min="1" step="1" value={item.quantity}
                             onChange={e => updateServiceItem(idx, 'quantity', Number(e.target.value))}
-                            className="w-20 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
+                            className="w-16 px-2 py-1 border border-purple-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                          <span className="text-slate-300 text-xs">×</span>
                           <input type="number" min="0" step="0.01" value={item.unitPrice}
                             onChange={e => updateServiceItem(idx, 'unitPrice', Number(e.target.value))}
-                            className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
-                          <span className="font-semibold text-purple-600 text-sm w-24 text-right">
+                            className="w-24 px-2 py-1 border border-purple-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                          <span className="font-bold text-purple-700 text-sm w-24 text-right">
                             {fmt(item.quantity * item.unitPrice)}
                           </span>
                           <button type="button" onClick={() => setServiceCart(serviceCart.filter((_, i) => i !== idx))}
-                            className="text-slate-300 hover:text-red-500">
+                            className="text-slate-300 hover:text-red-500 transition-colors">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
@@ -859,133 +924,135 @@ export default function SalesPage() {
                   </div>
 
                   {paymentMethod === 'part' && (
-                    <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-3">
+                    <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl space-y-3">
                       <div>
-                        <label className="block text-sm font-medium text-orange-800 mb-1">Amount Paid by Customer (₦) *</label>
+                        <label className="block text-sm font-semibold text-orange-800 mb-1">Amount Paid by Customer (₦) *</label>
                         <input type="number" min="0.01" step="0.01" value={amountPaid || ''}
                           onChange={e => setAmountPaid(Number(e.target.value))}
                           placeholder="Enter amount customer is paying now"
-                          className="w-full px-3 py-2.5 border border-orange-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                          className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white text-sm" />
                       </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-orange-700">Total Bill:</span>
-                        <span className="font-semibold text-slate-800">{fmt(total)}</span>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div className="bg-white rounded-lg p-2 text-center">
+                          <p className="text-xs text-slate-400">Total Bill</p>
+                          <p className="font-bold text-slate-800">{fmt(total)}</p>
+                        </div>
+                        <div className="bg-green-50 rounded-lg p-2 text-center">
+                          <p className="text-xs text-slate-400">Paid Now</p>
+                          <p className="font-bold text-green-700">{fmt(amountPaid)}</p>
+                        </div>
+                        <div className="bg-red-50 rounded-lg p-2 text-center">
+                          <p className="text-xs text-slate-400">Balance Owed</p>
+                          <p className="font-bold text-red-600">{fmt(Math.max(0, total - amountPaid))}</p>
+                        </div>
                       </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-orange-700">Amount Paid:</span>
-                        <span className="font-semibold text-green-700">{fmt(amountPaid)}</span>
-                      </div>
-                      <div className="flex justify-between text-sm border-t border-orange-200 pt-2">
-                        <span className="font-semibold text-orange-800">Balance Owed:</span>
-                        <span className="font-bold text-red-600">{fmt(Math.max(0, total - amountPaid))}</span>
-                      </div>
-                      <p className="text-xs text-orange-600">This balance will be automatically added to Debtors.</p>
+                      <p className="text-xs text-orange-600">Balance will be auto-added to Debtors.</p>
                     </div>
                   )}
 
                   {paymentMethod === 'unpaid' && (
-                    <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="font-semibold text-red-800">Full Amount Owed:</span>
-                        <span className="font-bold text-red-600">{fmt(total)}</span>
-                      </div>
-                      <p className="text-xs text-red-600">The full amount will be automatically added to Debtors.</p>
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex justify-between items-center text-sm">
+                      <span className="font-semibold text-red-800">Full Amount Owed — auto-added to Debtors</span>
+                      <span className="font-bold text-red-600 text-base">{fmt(total)}</span>
                     </div>
                   )}
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>
                     <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm"
-                      placeholder="Add notes..." />
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none text-sm bg-slate-50"
+                      placeholder="Add notes…" />
                   </div>
 
-                  <div className="space-y-1 pt-2 border-t border-slate-200">
+                  {/* Total + submit */}
+                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-800">Total</span>
-                      <span className="text-xl font-bold text-amber-600">{fmt(total)}</span>
+                      <span className="font-semibold text-slate-700">Order Total</span>
+                      <span className="text-2xl font-bold text-amber-600">{fmt(total)}</span>
                     </div>
                     {paymentMethod === 'part' && amountPaid > 0 && (
                       <>
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-slate-500">Paid Now</span>
-                          <span className="text-green-600 font-medium">{fmt(amountPaid)}</span>
+                          <span className="text-green-600 font-semibold">{fmt(amountPaid)}</span>
                         </div>
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-slate-500">Remaining Debt</span>
-                          <span className="text-red-600 font-medium">{fmt(Math.max(0, balance))}</span>
+                          <span className="text-red-600 font-semibold">{fmt(Math.max(0, balance))}</span>
                         </div>
                       </>
                     )}
                     {paymentMethod === 'unpaid' && (
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-slate-500">Added to Debtors</span>
-                        <span className="text-red-600 font-medium">{fmt(total)}</span>
+                        <span className="text-red-600 font-semibold">{fmt(total)}</span>
                       </div>
                     )}
                   </div>
 
                   <button type="submit" disabled={loading}
-                    className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
+                    className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2 text-base shadow-sm">
                     {loading && <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                     {hasDebt ? 'Submit Sale & Record Debt' : 'Submit Sale'}
                   </button>
                 </div>
               )}
+
               {!cart.length && !serviceCart.length && (
-                <p className="text-center text-sm text-slate-400 py-4">
-                  Add products or services above to begin a sale.
-                </p>
+                <div className="p-8 text-center">
+                  <ShoppingCart className="w-10 h-10 text-slate-200 mx-auto mb-2" />
+                  <p className="text-sm text-slate-400">Add products or services above to begin a sale.</p>
+                </div>
               )}
             </form>
           )}
 
           {/* DEBTOR FORM */}
           {tab === 'debtor' && (
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-              <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2">
                 <UserPlus className="w-5 h-5 text-amber-500" />
-                Record Debtor (Customer with Unpaid Balance)
+                Record Debtor
               </h3>
               <form onSubmit={handleDebtor} className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Debtor Name *</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Debtor Name *</label>
                     <input type="text" value={debtorName} onChange={e => setDebtorName(e.target.value)} required
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number *</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Phone Number *</label>
                     <input type="tel" value={debtorPhone} onChange={e => setDebtorPhone(e.target.value)} required
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Amount Owed (₦) *</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Amount Owed (₦) *</label>
                     <input type="number" min="0.01" step="0.01" value={debtorAmount}
                       onChange={e => setDebtorAmount(e.target.value)} required
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Branch</label>
                     {isAdmin ? (
                       <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50">
                         {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
                       </select>
                     ) : (
-                      <div className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
+                      <div className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-700 bg-slate-50 text-sm font-medium">
                         {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
                       </div>
                     )}
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>
                   <textarea value={debtorNotes} onChange={e => setDebtorNotes(e.target.value)} rows={2}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-slate-50" />
                 </div>
                 <button type="submit" disabled={loading}
-                  className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
+                  className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm">
                   {loading && <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   Record Debtor
                 </button>
@@ -995,29 +1062,29 @@ export default function SalesPage() {
 
           {/* EXPENSE FORM */}
           {tab === 'expense' && (
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-              <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-amber-500" />
                 Record Expense
               </h3>
               <form onSubmit={handleExpense} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Description *</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Description *</label>
                   <input type="text" value={expenseDesc} onChange={e => setExpenseDesc(e.target.value)} required
                     placeholder="e.g., Transport, Airtime, Supplies"
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Amount (₦) *</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Amount (₦) *</label>
                     <input type="number" min="0.01" step="0.01" value={expenseAmount}
                       onChange={e => setExpenseAmount(e.target.value)} required
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Category</label>
                     <select value={expenseCategory} onChange={e => setExpenseCategory(e.target.value as any)}
-                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50">
                       {EXPENSE_CATS.map(c => (
                         <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
                       ))}
@@ -1025,12 +1092,12 @@ export default function SalesPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>
                   <textarea value={expenseNotes} onChange={e => setExpenseNotes(e.target.value)} rows={2}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-slate-50" />
                 </div>
                 <button type="submit" disabled={loading}
-                  className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
+                  className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm">
                   {loading && <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   Record Expense
                 </button>
@@ -1040,77 +1107,89 @@ export default function SalesPage() {
         </div>
 
         {/* ── Right panel ──────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-100 h-fit overflow-hidden">
-          <div className="p-4 bg-amber-50 border-b border-amber-100">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 h-fit overflow-hidden">
+
+          {/* Submit daily report */}
+          <div className="p-4 bg-gradient-to-br from-amber-50 to-orange-50 border-b border-amber-100">
             <div className="flex items-start gap-2 mb-3">
               <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
               <p className="text-xs text-amber-700 font-medium leading-snug">
                 Sales lock at midnight — submit your report before 12:00 AM
               </p>
             </div>
-            <button onClick={handleSubmitDailyReport} disabled={reportLoading}
-              className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-semibold rounded-lg transition-colors">
+            <button
+              onClick={() => setReportConfirmOpen(true)}
+              disabled={reportLoading}
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
               {reportLoading
                 ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 : <Send className="w-4 h-4" />}
-              {reportLoading ? 'Submitting...' : 'Submit Daily Report'}
+              {reportLoading ? 'Submitting…' : 'Submit Daily Report'}
             </button>
             {reportMsg && (
-              <p className={`text-xs font-medium mt-1 text-center ${reportMsg.ok ? 'text-green-700' : 'text-red-600'}`}>
+              <p className={`text-xs font-medium mt-2 text-center ${reportMsg.ok ? 'text-green-700' : 'text-red-600'}`}>
                 {reportMsg.text}
               </p>
             )}
           </div>
 
+          {/* Quick stats */}
           {todaySales.length > 0 && (
             <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 grid grid-cols-3 gap-2 text-center">
               <div>
-                <p className="text-xs text-slate-400">Total</p>
+                <p className="text-xs text-slate-400 mb-0.5">Total</p>
                 <p className="text-xs font-bold text-amber-600">{fmt(totalTodaySales)}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-400">Cash</p>
+                <p className="text-xs text-slate-400 mb-0.5">Cash</p>
                 <p className="text-xs font-bold text-green-600">{fmt(totalTodayCash)}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-400">POS</p>
+                <p className="text-xs text-slate-400 mb-0.5">POS</p>
                 <p className="text-xs font-bold text-blue-600">{fmt(totalTodayPos)}</p>
               </div>
             </div>
           )}
 
-          <div className="p-4">
-            <div className="flex gap-1 mb-4">
+          {/* Sub-tabs */}
+          <div className="p-3 border-b border-slate-100">
+            <div className="flex gap-1">
               {([
                 { key: 'sales',    label: `Sales (${todaySales.length})` },
                 { key: 'expenses', label: `Expenses (${todayExpenses.length})` },
-                { key: 'debtors',  label: `Active Debtors (${todayDebtors.length})` },
+                { key: 'debtors',  label: `Debtors (${todayDebtors.length})` },
               ] as const).map(t => (
                 <button key={t.key} onClick={() => setRightTab(t.key)}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    rightTab === t.key ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    rightTab === t.key ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                   }`}>
                   {t.label}
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="p-3">
 
             {/* SALES LIST */}
             {rightTab === 'sales' && (
               todaySales.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-6">No sales today yet</p>
+                <div className="text-center py-8">
+                  <ShoppingCart className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                  <p className="text-slate-400 text-sm">No sales recorded today</p>
+                </div>
               ) : (
-                <div className="space-y-3 max-h-[550px] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-[550px] overflow-y-auto pr-0.5">
                   {todaySales.map(s => {
                     const locked   = !isToday(s.saleDate);
                     const editable = canEditOrDelete(s);
                     const items    = safeItems(s.items);
                     return (
-                      <div key={s._id || s.id} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-semibold text-slate-800 text-sm">{fmt(s.totalAmount)}</span>
+                      <div key={s._id || s.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="font-bold text-slate-800 text-sm">{fmt(s.totalAmount)}</span>
                           <div className="flex items-center gap-1">
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${PM_COLORS[s.paymentMethod] ?? 'bg-slate-100 text-slate-600'}`}>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${PM_COLORS[s.paymentMethod] ?? 'bg-slate-100 text-slate-600'}`}>
                               {PM_LABELS[s.paymentMethod] ?? s.paymentMethod}
                             </span>
                             {locked && (
@@ -1121,29 +1200,29 @@ export default function SalesPage() {
                           </div>
                         </div>
                         {(s.paymentMethod === 'part' || s.paymentMethod === 'unpaid') && s.balanceDue > 0 && (
-                          <p className="text-xs text-red-500 font-medium mb-1">Owes: {fmt(s.balanceDue)}</p>
+                          <p className="text-xs text-red-500 font-semibold mb-1">Owes: {fmt(s.balanceDue)}</p>
                         )}
                         {s.customerName && (
-                          <p className="text-xs text-slate-600 mb-0.5">
+                          <p className="text-xs text-slate-600 mb-0.5 font-medium">
                             {s.customerName}{s.customerPhone ? ` · ${s.customerPhone}` : ''}
                           </p>
                         )}
                         {items.length > 0 && (
                           <p className="text-xs text-slate-400 mb-1 truncate">
                             {items.map((it: any) =>
-                              `${it.productName || it.product_name || it.product_id} x${it.quantity}`
+                              `${it.productName || it.product_name || it.product_id} ×${it.quantity}`
                             ).join(', ')}
                           </p>
                         )}
                         <p className="text-xs text-slate-400 mb-2">By: {s.staffName}</p>
                         {editable && (
-                          <div className="flex gap-2">
+                          <div className="flex gap-1.5">
                             <button onClick={() => openEditSale(s)}
-                              className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-md font-medium transition-colors">
+                              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg font-semibold transition-colors">
                               <Pencil className="w-3 h-3" />Edit
                             </button>
                             <button onClick={() => handleDeleteSale(s._id || s.id)}
-                              className="flex items-center gap-1 px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-md font-medium transition-colors">
+                              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-semibold transition-colors">
                               <Trash2 className="w-3 h-3" />Delete
                             </button>
                           </div>
@@ -1151,9 +1230,9 @@ export default function SalesPage() {
                       </div>
                     );
                   })}
-                  <div className="pt-2 border-t border-slate-100 flex justify-between text-sm">
-                    <span className="text-slate-500 font-medium">Total Sales</span>
-                    <span className="font-bold text-amber-600">{fmt(totalTodaySales)}</span>
+                  <div className="pt-2 border-t border-slate-100 flex justify-between text-sm font-semibold">
+                    <span className="text-slate-500">Total</span>
+                    <span className="text-amber-600">{fmt(totalTodaySales)}</span>
                   </div>
                 </div>
               )
@@ -1162,11 +1241,14 @@ export default function SalesPage() {
             {/* EXPENSES LIST */}
             {rightTab === 'expenses' && (
               todayExpenses.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-6">No expenses recorded today</p>
+                <div className="text-center py-8">
+                  <Receipt className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                  <p className="text-slate-400 text-sm">No expenses recorded today</p>
+                </div>
               ) : (
-                <div className="space-y-2 max-h-[550px] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-[550px] overflow-y-auto pr-0.5">
                   {todayExpenses.map((e, i) => (
-                    <div key={(e as any)._id || i} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                    <div key={(e as any)._id || i} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-slate-800 truncate">{e.description}</p>
@@ -1175,21 +1257,21 @@ export default function SalesPage() {
                         </div>
                         <span className="text-sm font-bold text-red-600 flex-shrink-0">{fmt(Number(e.amount))}</span>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1.5">
                         <button onClick={() => openEditExpense(e)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-md font-medium transition-colors">
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg font-semibold transition-colors">
                           <Pencil className="w-3 h-3" />Edit
                         </button>
                         <button onClick={() => handleDeleteExpense(e)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-md font-medium transition-colors">
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-semibold transition-colors">
                           <Trash2 className="w-3 h-3" />Delete
                         </button>
                       </div>
                     </div>
                   ))}
-                  <div className="pt-2 border-t border-slate-100 flex justify-between text-sm">
-                    <span className="text-slate-500 font-medium">Total Expenses</span>
-                    <span className="font-bold text-red-600">{fmt(totalTodayExpenses)}</span>
+                  <div className="pt-2 border-t border-slate-100 flex justify-between text-sm font-semibold">
+                    <span className="text-slate-500">Total Expenses</span>
+                    <span className="text-red-600">{fmt(totalTodayExpenses)}</span>
                   </div>
                 </div>
               )
@@ -1198,39 +1280,42 @@ export default function SalesPage() {
             {/* DEBTORS LIST */}
             {rightTab === 'debtors' && (
               todayDebtors.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-6">No active debtors for this branch</p>
+                <div className="text-center py-8">
+                  <UserPlus className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                  <p className="text-slate-400 text-sm">No active debtors for this branch</p>
+                </div>
               ) : (
-                <div className="space-y-2 max-h-[550px] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-[550px] overflow-y-auto pr-0.5">
                   {todayDebtors.map((d, i) => (
-                    <div key={(d as any)._id || i} className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                    <div key={(d as any)._id || i} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-slate-800 truncate">{d.name}</p>
-                          <p className="text-xs text-blue-600">{d.phone}</p>
+                          <p className="text-xs text-blue-600 font-medium">{d.phone}</p>
                           {d.createdByName && <p className="text-xs text-slate-400">By: {d.createdByName}</p>}
                         </div>
                         <div className="text-right flex-shrink-0">
                           <p className="text-sm font-bold text-red-600">{fmt(Number(d.amountOwed))}</p>
-                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">
-                            {d.paymentMethod === 'part' ? 'Part' : 'Unpaid'}
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">
+                            Owes
                           </span>
                         </div>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1.5">
                         <button onClick={() => openEditDebtor(d)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-md font-medium transition-colors">
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg font-semibold transition-colors">
                           <Pencil className="w-3 h-3" />Edit
                         </button>
                         <button onClick={() => handleDeleteDebtor(d)}
-                          className="flex items-center gap-1 px-2 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-md font-medium transition-colors">
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-semibold transition-colors">
                           <Trash2 className="w-3 h-3" />Delete
                         </button>
                       </div>
                     </div>
                   ))}
-                  <div className="pt-2 border-t border-slate-100 flex justify-between text-sm">
-                    <span className="text-slate-500 font-medium">Total Owed</span>
-                    <span className="font-bold text-red-600">{fmt(totalTodayDebt)}</span>
+                  <div className="pt-2 border-t border-slate-100 flex justify-between text-sm font-semibold">
+                    <span className="text-slate-500">Total Owed</span>
+                    <span className="text-red-600">{fmt(totalTodayDebt)}</span>
                   </div>
                 </div>
               )
@@ -1239,6 +1324,93 @@ export default function SalesPage() {
         </div>
       </div>
 
+      {/* ── Daily Report Confirmation Modal ────────────────────────────────────── */}
+      {reportConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-800">Submit Daily Report</h2>
+                  <p className="text-xs text-slate-400">Review today's summary before submitting</p>
+                </div>
+              </div>
+              <button onClick={() => setReportConfirmOpen(false)}
+                className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Sales Breakdown</p>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-sm text-slate-600 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />Cash Sales
+                  </span>
+                  <span className="font-semibold text-slate-800">{fmt(reportSummary.cash)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-sm text-slate-600 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />POS Sales
+                  </span>
+                  <span className="font-semibold text-slate-800">{fmt(reportSummary.pos)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-sm text-slate-600 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" />Part Payment
+                  </span>
+                  <span className="font-semibold text-slate-800">{fmt(reportSummary.part)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-sm text-slate-600 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />Unpaid Sales
+                  </span>
+                  <span className="font-semibold text-slate-800">{fmt(reportSummary.unpaid)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-sm text-slate-600 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-slate-400 inline-block" />Total Expenses
+                  </span>
+                  <span className="font-semibold text-red-600">− {fmt(reportSummary.expenses)}</span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                  <span className="text-sm text-slate-600">Active Debtors</span>
+                  <span className="font-semibold text-slate-800">
+                    {reportSummary.debtors} · {fmt(reportSummary.debtAmt)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-2 p-4 bg-amber-50 border border-amber-200 rounded-xl flex justify-between items-center">
+                <span className="font-bold text-amber-800">Net Income</span>
+                <span className={`text-xl font-extrabold ${reportSummary.net >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {fmt(reportSummary.net)}
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-400 text-center">
+                Submitting will lock today's sales and send this report for admin review.
+              </p>
+            </div>
+
+            <div className="flex gap-3 p-6 border-t border-slate-100">
+              <button onClick={() => setReportConfirmOpen(false)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleSubmitDailyReport}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
+                <Send className="w-4 h-4" />Confirm & Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Edit Sale Modal ──────────────────────────────────────────────────── */}
       {editSale && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1246,7 +1418,7 @@ export default function SalesPage() {
             <div className="flex items-center justify-between p-6 border-b border-slate-100">
               <div>
                 <h2 className="text-lg font-bold text-slate-800">Edit Sale</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Changes will sync linked debtor balances automatically.</p>
+                <p className="text-xs text-slate-400 mt-0.5">Changes will sync linked debtor balances automatically.</p>
               </div>
               <button onClick={() => setEditSale(null)}
                 className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
@@ -1255,10 +1427,10 @@ export default function SalesPage() {
             </div>
             <div className="p-6 space-y-5">
               {editSale.error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editSale.error}</div>
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{editSale.error}</div>
               )}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Payment Method</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">Payment Method</label>
                 <div className="grid grid-cols-4 gap-2">
                   {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
                     <button key={m} type="button"
@@ -1271,42 +1443,44 @@ export default function SalesPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
                     Customer Name {eHasDebt && <span className="text-red-500">*</span>}
                   </label>
                   <input type="text" value={editSale.customerName}
                     onChange={e => setEditSale({ ...editSale, customerName: e.target.value })}
-                    placeholder={eHasDebt ? 'Required for debt tracking' : 'Optional'}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    placeholder={eHasDebt ? 'Required' : 'Optional'}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
                     Customer Phone {eHasDebt && <span className="text-red-500">*</span>}
                   </label>
                   <input type="tel" value={editSale.customerPhone}
                     onChange={e => setEditSale({ ...editSale, customerPhone: e.target.value })}
-                    placeholder={eHasDebt ? 'Required for debt tracking' : 'Optional'}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    placeholder={eHasDebt ? 'Required' : 'Optional'}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                 </div>
               </div>
 
               {/* Edit: Products */}
               <div className="border-t border-slate-100 pt-4">
-                <h4 className="font-medium text-slate-800 mb-3 text-sm">Products</h4>
+                <h4 className="font-semibold text-slate-700 mb-3 text-sm uppercase tracking-wide flex items-center gap-2">
+                  <ShoppingCart className="w-3.5 h-3.5 text-amber-500" />Products
+                </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
-                  <div className="sm:col-span-1">
+                  <div className="sm:col-span-2">
                     <select value={editSale.addProduct}
                       onChange={e => {
                         const p = products.find(p => p._id === e.target.value);
                         setEditSale({ ...editSale, addProduct: e.target.value, addPrice: p?.unitPrice ?? 0 });
                       }}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
-                      <option value="">Select...</option>
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50">
+                      <option value="">Select product…</option>
                       {products.map(p => {
                         const stock = getStock(p._id);
                         return (
                           <option key={p._id} value={p._id} disabled={stock === 0}>
-                            {p.name} — {stock === 0 ? 'OUT OF STOCK' : `${stock} in stock`}
+                            {p.name} {stock === 0 ? '(OUT)' : `· ${stock} left`}
                           </option>
                         );
                       })}
@@ -1314,37 +1488,39 @@ export default function SalesPage() {
                   </div>
                   <input type="number" min="0.01" step="0.01" value={editSale.addQty}
                     onChange={e => setEditSale({ ...editSale, addQty: Number(e.target.value) })}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Qty" />
-                  <input type="number" min="0" step="0.01" value={editSale.addPrice}
-                    onChange={e => setEditSale({ ...editSale, addPrice: Number(e.target.value) })}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Price" />
-                  <button type="button" onClick={addToEditCart} disabled={!editSale.addProduct}
-                    className="flex items-center justify-center gap-1 px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors">
-                    <Plus className="w-4 h-4" />Add
-                  </button>
+                    className="px-3 py-2 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Qty" />
+                  <div className="flex gap-2">
+                    <input type="number" min="0" step="0.01" value={editSale.addPrice}
+                      onChange={e => setEditSale({ ...editSale, addPrice: Number(e.target.value) })}
+                      className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Price" />
+                    <button type="button" onClick={addToEditCart} disabled={!editSale.addProduct}
+                      className="px-3 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-xl text-sm font-semibold transition-colors">
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {editSale.cart.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
-                      <div className="flex-1 font-medium text-slate-800 text-sm">{item.product.name}</div>
+                    <div key={idx} className="flex items-center gap-3 py-2.5 px-3 bg-slate-50 rounded-xl">
+                      <div className="flex-1 font-medium text-slate-800 text-sm truncate">{item.product.name}</div>
                       <input type="number" min="0.01" step="0.01" value={item.quantity}
                         onChange={e => setEditSale({
                           ...editSale,
                           cart: editSale.cart.map((c, i) => i === idx ? { ...c, quantity: Number(e.target.value) } : c),
                         })}
-                        className="w-20 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
+                        className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
                       <input type="number" min="0" step="0.01" value={item.unitPrice}
                         onChange={e => setEditSale({
                           ...editSale,
                           cart: editSale.cart.map((c, i) => i === idx ? { ...c, unitPrice: Number(e.target.value) } : c),
                         })}
-                        className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
-                      <span className="font-semibold text-slate-600 text-sm w-24 text-right">
+                        className="w-24 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                      <span className="font-bold text-slate-700 text-sm w-24 text-right">
                         {fmt(item.quantity * item.unitPrice)}
                       </span>
                       <button type="button"
                         onClick={() => setEditSale({ ...editSale, cart: editSale.cart.filter((_, i) => i !== idx) })}
-                        className="text-slate-300 hover:text-red-500">
+                        className="text-slate-300 hover:text-red-500 transition-colors">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -1357,63 +1533,75 @@ export default function SalesPage() {
 
               {/* Edit: Services */}
               <div className="border-t border-slate-100 pt-4">
-                <h4 className="font-medium text-slate-800 mb-3 text-sm flex items-center gap-2">
+                <h4 className="font-semibold text-slate-700 mb-3 text-sm uppercase tracking-wide flex items-center gap-2">
                   <Wrench className="w-3.5 h-3.5 text-purple-500" />Services
                 </h4>
-                <datalist id="edit-service-suggestions">
-                  {SERVICE_SUGGESTIONS.map(s => <option key={s} value={s} />)}
-                </datalist>
+
+                {/* Pill suggestions */}
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {SERVICE_SUGGESTIONS.map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setEditSale({ ...editSale, addService: editSale.addService === s ? '' : s })}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                        editSale.addService === s
+                          ? 'bg-purple-500 text-white border-purple-500'
+                          : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-2">
                   <div className="sm:col-span-2">
                     <input
-                      list="edit-service-suggestions"
+                      type="text"
                       value={editSale.addService}
                       onChange={e => setEditSale({ ...editSale, addService: e.target.value })}
-                      placeholder="Service name or select…"
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      placeholder="Or type a custom service name…"
+                      className="w-full px-3 py-2 border border-purple-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-purple-50/30"
                     />
                   </div>
                   <input type="number" min="1" step="1" value={editSale.addServiceQty}
                     onChange={e => setEditSale({ ...editSale, addServiceQty: Number(e.target.value) })}
-                    className="px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" placeholder="Qty" />
-                                    <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-purple-400">
-                    <span className="px-2 py-2 bg-slate-100 text-slate-500 text-sm font-medium border-r border-slate-200 select-none">₦</span>
+                    className="px-3 py-2 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-slate-50" placeholder="Qty" />
+                  <div className="flex gap-2">
                     <input type="number" min="0" step="0.01" value={editSale.addServicePrice}
                       onChange={e => setEditSale({ ...editSale, addServicePrice: Number(e.target.value) })}
-                      className="px-3 py-2 text-slate-800 text-sm focus:outline-none w-28" placeholder="Price" />
+                      className="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-slate-50" placeholder="Price" />
+                    <button type="button"
+                      disabled={!editSale.addService.trim()}
+                      onClick={() => {
+                        if (!editSale.addService.trim()) return;
+                        setEditSale({
+                          ...editSale,
+                          serviceCart: [...editSale.serviceCart, {
+                            serviceName: editSale.addService.trim(),
+                            serviceNotes: editSale.addServiceNotes.trim(),
+                            quantity: editSale.addServiceQty,
+                            unitPrice: editSale.addServicePrice,
+                          }],
+                          addService: '', addServiceNotes: '', addServiceQty: 1, addServicePrice: 0,
+                        });
+                      }}
+                      className="px-3 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-slate-200 text-white rounded-xl text-sm font-semibold transition-colors">
+                      <Plus className="w-4 h-4" />
+                    </button>
                   </div>
-
                 </div>
-                <div className="flex gap-3 mb-3">
-                  <textarea
-                    value={editSale.addServiceNotes}
-                    onChange={e => setEditSale({ ...editSale, addServiceNotes: e.target.value })}
-                    rows={2}
-                    placeholder="Service notes / description (optional)"
-                    className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
-                  />
-                  <button type="button"
-                    disabled={!editSale.addService.trim()}
-                    onClick={() => {
-                      if (!editSale.addService.trim()) return;
-                      setEditSale({
-                        ...editSale,
-                        serviceCart: [...editSale.serviceCart, {
-                          serviceName: editSale.addService.trim(),
-                          serviceNotes: editSale.addServiceNotes.trim(),
-                          quantity: editSale.addServiceQty,
-                          unitPrice: editSale.addServicePrice,
-                        }],
-                        addService: '', addServiceNotes: '', addServiceQty: 1, addServicePrice: 0,
-                      });
-                    }}
-                    className="flex items-center justify-center gap-1 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:bg-slate-200 text-white rounded-lg text-sm font-medium transition-colors self-end">
-                    <Plus className="w-4 h-4" />Add
-                  </button>
-                </div>
-                <div className="space-y-2">
+                <textarea
+                  value={editSale.addServiceNotes}
+                  onChange={e => setEditSale({ ...editSale, addServiceNotes: e.target.value })}
+                  rows={2}
+                  placeholder="Service notes (optional)"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none bg-slate-50 mb-2"
+                />
+                <div className="space-y-1">
                   {editSale.serviceCart.map((item, idx) => (
-                    <div key={idx} className="py-2 border-b border-slate-100 last:border-0">
+                    <div key={idx} className="py-2.5 px-3 bg-purple-50/60 rounded-xl">
                       <div className="flex items-center gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5">
@@ -1429,19 +1617,19 @@ export default function SalesPage() {
                             ...editSale,
                             serviceCart: editSale.serviceCart.map((s, i) => i === idx ? { ...s, quantity: Number(e.target.value) } : s),
                           })}
-                          className="w-20 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
+                          className="w-16 px-2 py-1 border border-purple-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
                         <input type="number" min="0" step="0.01" value={item.unitPrice}
                           onChange={e => setEditSale({
                             ...editSale,
                             serviceCart: editSale.serviceCart.map((s, i) => i === idx ? { ...s, unitPrice: Number(e.target.value) } : s),
                           })}
-                          className="w-24 px-2 py-1 border border-slate-200 rounded text-sm text-right text-slate-800" />
-                        <span className="font-semibold text-purple-600 text-sm w-24 text-right">
+                          className="w-24 px-2 py-1 border border-purple-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                        <span className="font-bold text-purple-700 text-sm w-24 text-right">
                           {fmt(item.quantity * item.unitPrice)}
                         </span>
                         <button type="button"
                           onClick={() => setEditSale({ ...editSale, serviceCart: editSale.serviceCart.filter((_, i) => i !== idx) })}
-                          className="text-slate-300 hover:text-red-500">
+                          className="text-slate-300 hover:text-red-500 transition-colors">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -1451,11 +1639,11 @@ export default function SalesPage() {
               </div>
 
               {editSale.pm === 'part' && (
-                <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg space-y-2">
-                  <label className="block text-sm font-medium text-orange-800">Amount Paid by Customer (₦) *</label>
+                <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl space-y-2">
+                  <label className="block text-sm font-semibold text-orange-800">Amount Paid by Customer (₦) *</label>
                   <input type="number" min="0.01" step="0.01" value={editSale.amountPaid || ''}
                     onChange={e => setEditSale({ ...editSale, amountPaid: Number(e.target.value) })}
-                    className="w-full px-3 py-2.5 border border-orange-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                    className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white text-sm" />
                   <div className="flex justify-between text-sm pt-1">
                     <span className="text-orange-700">Balance Owed:</span>
                     <span className="font-bold text-red-600">{fmt(Math.max(0, eTotal - editSale.amountPaid))}</span>
@@ -1463,28 +1651,28 @@ export default function SalesPage() {
                 </div>
               )}
               {editSale.pm === 'unpaid' && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex justify-between text-sm">
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex justify-between text-sm">
                   <span className="font-semibold text-red-800">Full Amount Owed:</span>
                   <span className="font-bold text-red-600">{fmt(eTotal)}</span>
                 </div>
               )}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>
                 <textarea value={editSale.notes} onChange={e => setEditSale({ ...editSale, notes: e.target.value })} rows={2}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm" />
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none text-sm bg-slate-50" />
               </div>
-              <div className="p-3 bg-slate-50 rounded-lg flex items-center justify-between">
-                <span className="font-semibold text-slate-700">New Total</span>
-                <span className="text-xl font-bold text-amber-600">{fmt(eTotal)}</span>
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
+                <span className="font-semibold text-amber-800">New Total</span>
+                <span className="text-xl font-extrabold text-amber-600">{fmt(eTotal)}</span>
               </div>
             </div>
             <div className="flex gap-3 p-6 border-t border-slate-100">
               <button onClick={() => setEditSale(null)} disabled={editSale.loading}
-                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors">
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
               </button>
               <button onClick={handleSaveEdit} disabled={editSale.loading || (editSale.cart.length === 0 && editSale.serviceCart.length === 0)}
-                className="flex-1 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2">
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
                 {editSale.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save Changes
               </button>
@@ -1506,26 +1694,26 @@ export default function SalesPage() {
             </div>
             <div className="p-6 space-y-4">
               {editExpense.error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editExpense.error}</div>
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{editExpense.error}</div>
               )}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Description *</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Description *</label>
                 <input type="text" value={editExpense.desc}
                   onChange={e => setEditExpense({ ...editExpense, desc: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Amount (₦) *</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Amount (₦) *</label>
                   <input type="number" min="0.01" step="0.01" value={editExpense.amount}
                     onChange={e => setEditExpense({ ...editExpense, amount: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Category</label>
                   <select value={editExpense.category}
                     onChange={e => setEditExpense({ ...editExpense, category: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50">
                     {EXPENSE_CATS.map(c => (
                       <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
                     ))}
@@ -1533,18 +1721,18 @@ export default function SalesPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>
                 <textarea value={editExpense.notes} onChange={e => setEditExpense({ ...editExpense, notes: e.target.value })} rows={2}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm" />
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-slate-50" />
               </div>
             </div>
             <div className="flex gap-3 p-6 border-t border-slate-100">
               <button onClick={() => setEditExpense(null)} disabled={editExpense.loading}
-                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors">
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
               </button>
               <button onClick={handleSaveEditExpense} disabled={editExpense.loading}
-                className="flex-1 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2">
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
                 {editExpense.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save Changes
               </button>
@@ -1566,41 +1754,41 @@ export default function SalesPage() {
             </div>
             <div className="p-6 space-y-4">
               {editDebtor.error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editDebtor.error}</div>
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{editDebtor.error}</div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Name *</label>
                   <input type="text" value={editDebtor.name}
                     onChange={e => setEditDebtor({ ...editDebtor, name: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Phone *</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Phone *</label>
                   <input type="tel" value={editDebtor.phone}
                     onChange={e => setEditDebtor({ ...editDebtor, phone: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Amount Owed (₦) *</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Amount Owed (₦) *</label>
                 <input type="number" min="0.01" step="0.01" value={editDebtor.amount}
                   onChange={e => setEditDebtor({ ...editDebtor, amount: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>
                 <textarea value={editDebtor.notes} onChange={e => setEditDebtor({ ...editDebtor, notes: e.target.value })} rows={2}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm" />
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-slate-50" />
               </div>
             </div>
             <div className="flex gap-3 p-6 border-t border-slate-100">
               <button onClick={() => setEditDebtor(null)} disabled={editDebtor.loading}
-                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors">
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
               </button>
               <button onClick={handleSaveEditDebtor} disabled={editDebtor.loading}
-                className="flex-1 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2">
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
                 {editDebtor.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Save Changes
               </button>

@@ -55,7 +55,6 @@ router.get('/', async (req: Request, res: Response) => {
       return sendResponse(res, 200, 'Sales fetched', { sales: sales.map(toSale), total: sales.length, page: 1, limit: sales.length });
     }
 
-    // Fetch all sales linked to a specific daily report
     if (reportId) {
       const sales = await sql<(SaleRow & { staff_name: string })[]>`
         SELECT s.*, u.full_name AS staff_name FROM sales s
@@ -115,14 +114,13 @@ router.post(
     body('branchId').notEmpty(),
     body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
     body('items').isArray({ min: 1 }),
-    body('items.*.productId').notEmpty(),
+    body('items.*.productId').optional({ nullable: true }),   // ← was .notEmpty() — broke services
     body('items.*.quantity').isFloat({ min: 0.01 }),
     body('items.*.unitPrice').isFloat({ min: 0 }),
   ],
   async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
-   // NEW — staff branch is locked to their JWT branchId
     try {
       const {
         paymentMethod, customerName, customerPhone,
@@ -135,17 +133,30 @@ router.post(
 
       if (!branchId) return sendError(res, 400, 'Branch is required');
 
-      const processedItems: SaleItemJson[] = items.map((item: any) => ({
-        product_id:   item.productId,
-        product_name: item.productName ?? '',
-        quantity:     item.quantity,
-        unit_price:   item.unitPrice,
-        subtotal:     item.quantity * item.unitPrice,
-      }));
+      // Only product items require a productId
+      for (const item of items) {
+        if (item.itemType !== 'service' && !item.productId) {
+          return sendError(res, 400, 'productId is required for product items');
+        }
+      }
+
+      const processedItems: SaleItemJson[] = items.map((item: any) => {
+        const isService = item.itemType === 'service';
+        return {
+          product_id:    isService ? null : item.productId,
+          product_name:  item.productName ?? '',
+          item_type:     item.itemType ?? 'product',
+          service_notes: item.serviceNotes ?? null,
+          quantity:      item.quantity,
+          unit_price:    item.unitPrice,
+          subtotal:      item.quantity * item.unitPrice,
+        };
+      });
       const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
 
-      // ── Stock check ────────────────────────────────────────────────────────
-      for (const item of processedItems) {
+      // Stock check — skip service items
+      const productItems = processedItems.filter(i => i.item_type !== 'service' && i.product_id);
+      for (const item of productItems) {
         const [stock] = await sql<[{ quantity: string; name: string }]>`
           SELECT bs.quantity, p.name
           FROM branch_stock bs
@@ -181,8 +192,8 @@ router.post(
         RETURNING *
       `;
 
-      // ── Deduct stock ───────────────────────────────────────────────────────
-      for (const item of processedItems) {
+      // Deduct stock — skip service items
+      for (const item of productItems) {
         await sql`
           UPDATE branch_stock
           SET quantity = quantity - ${item.quantity}, updated_at = NOW()
@@ -201,7 +212,7 @@ router.put(
   [
     body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
     body('items').isArray({ min: 1 }),
-    body('items.*.productId').notEmpty(),
+    body('items.*.productId').optional({ nullable: true }),   // ← same fix as POST
     body('items.*.quantity').isFloat({ min: 0.01 }),
     body('items.*.unitPrice').isFloat({ min: 0 }),
   ],
@@ -228,18 +239,31 @@ router.put(
 
       const { paymentMethod, customerName, customerPhone, notes, items, amountPaid } = req.body;
 
-      const newItems: SaleItemJson[] = items.map((item: any) => ({
-        product_id:   item.productId,
-        product_name: item.productName ?? '',
-        quantity:     item.quantity,
-        unit_price:   item.unitPrice,
-        subtotal:     item.quantity * item.unitPrice,
-      }));
+      // Only product items require a productId
+      for (const item of items) {
+        if (item.itemType !== 'service' && !item.productId) {
+          return sendError(res, 400, 'productId is required for product items');
+        }
+      }
+
+      const newItems: SaleItemJson[] = items.map((item: any) => {
+        const isService = item.itemType === 'service';
+        return {
+          product_id:    isService ? null : item.productId,
+          product_name:  item.productName ?? '',
+          item_type:     item.itemType ?? 'product',
+          service_notes: item.serviceNotes ?? null,
+          quantity:      item.quantity,
+          unit_price:    item.unitPrice,
+          subtotal:      item.quantity * item.unitPrice,
+        };
+      });
       const totalAmount = newItems.reduce((s, i) => s + i.subtotal, 0);
 
-      // Restore old stock quantities first, then check new quantities
+      // Restore old stock — skip service items
       const oldItems = parseItems(existing.items);
-      for (const old of oldItems) {
+      const oldProductItems = oldItems.filter(i => i.item_type !== 'service' && i.product_id);
+      for (const old of oldProductItems) {
         await sql`
           UPDATE branch_stock
           SET quantity = quantity + ${old.quantity}, updated_at = NOW()
@@ -247,8 +271,9 @@ router.put(
         `;
       }
 
-      // Check new stock availability (after restoring old)
-      for (const item of newItems) {
+      // Check new stock — skip service items
+      const newProductItems = newItems.filter(i => i.item_type !== 'service' && i.product_id);
+      for (const item of newProductItems) {
         const [stock] = await sql<[{ quantity: string; name: string }]>`
           SELECT bs.quantity, p.name
           FROM branch_stock bs
@@ -257,8 +282,8 @@ router.put(
         `;
         const available = stock ? parseFloat(stock.quantity) : 0;
         if (available < item.quantity) {
-          // Roll back: re-deduct old stock
-          for (const old of oldItems) {
+          // Roll back: re-deduct old product stock
+          for (const old of oldProductItems) {
             await sql`
               UPDATE branch_stock
               SET quantity = quantity - ${old.quantity}, updated_at = NOW()
@@ -292,8 +317,8 @@ router.put(
         RETURNING *
       `;
 
-      // Deduct new stock quantities
-      for (const item of newItems) {
+      // Deduct new stock — skip service items
+      for (const item of newProductItems) {
         await sql`
           UPDATE branch_stock
           SET quantity = quantity - ${item.quantity}, updated_at = NOW()
@@ -349,9 +374,10 @@ router.delete('/:id', async (req: Request, res: Response) => {
     if (!isAdmin && existing.staff_id !== req.userId)
       return sendError(res, 403, 'You can only delete your own sales.');
 
-    // Restore stock before deleting
+    // Restore stock before deleting — skip service items
     const oldItems = parseItems(existing.items);
-    for (const item of oldItems) {
+    const oldProductItems = oldItems.filter((i: any) => i.item_type !== 'service' && i.product_id);
+    for (const item of oldProductItems) {
       await sql`
         UPDATE branch_stock
         SET quantity = quantity + ${item.quantity}, updated_at = NOW()

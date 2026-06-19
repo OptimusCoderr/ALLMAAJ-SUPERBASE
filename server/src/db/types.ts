@@ -67,7 +67,10 @@ export interface WarehouseStockRow {
 
 // product_name removed from items — JOIN products on product_id
 export interface SaleItemJson {
-  product_id: string;
+  product_id: string | null;
+  product_name: string;
+  item_type?: 'product' | 'service';
+  service_notes?: string | null;
   quantity: number;
   unit_price: number;
   subtotal: number;
