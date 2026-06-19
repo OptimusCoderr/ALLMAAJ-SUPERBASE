@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { find, insertOne, updateOne, Collections } from '../lib/api';
-import type { Product, Branch, BranchStock, Expense, Debtor } from '../lib/types';
+import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer } from '../lib/types';
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
   Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText,
@@ -128,6 +128,12 @@ export default function SalesPage() {
   const [expenseCategory, setExpenseCategory] = useState<typeof EXPENSE_CATS[number]>('other');
   const [expenseNotes, setExpenseNotes]       = useState('');
 
+    // Special customers
+  const [specialCustomers, setSpecialCustomers]         = useState<SpecialCustomer[]>([]);
+  const [customerSuggestions, setCustomerSuggestions]   = useState<SpecialCustomer[]>([]);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const customerInputRef = useRef<HTMLInputElement>(null);
+
   // Shared form feedback
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
@@ -153,18 +159,45 @@ export default function SalesPage() {
   }
 
   async function fetchData() {
-    const [prods, brs] = await Promise.all([
+    const [prods, brs, specials] = await Promise.all([
       find(Collections.PRODUCTS, { isActive: true }, { sort: { name: 1 } }),
       find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }),
+      find(Collections.SPECIAL_CUSTOMERS, { isActive: true }),
     ]);
     setProducts(prods as Product[]);
     setBranches(brs as Branch[]);
+    setSpecialCustomers(specials as SpecialCustomer[]);
     const branch = user?.branchId || (brs[0]?._id ?? '');
     if (branch) {
       setSelectedBranch(branch);
       fetchTodayData(branch);
     }
   }
+
+  function handleCustomerNameChange(value: string) {
+    setCustomerName(value);
+    if (value.trim().length === 0) {
+      setCustomerSuggestions([]);
+      setShowCustomerDropdown(false);
+      return;
+    }
+    const q = value.toLowerCase();
+    const matches = specialCustomers.filter(c =>
+      c.name.toLowerCase().includes(q) ||
+      (c.phone || '').includes(q)
+    );
+    setCustomerSuggestions(matches);
+    setShowCustomerDropdown(matches.length > 0);
+  }
+
+  function selectSpecialCustomer(c: SpecialCustomer) {
+    setCustomerName(c.name);
+    setCustomerPhone(c.phone || '');
+    setShowCustomerDropdown(false);
+    setCustomerSuggestions([]);
+  }
+
+
 
   async function fetchStock(branchId: string) {
     const data = await find(Collections.BRANCH_STOCK, { branchId });
@@ -738,16 +771,46 @@ export default function SalesPage() {
 
                 {/* Customer fields (always shown, required only for debt) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
+                  <div className="relative">
                     <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
                       Customer Name {hasDebt && <span className="text-red-500 normal-case font-medium">*required</span>}
                     </label>
-                    <input type="text" value={customerName} onChange={e => setCustomerName(e.target.value)}
-                      placeholder={hasDebt ? 'Required for debt tracking' : 'Optional'}
+                    <input
+                      ref={customerInputRef}
+                      type="text"
+                      value={customerName}
+                      onChange={e => handleCustomerNameChange(e.target.value)}
+                      onFocus={() => {
+                        if (customerSuggestions.length > 0) setShowCustomerDropdown(true);
+                      }}
+                      onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 150)}
+                      placeholder={hasDebt ? 'Required for debt tracking' : 'Type to search special customers…'}
                       className={`w-full px-3 py-2.5 border rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 bg-slate-50 ${
                         hasDebt ? 'border-orange-300 focus:ring-orange-400' : 'border-slate-200 focus:ring-amber-400'
-                      }`} />
+                      }`}
+                    />
+                    {showCustomerDropdown && (
+                      <div className="absolute z-20 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                        {customerSuggestions.map(c => (
+                          <button
+                            key={c._id}
+                            type="button"
+                            onMouseDown={() => selectSpecialCustomer(c)}
+                            className="w-full text-left px-3 py-2.5 hover:bg-amber-50 flex items-center gap-3 border-b border-slate-100 last:border-0"
+                          >
+                            <div className="w-7 h-7 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 font-bold text-xs flex-shrink-0">
+                              {c.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-slate-800 truncate">{c.name}</p>
+                              {c.phone && <p className="text-xs text-slate-500">{c.phone}</p>}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
+
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
                       Customer Phone {hasDebt && <span className="text-red-500 normal-case font-medium">*required</span>}
@@ -759,6 +822,7 @@ export default function SalesPage() {
                       }`} />
                   </div>
                 </div>
+                
               </div>
 
               {/* Section: Add Products */}

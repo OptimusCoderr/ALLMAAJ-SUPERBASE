@@ -13,6 +13,7 @@ import ProductsPage from '../pages/admin/ProductsPage';
 import SalesReportsPage from '../pages/admin/SalesReportsPage';
 import DebtorsPage from '../pages/admin/DebtorsPage';
 import ReportApprovalsPage from '../pages/admin/ReportApprovalsPage';
+import SpecialCustomersPage from '../pages/admin/SpecialCustomersPage';
 import AccessDeniedPage from '../pages/AccessDeniedPage';
 
 const router = createBrowserRouter([
@@ -94,6 +95,14 @@ const router = createBrowserRouter([
         element: (
           <ProtectedRoute requiredRole="admin">
             <ReportApprovalsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: 'admin/special-customers',
+        element: (
+          <ProtectedRoute requiredRole="admin">
+            <SpecialCustomersPage />
           </ProtectedRoute>
         ),
       },

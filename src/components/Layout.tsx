@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   ShoppingBag, LayoutDashboard, Package, Warehouse, GitBranch,
   TrendingUp, FileText, Users, Menu, LogOut,
-  Store, UserCheck,
+  Store, UserCheck, Star,
 } from 'lucide-react';
 
 interface NavItem {
@@ -25,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/admin/warehouses', label: 'Warehouses', icon: <Warehouse className="w-5 h-5" />,      roles: ['admin'] },
   { path: '/admin/products', label: 'Products',    icon: <Package className="w-5 h-5" />,        roles: ['admin'] },
   { path: '/admin/branches', label: 'Branches',     icon: <GitBranch className="w-5 h-5" />,       roles: ['admin'] },
+  { path: '/admin/special-customers', label: 'Special Customers', icon: <Star className="w-5 h-5" />, roles: ['admin'] },
   { path: '/admin/staff', label: 'Staff Management', icon: <Users className="w-5 h-5" />,          roles: ['admin'] },
 ];
 
@@ -56,7 +57,7 @@ export default function Layout() {
             <ShoppingBag className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="font-bold text-white text-lg leading-tight">BizTrack Pro</h1>
+            <h1 className="font-bold text-white text-lg leading-tight">ALLMAAJ-INVENTORY</h1>
             <p className="text-slate-400 text-xs">Sales Management</p>
           </div>
         </div>

@@ -143,6 +143,19 @@ export interface DailyReportRow {
   updated_at: string;
 }
 
+export interface SpecialCustomerRow {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  notes: string | null;
+  created_by: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Convert NUMERIC string → number (postgres.js returns NUMERIC as string) */
 export const num = (v: string | null | undefined): number =>
   v == null ? 0 : parseFloat(v);

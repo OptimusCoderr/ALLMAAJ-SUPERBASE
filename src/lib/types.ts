@@ -139,6 +139,20 @@ export interface Expense extends MongoDoc {
   branchName?: string;
 }
 
+// ─── Special Customers (admin-managed VIP list) ────────────────────────────────
+
+export interface SpecialCustomer extends MongoDoc {
+  name: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  createdBy: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ─── Daily Report (submitted by staff, reviewed by admin) ───────────────────────
 
 export interface DailyReport extends MongoDoc {

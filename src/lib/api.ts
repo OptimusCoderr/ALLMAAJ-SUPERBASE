@@ -214,6 +214,7 @@ export const Collections = {
   DAILY_REPORTS:   'daily_reports',
   DEBTORS:         'debtors',   // ← BUG FIX: was DEPTORS (missing B)
   EXPENSES:        'expenses',
+  SPECIAL_CUSTOMERS: 'special_customers',
 } as const;
 
 function collectionToEndpoint(collection: string): string {
@@ -228,6 +229,8 @@ function collectionToEndpoint(collection: string): string {
     case Collections.DAILY_REPORTS:   return '/api/reports/daily';
     case Collections.DEBTORS:         return '/api/reports/debtors';
     case Collections.EXPENSES:        return '/api/reports/expenses';
+    case Collections.SPECIAL_CUSTOMERS: return '/api/special-customers';
     default:                          return `/api/${collection}`;
   }
 }
+                        

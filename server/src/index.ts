@@ -12,6 +12,7 @@ import saleRoutes      from './routes/sales.js';
 import reportRoutes    from './routes/reports.js';
 import userRoutes      from './routes/users.js';
 import warehouseRoutes from './routes/warehouses.js';
+import specialCustomerRoutes from './routes/specialCustomers.js';
 
 import sql from './db/client.js';
 
@@ -134,6 +135,7 @@ app.use('/api/sales',      saleRoutes);
 app.use('/api/reports',    reportRoutes);
 app.use('/api/users',      userRoutes);
 app.use('/api/warehouses', warehouseRoutes);
+app.use('/api/special-customers', specialCustomerRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ message: 'Route not found' }));
@@ -156,7 +158,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 
 // ── Start ──────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`BizTrack API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+  console.log(`ALLMAAJ API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   sql`SELECT 1`
     .then(() => console.log('Database connected ✓'))
     .catch(e  => { console.error('Database connection failed:', e.message); process.exit(1); });

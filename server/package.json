@@ -1,7 +1,7 @@
 {
-  "name": "biztrack-server",
+  "name": "ALLMAAJ-server",
   "version": "1.0.0",
-  "description": "BizTrack Pro backend API — Supabase/PostgreSQL",
+  "description": "Allmaaj-Inventory-backend API — Supabase/PostgreSQL",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
