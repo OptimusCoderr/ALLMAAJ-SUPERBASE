@@ -124,7 +124,7 @@ export default function Layout() {
             <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center">
               <ShoppingBag className="w-4 h-4 text-white" />
             </div>
-            <span className="font-bold text-slate-800">BizTrack Pro</span>
+            <span className="font-bold text-slate-800">ALLMAAJ-PRO</span>
           </div>
         </div>
 
