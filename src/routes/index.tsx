@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import { ProtectedRoute, PublicRoute } from './ProtectedRoute';
 import Layout from '../components/Layout';
 import LoginPage from '../pages/LoginPage';
@@ -106,7 +106,18 @@ const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
+      // Catch-all: unknown child routes → back to dashboard
+      { path: '*', element: <Navigate to="/" replace /> },
     ],
+  },
+  // Top-level catch-all: unknown URL while logged out → login page
+  {
+    path: '*',
+    element: (
+      <ProtectedRoute>
+        <Navigate to="/" replace />
+      </ProtectedRoute>
+    ),
   },
 ]);
 
