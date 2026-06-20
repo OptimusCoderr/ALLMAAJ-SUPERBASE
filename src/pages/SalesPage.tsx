@@ -1,10 +1,10 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { find, insertOne, updateOne, Collections } from '../lib/api';
 import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer } from '../lib/types';
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
-  Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText,
+  Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText, Search,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -108,6 +108,8 @@ export default function SalesPage() {
   const [qty, setQty]     = useState(1);
   const [price, setPrice] = useState(0);
   const [cart, setCart]   = useState<CartItem[]>([]);
+  const [productSearch, setProductSearch]     = useState('');
+  const [productCategory, setProductCategory] = useState('all');
 
   // Service form
   const [serviceCart, setServiceCart]         = useState<ServiceCartItem[]>([]);
@@ -148,6 +150,26 @@ export default function SalesPage() {
   const [reportLoading, setReportLoading]     = useState(false);
   const [reportMsg, setReportMsg]             = useState<{ ok: boolean; text: string } | null>(null);
   const [reportConfirmOpen, setReportConfirmOpen] = useState(false);
+
+    // Derived: unique categories from product list
+  const productCategories = useMemo(() =>
+    ['all', ...Array.from(new Set(products.map(p => p.category).filter((c): c is string => Boolean(c)))).sort()],
+    [products]);
+
+  // Derived: products filtered by search text and selected category
+  const filteredProducts = useMemo(() => {
+    let out = products;
+    if (productCategory !== 'all') out = out.filter(p => p.category === productCategory);
+    if (productSearch.trim()) {
+      const q = productSearch.toLowerCase();
+      out = out.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        (p.sku ?? '').toLowerCase().includes(q) ||
+        (p.category ?? '').toLowerCase().includes(q)
+      );
+    }
+    return out;
+  }, [products, productSearch, productCategory]);
 
   useEffect(() => { fetchData(); }, [user]);
   useEffect(() => { if (selectedBranch) fetchStock(selectedBranch); }, [selectedBranch]);
@@ -240,6 +262,7 @@ export default function SalesPage() {
       setCart([...cart, { product, quantity: qty, unitPrice: price || product.unitPrice }]);
     }
     setSelectedProduct('');
+    setProductSearch('');
     setQty(1);
     setPrice(0);
     setError('');
@@ -830,6 +853,48 @@ export default function SalesPage() {
                 <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
                   <ShoppingCart className="w-4 h-4 text-amber-500" />Products
                 </h3>
+
+                                {/* Product search input */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={productSearch}
+                    onChange={e => { setProductSearch(e.target.value); setSelectedProduct(''); }}
+                    placeholder="Search products by name, SKU or category…"
+                    className="w-full pl-9 pr-9 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50"
+                  />
+                  {productSearch && (
+                    <button
+                      type="button"
+                      onClick={() => { setProductSearch(''); setSelectedProduct(''); }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Category filter pills */}
+                {productCategories.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {productCategories.map(cat => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => { setProductCategory(cat); setSelectedProduct(''); }}
+                        className={`px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
+                          productCategory === cat
+                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                            : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
+                        }`}
+                      >
+                        {cat === 'all' ? 'All Categories' : cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                   <div className="sm:col-span-2">
                     <select value={selectedProduct} onChange={e => {
@@ -837,12 +902,14 @@ export default function SalesPage() {
                       const p = products.find(p => p._id === e.target.value);
                       if (p) setPrice(p.unitPrice);
                     }} className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50">
-                      <option value="">Select product…</option>
-                      {products.map(p => {
+                      <option value="">
+                        {filteredProducts.length === 0 ? 'No products found…' : 'Select product…'}
+                      </option>
+                      {filteredProducts.map(p => {
                         const stock = getStock(p._id);
                         return (
                           <option key={p._id} value={p._id} disabled={stock === 0}>
-                            {p.name} {stock === 0 ? '(OUT OF STOCK)' : `· ${stock} left`}
+                            {p.name}{p.category ? ` [${p.category}]` : ''} {stock === 0 ? '(OUT OF STOCK)' : `· ${stock} left`}
                           </option>
                         );
                       })}
