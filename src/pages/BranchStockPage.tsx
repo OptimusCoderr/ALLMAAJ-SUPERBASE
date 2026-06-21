@@ -40,101 +40,373 @@ interface StockRequest {
   requested_by_name: string; status: string; notes: string | null; created_at: string;
 }
 
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
 function StatusBadge({ status }: { status: string }) {
   if (status === 'approved' || status === 'accepted') {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
-        <CheckCircle className="w-3.5 h-3.5" /> Approved
+        <CheckCircle className="w-3.5 h-3.5" />Approved
       </span>
     );
   }
   if (status === 'rejected') {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
-        <XCircle className="w-3.5 h-3.5" /> Rejected
+        <XCircle className="w-3.5 h-3.5" />Rejected
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
-      <Clock className="w-3.5 h-3.5" /> Pending
+      <Clock className="w-3.5 h-3.5" />Pending
     </span>
   );
 }
+
+function QtyBadge({ qty }: { qty: number }) {
+  const cls =
+    qty <= 5  ? 'bg-red-100 text-red-700' :
+    qty <= 20 ? 'bg-amber-100 text-amber-700' :
+                'bg-green-100 text-green-700';
+  return (
+    <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded-full text-xs font-bold ${cls}`}>
+      {qty.toLocaleString()}
+    </span>
+  );
+}
+
+function Spinner({ className = 'w-4 h-4' }: { className?: string }) {
+  return <span className={`${className} border-2 border-current border-t-transparent rounded-full animate-spin`} />;
+}
+
+interface ProductSearchProps {
+  products: Product[];
+  stockMap: Map<string, number>;
+  value: string;
+  selectedId: string;
+  category: string;
+  suggestions: Product[];
+  showDropdown: boolean;
+  inputRef: React.RefObject<HTMLInputElement>;
+  accentColor?: 'amber' | 'blue';
+  onSearchChange: (v: string) => void;
+  onCategoryChange: (cat: string) => void;
+  onSelect: (p: Product) => void;
+  onClearSearch: () => void;
+  onDropdownShow: (show: boolean) => void;
+}
+
+function ProductSearch({
+  products, stockMap, value, selectedId, category, suggestions, showDropdown,
+  inputRef, accentColor = 'amber',
+  onSearchChange, onCategoryChange, onSelect, onClearSearch, onDropdownShow,
+}: ProductSearchProps) {
+  const accent = accentColor === 'blue' ? {
+    pill: 'bg-blue-500 text-white border-blue-500',
+    pillOff: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
+    input: 'border-blue-400 bg-blue-50/30',
+    ring: 'focus:ring-blue-500',
+    hover: 'hover:bg-blue-50',
+    catText: 'text-blue-600',
+  } : {
+    pill: 'bg-amber-500 text-white border-amber-500',
+    pillOff: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',
+    input: 'border-amber-400 bg-amber-50/30',
+    ring: 'focus:ring-amber-500',
+    hover: 'hover:bg-amber-50',
+    catText: 'text-amber-600',
+  };
+
+  const categories = useMemo(() =>
+    ['all', ...Array.from(new Set(products.filter(p => p.category).map(p => p.category as string))).sort()],
+    [products]
+  );
+
+  return (
+    <div>
+      {categories.length > 2 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {categories.map(cat => (
+            <button key={cat} type="button" onClick={() => onCategoryChange(cat)}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                category === cat ? accent.pill : accent.pillOff
+              }`}>
+              {cat === 'all' ? 'All' : cat}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={e => onSearchChange(e.target.value)}
+          onFocus={() => { if (suggestions.length > 0) onDropdownShow(true); }}
+          onBlur={() => setTimeout(() => onDropdownShow(false), 150)}
+          placeholder="Type to search products..."
+          className={`w-full pl-9 pr-9 py-2.5 border rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 ${accent.ring} ${
+            selectedId ? accent.input : 'border-slate-200'
+          }`}
+        />
+        {value && (
+          <button type="button" onClick={() => { onClearSearch(); inputRef.current?.focus(); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+            <X className="w-4 h-4" />
+          </button>
+        )}
+        {showDropdown && suggestions.length > 0 && (
+          <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+            {suggestions.map(p => {
+              const qty = stockMap.get(p._id) ?? null;
+              return (
+                <button key={p._id} type="button" onMouseDown={() => onSelect(p)}
+                  className={`w-full text-left px-3 py-2.5 flex items-center justify-between gap-3 border-b border-slate-100 last:border-0 ${accent.hover} transition-colors`}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                    {p.category && <p className={`text-xs font-medium ${accent.catText}`}>{p.category}</p>}
+                  </div>
+                  {qty !== null ? (
+                    <span className={`text-xs font-semibold shrink-0 ${qty <= 5 ? 'text-red-500' : qty <= 20 ? 'text-amber-500' : 'text-green-600'}`}>
+                      {qty} in stock
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-400 shrink-0">{p.unit}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {showDropdown && value.trim() && suggestions.length === 0 && (
+          <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 text-center text-sm text-slate-400">
+            No products found for "{value}"
+          </div>
+        )}
+      </div>
+      {selectedId && (
+        <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+          <Check className="w-3 h-3" />{products.find(p => p._id === selectedId)?.name} selected
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function BranchStockPage() {
   const { user } = useAuth();
   const token = getAuthToken() ?? '';
   const isAdmin = user?.role?.toLowerCase() === 'admin';
 
-  const [branches, setBranches] = useState<Branch[]>([]);
+  // ── Data state ───────────────────────────────────────────────────────────────
+  const [branches, setBranches]     = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState(user?.branchId || '');
-  const [stock, setStock] = useState<StockItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [products, setProducts] = useState<Product[]>([]);
+  const [stock, setStock]           = useState<StockItem[]>([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [products, setProducts]     = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
-
-  // Sort & filter state for stock table
-  const [sortBy, setSortBy] = useState<'name' | 'quantity' | 'price' | 'updated'>('name');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [showLowOnly, setShowLowOnly] = useState(false);
-
-  // Toast notification
-  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
-
-  // Admin: all pending requests
-  const [requests, setRequests] = useState<StockRequest[]>([]);
+  const [requests, setRequests]     = useState<StockRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
-  const [requestsBranchFilter, setRequestsBranchFilter] = useState('');
-
-  // Staff: their own requests (all statuses)
   const [myRequests, setMyRequests] = useState<StockRequest[]>([]);
   const [myRequestsLoading, setMyRequestsLoading] = useState(false);
 
-  const [tab, setTab] = useState<'stock' | 'requests' | 'my-requests'>('stock');
+  // ── UI state ─────────────────────────────────────────────────────────────────
+  const [tab, setTab]               = useState<'stock' | 'requests' | 'my-requests'>('stock');
+  const [toast, setToast]           = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
-  // Staff request form
-  const [showReqForm, setShowReqForm] = useState(false);
-  const [reqForm, setReqForm] = useState({ productId: '', quantity: 1, notes: '' });
-  const [reqSaving, setReqSaving] = useState(false);
-  const [reqError, setReqError] = useState('');
+  // Stock table filters
+  const [tableSearch, setTableSearch]     = useState('');
+  const [tableCategory, setTableCategory] = useState('all');
+  const [showLowOnly, setShowLowOnly]     = useState(false);
+  const [sortBy, setSortBy]               = useState<'name' | 'quantity' | 'price' | 'updated'>('name');
+  const [sortDir, setSortDir]             = useState<'asc' | 'desc'>('asc');
 
-  // Admin direct add form
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
-  const [addSaving, setAddSaving] = useState(false);
-  const [addError, setAddError] = useState('');
+  // Requests filter
+  const [requestsBranchFilter, setRequestsBranchFilter] = useState('');
 
-  // Admin approve modal
-  const [approving, setApproving] = useState<StockRequest | null>(null);
-  const [approveForm, setApproveForm] = useState({ sourceType: 'warehouse', warehouseId: '' });
-  const [approveSaving, setApproveSaving] = useState(false);
-  const [approveError, setApproveError] = useState('');
+  // ── Modal state ──────────────────────────────────────────────────────────────
 
-  // Admin edit stock modal
-  const [editingStock, setEditingStock] = useState<StockItem | null>(null);
-  const [editForm, setEditForm] = useState({ quantity: 0 });
-  const [editSaving, setEditSaving] = useState(false);
-  const [editError, setEditError] = useState('');
-
-  // Product search state — shared pattern for Request & Add forms
-  const [reqSearch, setReqSearch] = useState('');
-  const [reqCategory, setReqCategory] = useState('all');
+  // Request Stock modal
+  const [showReqModal, setShowReqModal]   = useState(false);
+  const [reqProductId, setReqProductId]   = useState('');
+  const [reqQty, setReqQty]               = useState(1);
+  const [reqNotes, setReqNotes]           = useState('');
+  const [reqSaving, setReqSaving]         = useState(false);
+  const [reqError, setReqError]           = useState('');
+  const [reqSearch, setReqSearch]         = useState('');
+  const [reqCategory, setReqCategory]     = useState('all');
   const [reqSuggestions, setReqSuggestions] = useState<Product[]>([]);
   const [showReqDropdown, setShowReqDropdown] = useState(false);
   const reqInputRef = useRef<HTMLInputElement>(null);
 
-  const [addSearch, setAddSearch] = useState('');
-  const [addCategory, setAddCategory] = useState('all');
+  // Add Stock modal (admin)
+  const [showAddModal, setShowAddModal]   = useState(false);
+  const [addProductId, setAddProductId]   = useState('');
+  const [addQty, setAddQty]               = useState(1);
+  const [addSourceType, setAddSourceType] = useState('warehouse');
+  const [addWarehouseId, setAddWarehouseId] = useState('');
+  const [addSaving, setAddSaving]         = useState(false);
+  const [addError, setAddError]           = useState('');
+  const [addSearch, setAddSearch]         = useState('');
+  const [addCategory, setAddCategory]     = useState('all');
   const [addSuggestions, setAddSuggestions] = useState<Product[]>([]);
   const [showAddDropdown, setShowAddDropdown] = useState(false);
   const addInputRef = useRef<HTMLInputElement>(null);
+
+  // Edit Stock modal (admin)
+  const [editingStock, setEditingStock]   = useState<StockItem | null>(null);
+  const [editQty, setEditQty]             = useState(0);
+  const [editSaving, setEditSaving]       = useState(false);
+  const [editError, setEditError]         = useState('');
+
+  // Approve modal (admin)
+  const [approving, setApproving]         = useState<StockRequest | null>(null);
+  const [approveSourceType, setApproveSourceType] = useState('warehouse');
+  const [approveWarehouseId, setApproveWarehouseId] = useState('');
+  const [approveSaving, setApproveSaving] = useState(false);
+  const [approveError, setApproveError]   = useState('');
+
+  // ── Derived / memoised ───────────────────────────────────────────────────────
+
+  const stockMap = useMemo<Map<string, number>>(
+    () => new Map(stock.map(s => [s.productId, s.quantity])),
+    [stock]
+  );
+
+  const tableCategories = useMemo(() => {
+    const counts = new Map<string, number>();
+    stock.forEach(s => {
+      const cat = s.product?.category || 'Uncategorised';
+      counts.set(cat, (counts.get(cat) ?? 0) + 1);
+    });
+    return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [stock]);
+
+  const filtered = useMemo(() => {
+    let items = stock.filter(s => {
+      const q = tableSearch.toLowerCase();
+      if (tableCategory !== 'all') {
+        const cat = s.product?.category || 'Uncategorised';
+        if (cat !== tableCategory) return false;
+      }
+      if (showLowOnly && s.quantity > 20) return false;
+      if (q && !s.product?.name?.toLowerCase().includes(q) && !(s.product?.category || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+    return [...items].sort((a, b) => {
+      let cmp = 0;
+      if      (sortBy === 'name')     cmp = (a.product?.name || '').localeCompare(b.product?.name || '');
+      else if (sortBy === 'quantity') cmp = a.quantity - b.quantity;
+      else if (sortBy === 'price')    cmp = (a.product?.unitPrice || 0) - (b.product?.unitPrice || 0);
+      else if (sortBy === 'updated')  cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [stock, tableSearch, tableCategory, showLowOnly, sortBy, sortDir]);
+
+  const requestBranches = useMemo(() => {
+    const map = new Map<string, string>();
+    requests.forEach(r => map.set(r.branch_id, r.branch_name));
+    return Array.from(map.entries());
+  }, [requests]);
+
+  const filteredRequests = requestsBranchFilter
+    ? requests.filter(r => r.branch_id === requestsBranchFilter)
+    : requests;
+
+  const pendingMyRequests = myRequests.filter(r => r.status === 'pending').length;
+  const branchName = branches.find(b => b._id === selectedBranch)?.name || '';
+  const critical   = stock.filter(s => s.quantity <= 5).length;
+  const low        = stock.filter(s => s.quantity > 5 && s.quantity <= 20).length;
+  const totalValue = stock.reduce((sum, s) => sum + s.quantity * (s.product?.unitPrice || 0), 0);
+  const fmt        = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
+  const hasTableFilters = tableSearch || tableCategory !== 'all' || showLowOnly;
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   }
+
+  function toggleSort(col: typeof sortBy) {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(col); setSortDir('asc'); }
+  }
+
+  function clearTableFilters() {
+    setTableSearch(''); setTableCategory('all'); setShowLowOnly(false);
+  }
+
+  function getProductMatches(search: string, category: string): Product[] {
+    if (!search.trim()) return [];
+    const q = search.toLowerCase();
+    const base = category !== 'all' ? products.filter(p => p.category === category) : products;
+    return base.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.sku ?? '').toLowerCase().includes(q) ||
+      (p.category ?? '').toLowerCase().includes(q)
+    );
+  }
+
+  // Request form search
+  function handleReqSearchChange(v: string) {
+    setReqSearch(v); setReqProductId('');
+    const m = v.trim() ? getProductMatches(v, reqCategory) : [];
+    setReqSuggestions(m); setShowReqDropdown(v.trim().length > 0);
+  }
+  function handleReqCategoryChange(cat: string) {
+    setReqCategory(cat); setReqSearch(''); setReqProductId('');
+    setReqSuggestions([]); setShowReqDropdown(false);
+  }
+  function selectReqProduct(p: Product) {
+    setReqProductId(p._id); setReqSearch(p.name);
+    setReqSuggestions([]); setShowReqDropdown(false);
+  }
+  function resetReqSearch() {
+    setReqSearch(''); setReqCategory('all'); setReqProductId('');
+    setReqSuggestions([]); setShowReqDropdown(false);
+  }
+
+  // Add form search
+  function handleAddSearchChange(v: string) {
+    setAddSearch(v); setAddProductId('');
+    const m = v.trim() ? getProductMatches(v, addCategory) : [];
+    setAddSuggestions(m); setShowAddDropdown(v.trim().length > 0);
+  }
+  function handleAddCategoryChange(cat: string) {
+    setAddCategory(cat); setAddSearch(''); setAddProductId('');
+    setAddSuggestions([]); setShowAddDropdown(false);
+  }
+  function selectAddProduct(p: Product) {
+    setAddProductId(p._id); setAddSearch(p.name);
+    setAddSuggestions([]); setShowAddDropdown(false);
+  }
+  function resetAddSearch() {
+    setAddSearch(''); setAddCategory('all'); setAddProductId('');
+    setAddSuggestions([]); setShowAddDropdown(false);
+  }
+
+  // ── Data fetching ────────────────────────────────────────────────────────────
 
   useEffect(() => {
     find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }).then(data => {
@@ -146,18 +418,14 @@ export default function BranchStockPage() {
 
   useEffect(() => {
     if (!user) return;
-    if (isAdmin) {
-      find(Collections.WAREHOUSES, {}).then(d => setWarehouses(d));
-      fetchRequests();
-    } else {
-      fetchMyRequests();
-    }
+    if (isAdmin) { find(Collections.WAREHOUSES, {}).then(d => setWarehouses(d)); fetchRequests(); }
+    else fetchMyRequests();
   }, [user?.role]);
 
   useEffect(() => { if (selectedBranch) fetchStock(); }, [selectedBranch]);
 
   async function fetchStock() {
-    setLoading(true);
+    setStockLoading(true);
     try {
       const data = await authFetch(`/api/branches/${selectedBranch}/stock`, token);
       const rows = Array.isArray(data) ? data : [];
@@ -173,7 +441,7 @@ export default function BranchStockPage() {
         } : undefined,
       })).filter((s: any) => s.product));
     } catch {}
-    setLoading(false);
+    setStockLoading(false);
   }
 
   async function fetchRequests() {
@@ -194,20 +462,20 @@ export default function BranchStockPage() {
     setMyRequestsLoading(false);
   }
 
+  // ── Action handlers ──────────────────────────────────────────────────────────
+
   async function submitRequest(e: React.FormEvent) {
     e.preventDefault();
-    if (!reqForm.productId) { setReqError('Select a product'); return; }
+    if (!reqProductId) { setReqError('Select a product'); return; }
     setReqSaving(true); setReqError('');
     try {
       await authFetch('/api/branches/stock-requests', token, {
         method: 'POST',
-        body: JSON.stringify({ branchId: selectedBranch, productId: reqForm.productId, quantity: reqForm.quantity, notes: reqForm.notes }),
+        body: JSON.stringify({ branchId: selectedBranch, productId: reqProductId, quantity: reqQty, notes: reqNotes }),
       });
-      setShowReqForm(false);
-      setReqForm({ productId: '', quantity: 1, notes: '' });
-      resetReqSearch();
-      fetchMyRequests();
-      setTab('my-requests');
+      setShowReqModal(false);
+      setReqQty(1); setReqNotes(''); resetReqSearch();
+      fetchMyRequests(); setTab('my-requests');
       showToast('Stock request submitted successfully');
     } catch (err: any) { setReqError(err.message || 'Failed to submit'); }
     setReqSaving(false);
@@ -215,49 +483,19 @@ export default function BranchStockPage() {
 
   async function submitDirectAdd(e: React.FormEvent) {
     e.preventDefault();
-    if (!addForm.productId) { setAddError('Select a product'); return; }
-    if (addForm.sourceType === 'warehouse' && !addForm.warehouseId) { setAddError('Select a warehouse'); return; }
+    if (!addProductId) { setAddError('Select a product'); return; }
+    if (addSourceType === 'warehouse' && !addWarehouseId) { setAddError('Select a warehouse'); return; }
     setAddSaving(true); setAddError('');
     try {
       await authFetch(`/api/branches/${selectedBranch}/stock/add`, token, {
         method: 'POST',
-        body: JSON.stringify(addForm),
+        body: JSON.stringify({ productId: addProductId, quantity: addQty, sourceType: addSourceType, warehouseId: addWarehouseId || undefined }),
       });
-      setShowAddForm(false);
-      setAddForm({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
-      resetAddSearch();
-      fetchStock();
-      showToast('Stock added successfully');
+      setShowAddModal(false);
+      setAddQty(1); setAddSourceType('warehouse'); setAddWarehouseId(''); resetAddSearch();
+      fetchStock(); showToast('Stock added successfully');
     } catch (err: any) { setAddError(err.message || 'Failed to add stock'); }
     setAddSaving(false);
-  }
-
-  async function approveRequest(e: React.FormEvent) {
-    e.preventDefault();
-    if (!approving) return;
-    if (approveForm.sourceType === 'warehouse' && !approveForm.warehouseId) { setApproveError('Select a warehouse'); return; }
-    setApproveSaving(true); setApproveError('');
-    try {
-      await authFetch(`/api/branches/stock-requests/${approving.id}/approve`, token, {
-        method: 'PATCH',
-        body: JSON.stringify({ sourceType: approveForm.sourceType, warehouseId: approveForm.warehouseId || null }),
-      });
-      const productName = approving.product_name;
-      setApproving(null);
-      fetchRequests();
-      if (approving.branch_id === selectedBranch) fetchStock();
-      showToast(`Approved request for ${productName}`);
-    } catch (err: any) { setApproveError(err.message || 'Failed to approve'); }
-    setApproveSaving(false);
-  }
-
-  async function rejectRequest(req: StockRequest) {
-    if (!confirm(`Reject stock request for "${req.product_name}" at ${req.branch_name}?`)) return;
-    try {
-      await authFetch(`/api/branches/stock-requests/${req.id}/reject`, token, { method: 'PATCH' });
-      fetchRequests();
-      showToast(`Rejected request for ${req.product_name}`, 'error');
-    } catch (err: any) { alert(err.message || 'Failed to reject'); }
   }
 
   async function submitEditStock(e: React.FormEvent) {
@@ -267,11 +505,9 @@ export default function BranchStockPage() {
     try {
       await authFetch(`/api/branches/${selectedBranch}/stock/${editingStock.productId}`, token, {
         method: 'PUT',
-        body: JSON.stringify({ quantity: editForm.quantity }),
+        body: JSON.stringify({ quantity: editQty }),
       });
-      setEditingStock(null);
-      fetchStock();
-      showToast('Stock quantity updated');
+      setEditingStock(null); fetchStock(); showToast('Stock quantity updated');
     } catch (err: any) { setEditError(err.message || 'Failed to update stock'); }
     setEditSaving(false);
   }
@@ -280,199 +516,97 @@ export default function BranchStockPage() {
     if (!confirm(`Remove "${item.product?.name}" from ${branchName} stock? This cannot be undone.`)) return;
     try {
       await authFetch(`/api/branches/${selectedBranch}/stock/${item.productId}`, token, { method: 'DELETE' });
-      fetchStock();
-      showToast(`Removed ${item.product?.name} from stock`, 'error');
+      fetchStock(); showToast(`Removed ${item.product?.name} from stock`, 'error');
     } catch (err: any) { alert(err.message || 'Failed to remove stock item'); }
   }
 
-  // ── Product search helpers (for Request & Add modals) ──────────────────────
-
-  function getProductMatches(search: string, category: string): Product[] {
-    if (!search.trim()) return [];
-    const q = search.toLowerCase();
-    const base = category !== 'all' ? products.filter(p => p.category === category) : products;
-    return base.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      (p.sku ?? '').toLowerCase().includes(q) ||
-      (p.category ?? '').toLowerCase().includes(q)
-    );
+  async function approveRequest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!approving) return;
+    if (approveSourceType === 'warehouse' && !approveWarehouseId) { setApproveError('Select a warehouse'); return; }
+    setApproveSaving(true); setApproveError('');
+    try {
+      await authFetch(`/api/branches/stock-requests/${approving.id}/approve`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ sourceType: approveSourceType, warehouseId: approveWarehouseId || null }),
+      });
+      const name = approving.product_name;
+      setApproving(null);
+      fetchRequests();
+      if (approving.branch_id === selectedBranch) fetchStock();
+      showToast(`Approved request for ${name}`);
+    } catch (err: any) { setApproveError(err.message || 'Failed to approve'); }
+    setApproveSaving(false);
   }
 
-  function handleReqSearchChange(value: string) {
-    setReqSearch(value);
-    setReqForm(f => ({ ...f, productId: '' }));
-    const matches = value.trim() ? getProductMatches(value, reqCategory) : [];
-    setReqSuggestions(matches);
-    setShowReqDropdown(value.trim().length > 0);
+  async function rejectRequest(req: StockRequest) {
+    if (!confirm(`Reject stock request for "${req.product_name}" at ${req.branch_name}?`)) return;
+    try {
+      await authFetch(`/api/branches/stock-requests/${req.id}/reject`, token, { method: 'PATCH' });
+      fetchRequests(); showToast(`Rejected request for ${req.product_name}`, 'error');
+    } catch (err: any) { alert(err.message || 'Failed to reject'); }
   }
 
-  function handleReqCategoryChange(cat: string) {
-    setReqCategory(cat);
-    setReqSearch('');
-    setReqForm(f => ({ ...f, productId: '' }));
-    setReqSuggestions([]);
-    setShowReqDropdown(false);
-  }
-
-  function selectReqProduct(p: Product) {
-    setReqForm(f => ({ ...f, productId: p._id }));
-    setReqSearch(p.name);
-    setReqSuggestions([]);
-    setShowReqDropdown(false);
-  }
-
-  function handleAddSearchChange(value: string) {
-    setAddSearch(value);
-    setAddForm(f => ({ ...f, productId: '' }));
-    const matches = value.trim() ? getProductMatches(value, addCategory) : [];
-    setAddSuggestions(matches);
-    setShowAddDropdown(value.trim().length > 0);
-  }
-
-  function handleAddCategoryChange(cat: string) {
-    setAddCategory(cat);
-    setAddSearch('');
-    setAddForm(f => ({ ...f, productId: '' }));
-    setAddSuggestions([]);
-    setShowAddDropdown(false);
-  }
-
-  function selectAddProduct(p: Product) {
-    setAddForm(f => ({ ...f, productId: p._id }));
-    setAddSearch(p.name);
-    setAddSuggestions([]);
-    setShowAddDropdown(false);
-  }
-
-  function resetReqSearch() {
-    setReqSearch(''); setReqCategory('all'); setReqSuggestions([]); setShowReqDropdown(false);
-  }
-
-  function resetAddSearch() {
-    setAddSearch(''); setAddCategory('all'); setAddSuggestions([]); setShowAddDropdown(false);
-  }
-
-  function toggleSort(col: typeof sortBy) {
-    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortBy(col); setSortDir('asc'); }
-  }
-
-  const productCategories = useMemo(() =>
-    ['all', ...Array.from(new Set(products.filter(p => p.category).map(p => p.category as string))).sort()],
-    [products]
-  );
-
-  const filtered = useMemo(() => {
-    let items = stock.filter(s =>
-      s.product?.name?.toLowerCase().includes(search.toLowerCase()) ||
-      (s.product?.category || '').toLowerCase().includes(search.toLowerCase())
-    );
-    if (showLowOnly) items = items.filter(s => s.quantity <= 20);
-    return [...items].sort((a, b) => {
-      let cmp = 0;
-      if (sortBy === 'name')     cmp = (a.product?.name || '').localeCompare(b.product?.name || '');
-      else if (sortBy === 'quantity') cmp = a.quantity - b.quantity;
-      else if (sortBy === 'price')    cmp = (a.product?.unitPrice || 0) - (b.product?.unitPrice || 0);
-      else if (sortBy === 'updated')  cmp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }, [stock, search, showLowOnly, sortBy, sortDir]);
-
-  const branchName = branches.find(b => b._id === selectedBranch)?.name || '';
-  const fmt = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
-
-  const pendingMyRequests = myRequests.filter(r => r.status === 'pending').length;
-
-  // Summary stats for current branch
-  const critical  = stock.filter(s => s.quantity <= 5).length;
-  const low       = stock.filter(s => s.quantity > 5 && s.quantity <= 20).length;
-  const totalValue = stock.reduce((sum, s) => sum + s.quantity * (s.product?.unitPrice || 0), 0);
-
-  // Admin requests filtered by branch
-  const filteredRequests = requestsBranchFilter
-    ? requests.filter(r => r.branch_id === requestsBranchFilter)
-    : requests;
-
-  const requestBranches = useMemo(() => {
-    const map = new Map<string, string>();
-    requests.forEach(r => map.set(r.branch_id, r.branch_name));
-    return Array.from(map.entries());
-  }, [requests]);
+  // ── Sort icon helper ─────────────────────────────────────────────────────────
 
   function SortIcon({ col }: { col: typeof sortBy }) {
-    return <ArrowUpDown className={`w-3 h-3 inline ml-1 ${sortBy === col ? 'text-amber-500' : 'text-slate-300'}`} />;
+    return (
+      <ArrowUpDown className={`w-3 h-3 inline ml-1 ${sortBy === col ? 'text-amber-500' : 'text-slate-300'}`} />
+    );
   }
 
-  return (
-    <div className="p-6 space-y-6">
+  // ── Render ───────────────────────────────────────────────────────────────────
 
-      {/* Toast notification */}
+  return (
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+
+      {/* Toast */}
       {toast && (
-        <div className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium animate-in fade-in slide-in-from-top-2 ${toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+        <div className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium ${toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
           {toast.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> : <XCircle className="w-4 h-4 shrink-0" />}
           {toast.msg}
         </div>
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Branch Stock</h1>
-          <p className="text-slate-500 text-sm mt-1">Current inventory at each branch</p>
+          <p className="text-slate-500 text-sm mt-0.5">Inventory at each branch</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           {isAdmin && (
-            <button onClick={() => { setShowAddForm(true); setAddError(''); resetAddSearch(); }}
+            <button
+              onClick={() => { setShowAddModal(true); setAddError(''); resetAddSearch(); }}
               className="flex items-center gap-2 px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
-              <Plus className="w-4 h-4" />Add Stock
+              <Plus className="w-4 h-4" /><span className="hidden sm:inline">Add Stock</span>
             </button>
           )}
-          <button onClick={() => { setShowReqForm(true); setReqError(''); resetReqSearch(); }}
+          <button
+            onClick={() => { setShowReqModal(true); setReqError(''); resetReqSearch(); }}
             className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
-            <Plus className="w-4 h-4" />{isAdmin ? 'Add Request' : 'Request Stock'}
+            <Plus className="w-4 h-4" /><span className="hidden sm:inline">{isAdmin ? 'Add Request' : 'Request Stock'}</span>
           </button>
         </div>
       </div>
 
-      {/* Summary Stats — shown once stock is loaded */}
+      {/* Stats cards */}
       {stock.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
-              <Package className="w-5 h-5 text-blue-500" />
+          {[
+            { icon: <Package className="w-5 h-5 text-blue-500" />, bg: 'bg-blue-50', label: 'Total Products', value: stock.length, color: '' },
+            { icon: <AlertTriangle className="w-5 h-5 text-red-500" />, bg: 'bg-red-50', label: 'Critical (≤5)', value: critical, color: critical > 0 ? 'text-red-600' : '' },
+            { icon: <TrendingDown className="w-5 h-5 text-amber-500" />, bg: 'bg-amber-50', label: 'Low Stock (6–20)', value: low, color: low > 0 ? 'text-amber-600' : '' },
+            { icon: <DollarSign className="w-5 h-5 text-green-500" />, bg: 'bg-green-50', label: 'Total Value', value: fmt(totalValue), color: '', small: true },
+          ].map(({ icon, bg, label, value, color, small }) => (
+            <div key={label} className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center shrink-0`}>{icon}</div>
+              <div className="min-w-0">
+                <p className="text-xs text-slate-500">{label}</p>
+                <p className={`font-bold text-slate-800 leading-tight ${small ? 'text-sm' : 'text-xl'} ${color}`}>{value}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs text-slate-500">Total Products</p>
-              <p className="text-xl font-bold text-slate-800">{stock.length}</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
-              <AlertTriangle className="w-5 h-5 text-red-500" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Critical (≤5)</p>
-              <p className={`text-xl font-bold ${critical > 0 ? 'text-red-600' : 'text-slate-800'}`}>{critical}</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
-              <TrendingDown className="w-5 h-5 text-amber-500" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Low Stock (6–20)</p>
-              <p className={`text-xl font-bold ${low > 0 ? 'text-amber-600' : 'text-slate-800'}`}>{low}</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-green-50 flex items-center justify-center shrink-0">
-              <DollarSign className="w-5 h-5 text-green-500" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">Total Value</p>
-              <p className="text-base font-bold text-slate-800 leading-tight">{fmt(totalValue)}</p>
-            </div>
-          </div>
+          ))}
         </div>
       )}
 
@@ -482,158 +616,183 @@ export default function BranchStockPage() {
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'stock' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
           Stock
         </button>
-
         {isAdmin && (
           <button onClick={() => { setTab('requests'); fetchRequests(); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${tab === 'requests' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             Pending Requests
             {requests.length > 0 && (
-              <span className="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">
-                {requests.length}
-              </span>
+              <span className="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{requests.length}</span>
             )}
           </button>
         )}
-
         {!isAdmin && (
           <button onClick={() => { setTab('my-requests'); fetchMyRequests(); }}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${tab === 'my-requests' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
             My Requests
             {pendingMyRequests > 0 && (
-              <span className="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">
-                {pendingMyRequests}
-              </span>
+              <span className="bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none">{pendingMyRequests}</span>
             )}
           </button>
         )}
       </div>
 
-      {/* Stock Tab */}
+      {/* ── Stock Tab ── */}
       {tab === 'stock' && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
-          <div className="flex flex-col sm:flex-row gap-3 mb-4">
-            {isAdmin ? (
-              <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-              </select>
-            ) : (
-              <div className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
-                {branches.find(b => b._id === selectedBranch)?.name || 'Your Branch'}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+          {/* Controls bar */}
+          <div className="p-4 sm:p-6 border-b border-slate-100 space-y-3">
+            <div className="flex flex-col sm:flex-row gap-3">
+              {isAdmin ? (
+                <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                  className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                  {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                </select>
+              ) : (
+                <div className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 bg-slate-50 text-sm">
+                  {branchName || 'Your Branch'}
+                </div>
+              )}
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input type="text" value={tableSearch} onChange={e => setTableSearch(e.target.value)}
+                  placeholder="Search products or category..."
+                  className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm" />
+              </div>
+              <button onClick={() => setShowLowOnly(v => !v)}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium border transition-colors ${showLowOnly ? 'bg-amber-500 border-amber-500 text-white' : 'border-slate-200 text-slate-600 hover:border-amber-300 hover:text-amber-600'}`}>
+                <AlertTriangle className="w-4 h-4" />Low Stock
+              </button>
+            </div>
+
+            {/* Category pills for stock table */}
+            {tableCategories.length > 1 && (
+              <div className="flex flex-wrap gap-1.5">
+                <button onClick={() => setTableCategory('all')}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${tableCategory === 'all' ? 'bg-slate-700 text-white border-slate-700' : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'}`}>
+                  All ({stock.length})
+                </button>
+                {tableCategories.map(([cat, count]) => (
+                  <button key={cat} onClick={() => setTableCategory(cat)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${tableCategory === cat ? 'bg-amber-500 text-white border-amber-500' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'}`}>
+                    {cat} ({count})
+                  </button>
+                ))}
               </div>
             )}
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search products or category..."
-                className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-            </div>
-            {/* Low stock filter toggle */}
-            <button onClick={() => setShowLowOnly(v => !v)}
-              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium border transition-colors ${showLowOnly ? 'bg-amber-500 border-amber-500 text-white' : 'border-slate-200 text-slate-600 hover:border-amber-300 hover:text-amber-600'}`}>
-              <AlertTriangle className="w-4 h-4" />Low Stock
-            </button>
           </div>
 
-          {branchName && (
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-              <h3 className="font-semibold text-slate-700 flex items-center gap-2">
-                <Package className="w-5 h-5 text-amber-500" />
-                {branchName} — {filtered.length} product{filtered.length !== 1 ? 's' : ''}
-              </h3>
-              {/* Stock level legend */}
+          {/* Table header metadata */}
+          {branchName && !stockLoading && stock.length > 0 && (
+            <div className="px-4 sm:px-6 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 text-sm text-slate-600">
+                <Package className="w-4 h-4 text-amber-500" />
+                <span className="font-medium">{branchName}</span>
+                {hasTableFilters && (
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span>Showing {filtered.length} of {stock.length}</span>
+                    <button onClick={clearTableFilters} className="text-amber-500 hover:text-amber-600 text-xs underline underline-offset-2">
+                      Clear filters
+                    </button>
+                  </>
+                )}
+              </div>
               <div className="flex items-center gap-3 text-xs text-slate-400">
-                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />Critical ≤5</span>
-                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />Low ≤20</span>
-                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />OK &gt;20</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />Critical ≤5</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />Low ≤20</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />OK &gt;20</span>
               </div>
             </div>
           )}
 
-          {loading ? (
-            <div className="space-y-2">{[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-slate-100 rounded-lg animate-pulse" />)}</div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-12 text-slate-400">
-              <Package className="w-12 h-12 mx-auto mb-3 opacity-40" />
-              <p>{search || showLowOnly ? 'No products match your filters' : 'No stock records found'}</p>
-              {(search || showLowOnly) && (
-                <button onClick={() => { setSearch(''); setShowLowOnly(false); }}
-                  className="mt-2 text-amber-500 text-sm hover:underline">
-                  Clear filters
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left border-b border-slate-200">
-                    <th className="pb-3 font-medium text-slate-600 cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('name')}>
-                      Product<SortIcon col="name" />
-                    </th>
-                    <th className="pb-3 font-medium text-slate-600">Category</th>
-                    <th className="pb-3 font-medium text-slate-600">Unit</th>
-                    <th className="pb-3 font-medium text-slate-600 text-right cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('quantity')}>
-                      Quantity<SortIcon col="quantity" />
-                    </th>
-                    <th className="pb-3 font-medium text-slate-600 text-right cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('price')}>
-                      Price<SortIcon col="price" />
-                    </th>
-                    <th className="pb-3 font-medium text-slate-600 cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('updated')}>
-                      Updated<SortIcon col="updated" />
-                    </th>
-                    {isAdmin && <th className="pb-3 font-medium text-slate-600 text-right">Actions</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filtered.map(item => (
-                    <tr key={item.productId} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-3 font-medium text-slate-800">{item.product?.name}</td>
-                      <td className="py-3 text-slate-500">{item.product?.category || '-'}</td>
-                      <td className="py-3 text-slate-500">{item.product?.unit}</td>
-                      <td className="py-3 text-right">
-                        <span className={`inline-flex items-center justify-center min-w-[2.5rem] px-2 py-0.5 rounded-full text-xs font-bold ${
-                          item.quantity <= 5  ? 'bg-red-100 text-red-700' :
-                          item.quantity <= 20 ? 'bg-amber-100 text-amber-700' :
-                                               'bg-green-100 text-green-700'
-                        }`}>
-                          {item.quantity.toLocaleString()}
-                        </span>
-                      </td>
-                      <td className="py-3 text-right text-slate-600">{fmt(item.product?.unitPrice || 0)}</td>
-                      <td className="py-3 text-slate-400 text-xs" title={new Date(item.updatedAt).toLocaleString()}>
-                        {relativeTime(item.updatedAt)}
-                      </td>
-                      {isAdmin && (
-                        <td className="py-3 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => { setEditingStock(item); setEditForm({ quantity: item.quantity }); setEditError(''); }}
-                              title="Edit quantity"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => deleteStockItem(item)}
-                              title="Remove from stock"
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {/* Table body */}
+          <div className="px-4 sm:px-6 pb-6">
+            {stockLoading ? (
+              <div className="py-8 space-y-2">
+                {[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-slate-100 rounded-lg animate-pulse" />)}
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="text-center py-16 text-slate-400">
+                <Package className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                <p className="font-medium">{hasTableFilters ? 'No products match your filters' : 'No stock records found'}</p>
+                {hasTableFilters && (
+                  <button onClick={clearTableFilters} className="mt-2 text-amber-500 text-sm hover:underline">Clear filters</button>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto -mx-4 sm:-mx-6 px-4 sm:px-6">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left border-b border-slate-200">
+                        <th className="pb-3 pt-4 font-medium text-slate-600 cursor-pointer select-none hover:text-slate-800 whitespace-nowrap"
+                          onClick={() => toggleSort('name')}>
+                          Product<SortIcon col="name" />
+                        </th>
+                        <th className="pb-3 pt-4 font-medium text-slate-600 hidden md:table-cell">Category</th>
+                        <th className="pb-3 pt-4 font-medium text-slate-600 hidden sm:table-cell">Unit</th>
+                        <th className="pb-3 pt-4 font-medium text-slate-600 text-right cursor-pointer select-none hover:text-slate-800 whitespace-nowrap"
+                          onClick={() => toggleSort('quantity')}>
+                          Qty<SortIcon col="quantity" />
+                        </th>
+                        <th className="pb-3 pt-4 font-medium text-slate-600 text-right cursor-pointer select-none hover:text-slate-800 hidden lg:table-cell whitespace-nowrap"
+                          onClick={() => toggleSort('price')}>
+                          Price<SortIcon col="price" />
+                        </th>
+                        <th className="pb-3 pt-4 font-medium text-slate-600 cursor-pointer select-none hover:text-slate-800 hidden lg:table-cell whitespace-nowrap"
+                          onClick={() => toggleSort('updated')}>
+                          Updated<SortIcon col="updated" />
+                        </th>
+                        {isAdmin && <th className="pb-3 pt-4 font-medium text-slate-600 text-right w-20">Actions</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filtered.map(item => (
+                        <tr key={item.productId} className="group hover:bg-slate-50 transition-colors">
+                          <td className="py-3 font-medium text-slate-800 pr-4">{item.product?.name}</td>
+                          <td className="py-3 text-slate-500 hidden md:table-cell pr-4">{item.product?.category || '–'}</td>
+                          <td className="py-3 text-slate-500 hidden sm:table-cell pr-4">{item.product?.unit}</td>
+                          <td className="py-3 text-right pr-4"><QtyBadge qty={item.quantity} /></td>
+                          <td className="py-3 text-right text-slate-600 hidden lg:table-cell pr-4">{fmt(item.product?.unitPrice || 0)}</td>
+                          <td className="py-3 text-slate-400 text-xs hidden lg:table-cell pr-4"
+                            title={new Date(item.updatedAt).toLocaleString()}>
+                            {relativeTime(item.updatedAt)}
+                          </td>
+                          {isAdmin && (
+                            <td className="py-3 text-right">
+                              <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => { setEditingStock(item); setEditQty(item.quantity); setEditError(''); }}
+                                  title="Edit quantity"
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors">
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => deleteStockItem(item)}
+                                  title="Remove from stock"
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {hasTableFilters && filtered.length !== stock.length && (
+                  <p className="text-xs text-slate-400 text-center mt-4">
+                    Showing {filtered.length} of {stock.length} products
+                  </p>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Admin: Pending Requests Tab */}
+      {/* ── Admin: Pending Requests Tab ── */}
       {tab === 'requests' && isAdmin && (
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -645,7 +804,6 @@ export default function BranchStockPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {/* Branch filter — only shows when there are multiple branches in the request list */}
               {requestBranches.length > 1 && (
                 <select value={requestsBranchFilter} onChange={e => setRequestsBranchFilter(e.target.value)}
                   className="px-3 py-2 text-sm border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500">
@@ -655,7 +813,7 @@ export default function BranchStockPage() {
               )}
               <button onClick={fetchRequests} disabled={requestsLoading}
                 className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
-                <RefreshCw className={`w-4 h-4 ${requestsLoading ? 'animate-spin' : ''}`} /> Refresh
+                <RefreshCw className={`w-4 h-4 ${requestsLoading ? 'animate-spin' : ''}`} />Refresh
               </button>
             </div>
           </div>
@@ -686,7 +844,8 @@ export default function BranchStockPage() {
                     {req.notes && <p className="text-xs text-slate-400 mt-1 italic">"{req.notes}"</p>}
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    <button onClick={() => { setApproving(req); setApproveForm({ sourceType: 'warehouse', warehouseId: '' }); setApproveError(''); }}
+                    <button
+                      onClick={() => { setApproving(req); setApproveSourceType('warehouse'); setApproveWarehouseId(''); setApproveError(''); }}
                       className="flex items-center gap-1.5 px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors">
                       <CheckCircle className="w-4 h-4" />Approve
                     </button>
@@ -702,7 +861,7 @@ export default function BranchStockPage() {
         </div>
       )}
 
-      {/* Staff: My Requests Tab */}
+      {/* ── Staff: My Requests Tab ── */}
       {tab === 'my-requests' && !isAdmin && (
         <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-4">
@@ -712,7 +871,7 @@ export default function BranchStockPage() {
             </div>
             <button onClick={fetchMyRequests} disabled={myRequestsLoading}
               className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
-              <RefreshCw className={`w-4 h-4 ${myRequestsLoading ? 'animate-spin' : ''}`} /> Refresh
+              <RefreshCw className={`w-4 h-4 ${myRequestsLoading ? 'animate-spin' : ''}`} />Refresh
             </button>
           </div>
 
@@ -753,342 +912,201 @@ export default function BranchStockPage() {
         </div>
       )}
 
-      {/* Staff Request Modal */}
-      {showReqForm && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-slate-800">Request Stock</h3>
-              <button onClick={() => { setShowReqForm(false); resetReqSearch(); }}><X className="w-5 h-5 text-slate-400" /></button>
-            </div>
-            {reqError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{reqError}</div>}
-            <form onSubmit={submitRequest} className="space-y-4">
-              {isAdmin && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
-                  <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                    {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-                  </select>
-                </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
-
-                {/* Category filter pills */}
-                {productCategories.length > 1 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {productCategories.map(cat => (
-                      <button key={cat} type="button" onClick={() => handleReqCategoryChange(cat)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
-                          reqCategory === cat
-                            ? 'bg-amber-500 text-white border-amber-500'
-                            : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                        }`}>
-                        {cat === 'all' ? 'All' : cat}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Search input with autocomplete */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                  <input
-                    ref={reqInputRef}
-                    type="text"
-                    value={reqSearch}
-                    onChange={e => handleReqSearchChange(e.target.value)}
-                    onFocus={() => { if (reqSuggestions.length > 0) setShowReqDropdown(true); }}
-                    onBlur={() => setTimeout(() => setShowReqDropdown(false), 150)}
-                    placeholder="Type to search products..."
-                    className={`w-full pl-9 pr-9 py-2.5 border rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 ${
-                      reqForm.productId ? 'border-amber-400 bg-amber-50/30' : 'border-slate-200'
-                    }`}
-                  />
-                  {reqSearch && (
-                    <button type="button"
-                      onClick={() => { setReqSearch(''); setReqForm(f => ({ ...f, productId: '' })); setReqSuggestions([]); setShowReqDropdown(false); reqInputRef.current?.focus(); }}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-
-                  {/* Dropdown suggestions */}
-                  {showReqDropdown && reqSuggestions.length > 0 && (
-                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
-                      {reqSuggestions.map(p => {
-                        const currentQty = stock.find(s => s.productId === p._id)?.quantity ?? null;
-                        return (
-                          <button key={p._id} type="button" onMouseDown={() => selectReqProduct(p)}
-                            className="w-full text-left px-3 py-2.5 flex items-center justify-between gap-3 border-b border-slate-100 last:border-0 hover:bg-amber-50 transition-colors">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
-                              {p.category && <p className="text-xs text-amber-600 font-medium">{p.category}</p>}
-                            </div>
-                            {currentQty !== null && (
-                              <span className={`text-xs font-semibold shrink-0 ${currentQty <= 5 ? 'text-red-500' : currentQty <= 20 ? 'text-amber-500' : 'text-green-600'}`}>
-                                {currentQty} in stock
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {showReqDropdown && reqSearch.trim() && reqSuggestions.length === 0 && (
-                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 text-center text-sm text-slate-400">
-                      No products found for "{reqSearch}"
-                    </div>
-                  )}
-                </div>
-
-                {reqForm.productId && (
-                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                    <Check className="w-3 h-3" />{products.find(p => p._id === reqForm.productId)?.name} selected
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
-                <input type="number" min="0.01" step="0.01" value={reqForm.quantity}
-                  onChange={e => setReqForm(f => ({ ...f, quantity: Number(e.target.value) }))} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
-                <textarea value={reqForm.notes} onChange={e => setReqForm(f => ({ ...f, notes: e.target.value }))} rows={2}
-                  placeholder="Optional — reason for request, urgency, etc."
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => { setShowReqForm(false); resetReqSearch(); }}
-                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={reqSaving}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
-                  {reqSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
-                  Submit Request
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Admin Direct Add Modal */}
-      {showAddForm && isAdmin && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-slate-800">Add Stock to Branch</h3>
-              <button onClick={() => { setShowAddForm(false); resetAddSearch(); }}><X className="w-5 h-5 text-slate-400" /></button>
-            </div>
-            <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-              Adding directly to: <span className="font-semibold">{branchName}</span>
-            </div>
-            {addError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{addError}</div>}
-            <form onSubmit={submitDirectAdd} className="space-y-4">
+      {/* ── Request Stock Modal ── */}
+      {showReqModal && (
+        <Modal title="Request Stock" onClose={() => { setShowReqModal(false); resetReqSearch(); }}>
+          {reqError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{reqError}</div>}
+          <form onSubmit={submitRequest} className="space-y-4">
+            {isAdmin && (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
                 <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
                   {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
-
-                {/* Category filter pills */}
-                {productCategories.length > 1 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {productCategories.map(cat => (
-                      <button key={cat} type="button" onClick={() => handleAddCategoryChange(cat)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
-                          addCategory === cat
-                            ? 'bg-blue-500 text-white border-blue-500'
-                            : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                        }`}>
-                        {cat === 'all' ? 'All' : cat}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Search input with autocomplete */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                  <input
-                    ref={addInputRef}
-                    type="text"
-                    value={addSearch}
-                    onChange={e => handleAddSearchChange(e.target.value)}
-                    onFocus={() => { if (addSuggestions.length > 0) setShowAddDropdown(true); }}
-                    onBlur={() => setTimeout(() => setShowAddDropdown(false), 150)}
-                    placeholder="Type to search products..."
-                    className={`w-full pl-9 pr-9 py-2.5 border rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                      addForm.productId ? 'border-blue-400 bg-blue-50/30' : 'border-slate-200'
-                    }`}
-                  />
-                  {addSearch && (
-                    <button type="button"
-                      onClick={() => { setAddSearch(''); setAddForm(f => ({ ...f, productId: '' })); setAddSuggestions([]); setShowAddDropdown(false); addInputRef.current?.focus(); }}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-
-                  {/* Dropdown suggestions */}
-                  {showAddDropdown && addSuggestions.length > 0 && (
-                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
-                      {addSuggestions.map(p => (
-                        <button key={p._id} type="button" onMouseDown={() => selectAddProduct(p)}
-                          className="w-full text-left px-3 py-2.5 flex items-center justify-between gap-3 border-b border-slate-100 last:border-0 hover:bg-blue-50 transition-colors">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
-                            {p.category && <p className="text-xs text-blue-600 font-medium">{p.category}</p>}
-                          </div>
-                          <span className="text-xs text-slate-400 shrink-0">{p.unit}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {showAddDropdown && addSearch.trim() && addSuggestions.length === 0 && (
-                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 text-center text-sm text-slate-400">
-                      No products found for "{addSearch}"
-                    </div>
-                  )}
-                </div>
-
-                {addForm.productId && (
-                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                    <Check className="w-3 h-3" />{products.find(p => p._id === addForm.productId)?.name} selected
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
-                <input type="number" min="0.01" step="0.01" value={addForm.quantity}
-                  onChange={e => setAddForm(f => ({ ...f, quantity: Number(e.target.value) }))} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Source *</label>
-                <select value={addForm.sourceType} onChange={e => setAddForm(f => ({ ...f, sourceType: e.target.value, warehouseId: '' }))}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                  <option value="warehouse">From Warehouse</option>
-                  <option value="others">Others (External)</option>
-                </select>
-              </div>
-              {addForm.sourceType === 'warehouse' && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
-                  <select value={addForm.warehouseId} onChange={e => setAddForm(f => ({ ...f, warehouseId: e.target.value }))} required
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                    <option value="">Select warehouse...</option>
-                    {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
-                  </select>
-                </div>
-              )}
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => { setShowAddForm(false); resetAddSearch(); }}
-                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={addSaving}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
-                  {addSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
-                  Add Stock
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
+              <ProductSearch
+                products={products}
+                stockMap={stockMap}
+                value={reqSearch}
+                selectedId={reqProductId}
+                category={reqCategory}
+                suggestions={reqSuggestions}
+                showDropdown={showReqDropdown}
+                inputRef={reqInputRef}
+                accentColor="amber"
+                onSearchChange={handleReqSearchChange}
+                onCategoryChange={handleReqCategoryChange}
+                onSelect={selectReqProduct}
+                onClearSearch={() => { setReqSearch(''); setReqProductId(''); setReqSuggestions([]); setShowReqDropdown(false); }}
+                onDropdownShow={setShowReqDropdown}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
+              <input type="number" min="0.01" step="0.01" value={reqQty}
+                onChange={e => setReqQty(Number(e.target.value))} required
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+              <textarea value={reqNotes} onChange={e => setReqNotes(e.target.value)} rows={2}
+                placeholder="Optional — reason, urgency, etc."
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none text-sm" />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => { setShowReqModal(false); resetReqSearch(); }}
+                className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+              <button type="submit" disabled={reqSaving}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
+                {reqSaving ? <Spinner /> : <Check className="w-4 h-4" />}Submit Request
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
-      {/* Admin Edit Stock Modal */}
+      {/* ── Add Stock Modal (admin) ── */}
+      {showAddModal && isAdmin && (
+        <Modal title="Add Stock to Branch" onClose={() => { setShowAddModal(false); resetAddSearch(); }}>
+          <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+            Adding directly to: <span className="font-semibold">{branchName}</span>
+          </div>
+          {addError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{addError}</div>}
+          <form onSubmit={submitDirectAdd} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
+              <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
+              <ProductSearch
+                products={products}
+                stockMap={stockMap}
+                value={addSearch}
+                selectedId={addProductId}
+                category={addCategory}
+                suggestions={addSuggestions}
+                showDropdown={showAddDropdown}
+                inputRef={addInputRef}
+                accentColor="blue"
+                onSearchChange={handleAddSearchChange}
+                onCategoryChange={handleAddCategoryChange}
+                onSelect={selectAddProduct}
+                onClearSearch={() => { setAddSearch(''); setAddProductId(''); setAddSuggestions([]); setShowAddDropdown(false); }}
+                onDropdownShow={setShowAddDropdown}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
+              <input type="number" min="0.01" step="0.01" value={addQty}
+                onChange={e => setAddQty(Number(e.target.value))} required
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Source *</label>
+              <select value={addSourceType} onChange={e => { setAddSourceType(e.target.value); setAddWarehouseId(''); }}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                <option value="warehouse">From Warehouse</option>
+                <option value="others">Others (External)</option>
+              </select>
+            </div>
+            {addSourceType === 'warehouse' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
+                <select value={addWarehouseId} onChange={e => setAddWarehouseId(e.target.value)} required
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                  <option value="">Select warehouse...</option>
+                  {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
+                </select>
+              </div>
+            )}
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => { setShowAddModal(false); resetAddSearch(); }}
+                className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+              <button type="submit" disabled={addSaving}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
+                {addSaving ? <Spinner /> : <Check className="w-4 h-4" />}Add Stock
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ── Edit Stock Modal (admin) ── */}
       {editingStock && isAdmin && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-slate-800">Edit Stock Quantity</h3>
-              <button onClick={() => setEditingStock(null)}><X className="w-5 h-5 text-slate-400" /></button>
-            </div>
-            <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
-              <p className="font-medium">{editingStock.product?.name}</p>
-              <p className="text-slate-500 text-xs mt-0.5">
-                Current quantity: <span className="font-semibold">{editingStock.quantity.toLocaleString()} {editingStock.product?.unit}</span>
-              </p>
-              <p className="text-slate-400 text-xs mt-0.5">Branch: {branchName}</p>
-            </div>
-            {editError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editError}</div>}
-            <form onSubmit={submitEditStock} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">New Quantity *</label>
-                <input
-                  type="number" min="0" step="0.01"
-                  value={editForm.quantity}
-                  onChange={e => setEditForm({ quantity: Number(e.target.value) })}
-                  required autoFocus
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-                <p className="text-xs text-slate-400 mt-1">This sets the exact quantity (does not add to existing).</p>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setEditingStock(null)}
-                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={editSaving}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
-                  {editSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
-                  Save Changes
-                </button>
-              </div>
-            </form>
+        <Modal title="Edit Stock Quantity" onClose={() => setEditingStock(null)}>
+          <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
+            <p className="font-medium">{editingStock.product?.name}</p>
+            <p className="text-slate-500 text-xs mt-0.5">
+              Current: <span className="font-semibold">{editingStock.quantity.toLocaleString()} {editingStock.product?.unit}</span>
+            </p>
+            <p className="text-slate-400 text-xs mt-0.5">Branch: {branchName}</p>
           </div>
-        </div>
+          {editError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editError}</div>}
+          <form onSubmit={submitEditStock} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">New Quantity *</label>
+              <input type="number" min="0" step="0.01" value={editQty}
+                onChange={e => setEditQty(Number(e.target.value))} required autoFocus
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm" />
+              <p className="text-xs text-slate-400 mt-1">Sets the exact quantity (does not add to existing).</p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => setEditingStock(null)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+              <button type="submit" disabled={editSaving}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
+                {editSaving ? <Spinner /> : <Check className="w-4 h-4" />}Save Changes
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
-      {/* Admin Approve Modal */}
+      {/* ── Approve Modal (admin) ── */}
       {approving && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-lg font-semibold text-slate-800">Approve Stock Request</h3>
-              <button onClick={() => setApproving(null)}><X className="w-5 h-5 text-slate-400" /></button>
+        <Modal title="Approve Stock Request" onClose={() => setApproving(null)}>
+          <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
+            <p><span className="font-medium">{approving.product_name}</span> × {approving.quantity} {approving.product_unit}</p>
+            <p className="text-slate-500 text-xs mt-1">For {approving.branch_name} · Requested by {approving.requested_by_name}</p>
+          </div>
+          {approveError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{approveError}</div>}
+          <form onSubmit={approveRequest} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
+              <select value={approveSourceType} onChange={e => { setApproveSourceType(e.target.value); setApproveWarehouseId(''); }}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                <option value="warehouse">From Warehouse</option>
+                <option value="others">Others (External)</option>
+              </select>
             </div>
-            <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
-              <p><span className="font-medium">{approving.product_name}</span> × {approving.quantity} {approving.product_unit}</p>
-              <p className="text-slate-500 text-xs mt-1">For {approving.branch_name} · Requested by {approving.requested_by_name}</p>
-            </div>
-            {approveError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{approveError}</div>}
-            <form onSubmit={approveRequest} className="space-y-4">
+            {approveSourceType === 'warehouse' && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
-                <select value={approveForm.sourceType} onChange={e => setApproveForm(f => ({ ...f, sourceType: e.target.value, warehouseId: '' }))}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                  <option value="warehouse">From Warehouse</option>
-                  <option value="others">Others (External)</option>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
+                <select value={approveWarehouseId} onChange={e => setApproveWarehouseId(e.target.value)} required
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                  <option value="">Select warehouse...</option>
+                  {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
                 </select>
               </div>
-              {approveForm.sourceType === 'warehouse' && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
-                  <select value={approveForm.warehouseId} onChange={e => setApproveForm(f => ({ ...f, warehouseId: e.target.value }))} required
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                    <option value="">Select warehouse...</option>
-                    {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
-                  </select>
-                </div>
-              )}
-              <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setApproving(null)}
-                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-                <button type="submit" disabled={approveSaving}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
-                  {approveSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                  Approve & Add Stock
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            )}
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={() => setApproving(null)}
+                className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+              <button type="submit" disabled={approveSaving}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
+                {approveSaving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}Approve & Add Stock
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
     </div>
