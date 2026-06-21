@@ -43,6 +43,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<Stats>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // Reset modal state
   const [showResetModal, setShowResetModal] = useState(false);
@@ -53,62 +54,74 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchStats(); }, [user]);
 
+  // Re-fetch whenever the user navigates back to this tab/window
+  useEffect(() => {
+    const onFocus = () => fetchStats(true);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [user]);
+
   async function fetchStats(isRefresh = false) {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
+    setFetchError(null);
 
-    const today       = new Date().toISOString().split('T')[0];
-    const start       = `${today}T00:00:00.000Z`;
-    const end         = `${today}T23:59:59.999Z`;
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+    try {
+      const today        = new Date().toISOString().split('T')[0];
+      const start        = `${today}T00:00:00.000Z`;
+      const end          = `${today}T23:59:59.999Z`;
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
 
-    const saleFilter:    Record<string, any> = { saleDate:    { $gte: start, $lte: end } };
-    const expenseFilter: Record<string, any> = { expenseDate: { $gte: start, $lte: end } };
-    const reportFilter:  Record<string, any> = { reportDate:  { $gte: `${sevenDaysAgo}T00:00:00.000Z` } };
-    const debtorFilter:  Record<string, any> = {};
+      const saleFilter:    Record<string, any> = { saleDate:    { $gte: start, $lte: end } };
+      const expenseFilter: Record<string, any> = { expenseDate: { $gte: start, $lte: end } };
+      const reportFilter:  Record<string, any> = { reportDate:  { $gte: `${sevenDaysAgo}T00:00:00.000Z` } };
+      const debtorFilter:  Record<string, any> = {};
 
-    if (user?.role !== 'admin' && user?.branchId) {
-      saleFilter.branchId    = user.branchId;
-      expenseFilter.branchId = user.branchId;
-      reportFilter.branchId  = user.branchId;
-      debtorFilter.branchId  = user.branchId;
+      if (user?.role !== 'admin' && user?.branchId) {
+        saleFilter.branchId    = user.branchId;
+        expenseFilter.branchId = user.branchId;
+        reportFilter.branchId  = user.branchId;
+        debtorFilter.branchId  = user.branchId;
+      }
+
+      const [sales, expenses, reports, debtors] = await Promise.all([
+        find(Collections.SALES,         saleFilter),
+        find(Collections.EXPENSES,      expenseFilter),
+        find(Collections.DAILY_REPORTS, reportFilter),
+        find(Collections.DEBTORS,       debtorFilter),
+      ]);
+
+      const s = sales   as Sale[];
+      const r = reports as DailyReport[];
+      const d = debtors as Debtor[];
+
+      const todaySales    = s.reduce((acc, x) => acc + Number(x.totalAmount), 0);
+      const todayExpenses = (expenses as any[]).reduce((acc, x) => acc + Number(x.amount), 0);
+
+      setStats({
+        todaySales,
+        todayCash:          s.filter(x => x.paymentMethod === 'cash').reduce((acc, x) => acc + Number(x.totalAmount), 0),
+        todayPos:           s.filter(x => x.paymentMethod === 'pos').reduce((acc, x) => acc + Number(x.totalAmount), 0),
+        todayExpenses,
+        todayNet:           todaySales - todayExpenses,
+        totalTransactions:  s.length,
+        unpaidCount:        s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part').length,
+        unpaidAmount:       s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part')
+                             .reduce((acc, x) => acc + Number(x.balanceDue ?? 0), 0),
+        pendingReports:     r.filter(x => x.status === 'pending').length,
+        approvedReports:    r.filter(x => x.status === 'approved').length,
+        rejectedReports:    r.filter(x => x.status === 'rejected').length,
+        activeDebtors:      d.filter(x => !x.isCleared).length,
+        totalDebtorAmount:  d.filter(x => !x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
+        clearedDebtors:     d.filter(x => x.isCleared).length,
+        totalClearedAmount: d.filter(x => x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
+      });
+    } catch (err: any) {
+      setFetchError(err?.message ?? 'Failed to load dashboard data. Please refresh.');
+    } finally {
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
-
-    const [sales, expenses, reports, debtors] = await Promise.all([
-      find(Collections.SALES,         saleFilter),
-      find(Collections.EXPENSES,      expenseFilter),
-      find(Collections.DAILY_REPORTS, reportFilter),
-      find(Collections.DEBTORS,       debtorFilter),
-    ]);
-
-    const s = sales   as Sale[];
-    const r = reports as DailyReport[];
-    const d = debtors as Debtor[];
-
-    const todaySales    = s.reduce((acc, x) => acc + Number(x.totalAmount), 0);
-    const todayExpenses = (expenses as any[]).reduce((acc, x) => acc + Number(x.amount), 0);
-
-    setStats({
-      todaySales,
-      todayCash:          s.filter(x => x.paymentMethod === 'cash').reduce((acc, x) => acc + Number(x.totalAmount), 0),
-      todayPos:           s.filter(x => x.paymentMethod === 'pos').reduce((acc, x) => acc + Number(x.totalAmount), 0),
-      todayExpenses,
-      todayNet:           todaySales - todayExpenses,
-      totalTransactions:  s.length,
-      unpaidCount:        s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part').length,
-      unpaidAmount:       s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part')
-                           .reduce((acc, x) => acc + Number(x.balanceDue ?? 0), 0),
-      pendingReports:     r.filter(x => x.status === 'pending').length,
-      approvedReports:    r.filter(x => x.status === 'approved').length,
-      rejectedReports:    r.filter(x => x.status === 'rejected').length,
-      activeDebtors:      d.filter(x => !x.isCleared).length,
-      totalDebtorAmount:  d.filter(x => !x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
-      clearedDebtors:     d.filter(x => x.isCleared).length,
-      totalClearedAmount: d.filter(x => x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
-    });
-
-    if (isRefresh) setRefreshing(false);
-    else setLoading(false);
   }
 
   function openResetModal() {
@@ -183,6 +196,19 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* ── Fetch error banner ── */}
+      {fetchError && (
+        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+          <span className="flex-1">{fetchError}</span>
+          <button
+            onClick={() => fetchStats(true)}
+            className="shrink-0 font-medium underline hover:no-underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Reset Confirmation Modal (admin only) ── */}
       {showResetModal && (
