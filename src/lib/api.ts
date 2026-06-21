@@ -202,8 +202,11 @@ export async function aggregate(
   return [];
 }
 
-export async function resetAllSalesData(): Promise<void> {
-  await apiFetch('/api/reports/reset-all', { method: 'POST' });
+export async function resetAllSalesData(date: string): Promise<void> {
+  await apiFetch('/api/reports/reset-all', {
+    method: 'POST',
+    body: JSON.stringify({ date }),
+  });
 }
 
 // ─── Collection → endpoint mapping ───────────────────────────────────────────

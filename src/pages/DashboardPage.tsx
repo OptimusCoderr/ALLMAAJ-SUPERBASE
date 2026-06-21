@@ -45,6 +45,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [resetDate, setResetDate] = useState('');
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -110,14 +111,14 @@ export default function DashboardPage() {
   }
 
   async function handleReset() {
-    if (resetConfirmText !== 'RESET') return;
+    if (resetConfirmText !== 'RESET' || !resetDate) return;
     setResetting(true);
     setResetError(null);
     try {
-      await resetAllSalesData();
-      setStats(EMPTY);
+      await resetAllSalesData(resetDate);
       setShowResetModal(false);
       setResetConfirmText('');
+      fetchStats(true);
     } catch (err: any) {
       setResetError(err?.message ?? 'Reset failed. Please try again.');
     } finally {
@@ -149,7 +150,12 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 shrink-0">
           {user?.role === 'admin' && (
             <button
-              onClick={() => { setShowResetModal(true); setResetConfirmText(''); setResetError(null); }}
+              onClick={() => {
+                setShowResetModal(true);
+                setResetDate(new Date().toISOString().split('T')[0]);
+                setResetConfirmText('');
+                setResetError(null);
+              }}
               className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 hover:border-red-400 hover:bg-red-50 transition-colors"
             >
               <Trash2 className="w-4 h-4" />
@@ -182,8 +188,19 @@ export default function DashboardPage() {
             </div>
 
             <p className="text-slate-600 text-sm leading-relaxed">
-              This will permanently delete <strong>all sales, expenses, debtors, and daily reports</strong> across every branch. User accounts and products will not be affected.
+              This will permanently delete <strong>all sales, expenses, debtors, and daily reports</strong> for the selected date across every branch. User accounts and products will not be affected.
             </p>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Select date to reset</label>
+              <input
+                type="date"
+                value={resetDate}
+                max={new Date().toISOString().split('T')[0]}
+                onChange={e => setResetDate(e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-red-400"
+              />
+            </div>
 
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
               Type <span className="font-mono font-bold">RESET</span> below to confirm:
@@ -212,7 +229,7 @@ export default function DashboardPage() {
               </button>
               <button
                 onClick={handleReset}
-                disabled={resetConfirmText !== 'RESET' || resetting}
+                disabled={resetConfirmText !== 'RESET' || !resetDate || resetting}
                 className="flex-1 px-4 py-2.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
               >
                 {resetting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}

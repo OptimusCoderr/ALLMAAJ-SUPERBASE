@@ -406,21 +406,30 @@ router.get('/analytics/dashboard', async (req: Request, res: Response) => {
 });
 
 // POST /api/reports/reset-all  (admin only)
-// Deletes all sales, expenses, debtors and daily reports data.
+// Deletes all sales, expenses, debtors and daily reports for the given date.
 router.post('/reset-all', adminOnly, async (req: Request, res: Response) => {
   try {
-    // Order matters: child rows must be removed before parents to satisfy FK constraints.
-    // debtors.sale_id → sales, sales.report_id → daily_reports
-    await sql`DELETE FROM debtors`;
-    await sql`UPDATE sales SET report_id = NULL`;
-    await sql`DELETE FROM daily_reports`;
-    await sql`DELETE FROM expenses`;
-    await sql`DELETE FROM sales`;
+    const { date } = req.body;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+      return sendError(res, 400, 'A valid date (YYYY-MM-DD) is required');
 
-    console.log(`[RESET] All sales data reset by admin user ${req.userId}`);
-    return sendResponse(res, 200, 'All sales and report data has been reset', {
+    // Delete debtors tied to sales on that date, or created on that date with no linked sale
+    await sql`
+      DELETE FROM debtors
+      WHERE sale_id IN (SELECT id FROM sales WHERE sale_date::date = ${date}::date)
+         OR (sale_id IS NULL AND created_at::date = ${date}::date)
+    `;
+    // Unlink sales from their report so the report row can be deleted cleanly
+    await sql`UPDATE sales SET report_id = NULL WHERE sale_date::date = ${date}::date`;
+    await sql`DELETE FROM daily_reports WHERE report_date = ${date}::date`;
+    await sql`DELETE FROM expenses      WHERE expense_date::date = ${date}::date`;
+    await sql`DELETE FROM sales         WHERE sale_date::date   = ${date}::date`;
+
+    console.log(`[RESET] Data for ${date} reset by admin user ${req.userId}`);
+    return sendResponse(res, 200, `Data for ${date} has been reset`, {
       resetAt: new Date().toISOString(),
       resetBy: req.userId,
+      date,
     });
   } catch (err) { console.error('[POST /reports/reset-all]', err); return sendError(res, 500, 'Server error', err); }
 });
