@@ -50,6 +50,8 @@ export interface Product extends MongoDoc {
   unit: string;
   category?: string;
   isActive: boolean;
+  isCuttable?: boolean;
+  unitLengthInches?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,6 +82,10 @@ export interface SaleItem {
   quantity: number;
   unitPrice: number;
   subtotal: number;
+  cutLengthInches?: number | null;
+  unitLengthInches?: number | null;
+  isCut?: boolean;
+  stockDeductQty?: number;
 }
 
 export interface Sale extends MongoDoc {

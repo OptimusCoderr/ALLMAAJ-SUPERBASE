@@ -142,19 +142,33 @@ router.post(
 
       const processedItems: SaleItemJson[] = items.map((item: any) => {
         const isService = item.itemType === 'service';
+        const isCut = !isService && item.cutLengthInches && item.unitLengthInches;
+        const stockDeductQty = isCut
+          ? item.cutLengthInches / item.unitLengthInches
+          : item.quantity;
         return {
-          product_id:    isService ? null : item.productId,
-          product_name:  item.productName ?? '',
-          item_type:     item.itemType ?? 'product',
-          service_notes: item.serviceNotes ?? null,
-          quantity:      item.quantity,
-          unit_price:    item.unitPrice,
-          subtotal:      item.quantity * item.unitPrice,
+          product_id:         isService ? null : item.productId,
+          product_name:       item.productName ?? '',
+          item_type:          item.itemType ?? 'product',
+          service_notes:      item.serviceNotes ?? null,
+          quantity:           item.quantity,
+          unit_price:         item.unitPrice,
+          subtotal:           item.quantity * item.unitPrice,
+          cut_length_inches:  item.cutLengthInches ?? null,
+          unit_length_inches: item.unitLengthInches ?? null,
+          stock_deduct_qty:   stockDeductQty,
         };
       });
       const totalAmount = processedItems.reduce((s, i) => s + i.subtotal, 0);
 
-      // Stock check — skip service items
+      // Cut validation — server-side minimum 8.5 inches
+      for (const item of processedItems) {
+        if (item.cut_length_inches != null && item.cut_length_inches < 8.5) {
+          return sendError(res, 400, `Minimum cut size is 8.5 inches. Got ${item.cut_length_inches}" for "${item.product_name}"`);
+        }
+      }
+
+      // Stock check — skip service items, use stock_deduct_qty for cuttable
       const productItems = processedItems.filter(i => i.item_type !== 'service' && i.product_id);
       for (const item of productItems) {
         const [stock] = await sql<[{ quantity: string; name: string }]>`
@@ -164,9 +178,10 @@ router.post(
           WHERE bs.branch_id = ${branchId} AND bs.product_id = ${item.product_id}
         `;
         const available = stock ? parseFloat(stock.quantity) : 0;
-        if (available < item.quantity) {
+        const needed = item.stock_deduct_qty ?? item.quantity;
+        if (available < needed) {
           return sendError(res, 400,
-            `Insufficient stock for "${stock?.name ?? item.product_id}". Available: ${available}, Requested: ${item.quantity}`
+            `Insufficient stock for "${stock?.name ?? item.product_id}". Available: ${available}, Requested: ${needed}`
           );
         }
       }
@@ -192,11 +207,12 @@ router.post(
         RETURNING *
       `;
 
-      // Deduct stock — skip service items
+      // Deduct stock — skip service items, use stock_deduct_qty for cuttable
       for (const item of productItems) {
+        const deduct = item.stock_deduct_qty ?? item.quantity;
         await sql`
           UPDATE branch_stock
-          SET quantity = quantity - ${item.quantity}, updated_at = NOW()
+          SET quantity = quantity - ${deduct}, updated_at = NOW()
           WHERE branch_id = ${branchId} AND product_id = ${item.product_id}
         `;
       }
@@ -248,30 +264,45 @@ router.put(
 
       const newItems: SaleItemJson[] = items.map((item: any) => {
         const isService = item.itemType === 'service';
+        const isCut = !isService && item.cutLengthInches && item.unitLengthInches;
+        const stockDeductQty = isCut
+          ? item.cutLengthInches / item.unitLengthInches
+          : item.quantity;
         return {
-          product_id:    isService ? null : item.productId,
-          product_name:  item.productName ?? '',
-          item_type:     item.itemType ?? 'product',
-          service_notes: item.serviceNotes ?? null,
-          quantity:      item.quantity,
-          unit_price:    item.unitPrice,
-          subtotal:      item.quantity * item.unitPrice,
+          product_id:         isService ? null : item.productId,
+          product_name:       item.productName ?? '',
+          item_type:          item.itemType ?? 'product',
+          service_notes:      item.serviceNotes ?? null,
+          quantity:           item.quantity,
+          unit_price:         item.unitPrice,
+          subtotal:           item.quantity * item.unitPrice,
+          cut_length_inches:  item.cutLengthInches ?? null,
+          unit_length_inches: item.unitLengthInches ?? null,
+          stock_deduct_qty:   stockDeductQty,
         };
       });
       const totalAmount = newItems.reduce((s, i) => s + i.subtotal, 0);
 
-      // Restore old stock — skip service items
+      // Cut validation
+      for (const item of newItems) {
+        if (item.cut_length_inches != null && item.cut_length_inches < 8.5) {
+          return sendError(res, 400, `Minimum cut size is 8.5 inches. Got ${item.cut_length_inches}" for "${item.product_name}"`);
+        }
+      }
+
+      // Restore old stock — skip service items, use stock_deduct_qty
       const oldItems = parseItems(existing.items);
       const oldProductItems = oldItems.filter(i => i.item_type !== 'service' && i.product_id);
       for (const old of oldProductItems) {
+        const restore = old.stock_deduct_qty ?? old.quantity;
         await sql`
           UPDATE branch_stock
-          SET quantity = quantity + ${old.quantity}, updated_at = NOW()
+          SET quantity = quantity + ${restore}, updated_at = NOW()
           WHERE branch_id = ${existing.branch_id} AND product_id = ${old.product_id}
         `;
       }
 
-      // Check new stock — skip service items
+      // Check new stock — skip service items, use stock_deduct_qty
       const newProductItems = newItems.filter(i => i.item_type !== 'service' && i.product_id);
       for (const item of newProductItems) {
         const [stock] = await sql<[{ quantity: string; name: string }]>`
@@ -281,17 +312,19 @@ router.put(
           WHERE bs.branch_id = ${existing.branch_id} AND bs.product_id = ${item.product_id}
         `;
         const available = stock ? parseFloat(stock.quantity) : 0;
-        if (available < item.quantity) {
+        const needed = item.stock_deduct_qty ?? item.quantity;
+        if (available < needed) {
           // Roll back: re-deduct old product stock
           for (const old of oldProductItems) {
+            const restore = old.stock_deduct_qty ?? old.quantity;
             await sql`
               UPDATE branch_stock
-              SET quantity = quantity - ${old.quantity}, updated_at = NOW()
+              SET quantity = quantity - ${restore}, updated_at = NOW()
               WHERE branch_id = ${existing.branch_id} AND product_id = ${old.product_id}
             `;
           }
           return sendError(res, 400,
-            `Insufficient stock for "${stock?.name ?? item.product_id}". Available: ${available}, Requested: ${item.quantity}`
+            `Insufficient stock for "${stock?.name ?? item.product_id}". Available: ${available}, Requested: ${needed}`
           );
         }
       }
@@ -317,11 +350,12 @@ router.put(
         RETURNING *
       `;
 
-      // Deduct new stock — skip service items
+      // Deduct new stock — skip service items, use stock_deduct_qty
       for (const item of newProductItems) {
+        const deduct = item.stock_deduct_qty ?? item.quantity;
         await sql`
           UPDATE branch_stock
-          SET quantity = quantity - ${item.quantity}, updated_at = NOW()
+          SET quantity = quantity - ${deduct}, updated_at = NOW()
           WHERE branch_id = ${existing.branch_id} AND product_id = ${item.product_id}
         `;
       }
@@ -374,13 +408,14 @@ router.delete('/:id', async (req: Request, res: Response) => {
     if (!isAdmin && existing.staff_id !== req.userId)
       return sendError(res, 403, 'You can only delete your own sales.');
 
-    // Restore stock before deleting — skip service items
+    // Restore stock before deleting — skip service items, use stock_deduct_qty
     const oldItems = parseItems(existing.items);
     const oldProductItems = oldItems.filter((i: any) => i.item_type !== 'service' && i.product_id);
     for (const item of oldProductItems) {
+      const restore = item.stock_deduct_qty ?? item.quantity;
       await sql`
         UPDATE branch_stock
-        SET quantity = quantity + ${item.quantity}, updated_at = NOW()
+        SET quantity = quantity + ${restore}, updated_at = NOW()
         WHERE branch_id = ${existing.branch_id} AND product_id = ${item.product_id}
       `;
     }

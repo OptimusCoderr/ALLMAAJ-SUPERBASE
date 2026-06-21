@@ -161,9 +161,12 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 app.listen(PORT, () => {
   console.log(`ALLMAAJ API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   sql`SELECT 1`
-    .then(() => {
+    .then(async () => {
       console.log('Database connected ✓');
-      return seedAdmin();  // ← add this line
+      await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_cuttable boolean NOT NULL DEFAULT false`;
+      await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS unit_length_inches numeric`;
+      console.log('Schema migration ✓');
+      return seedAdmin();
     })
     .catch(e => { console.error('Database connection failed:', e.message); process.exit(1); });
 });

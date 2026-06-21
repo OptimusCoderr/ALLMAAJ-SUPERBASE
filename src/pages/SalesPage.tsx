@@ -5,11 +5,18 @@ import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer } f
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
   Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText, Search,
+  Scissors, ToggleLeft, ToggleRight,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface CartItem { product: Product; quantity: number; unitPrice: number }
+interface CartItem {
+  product: Product;
+  quantity: number;
+  unitPrice: number;
+  isCut?: boolean;
+  cutLengthInches?: number;
+}
 interface ServiceCartItem { serviceName: string; serviceNotes: string; quantity: number; unitPrice: number }
 type Tab           = 'sale' | 'debtor' | 'expense';
 type PaymentMethod = 'cash' | 'pos' | 'part' | 'unpaid';
@@ -58,6 +65,14 @@ function fmt(n: number) {
 function getToken() {
   return sessionStorage.getItem('bt_session') || localStorage.getItem('bt_session') || '';
 }
+function inchesToDisplay(inches: number): string {
+  const ft = Math.floor(inches / 12);
+  const inRem = +(inches % 12).toFixed(1);
+  if (ft === 0) return `${inRem}"`;
+  if (inRem === 0) return `${ft}ft`;
+  return `${ft}ft ${inRem}"`;
+}
+
 function isToday(dateStr: string): boolean {
   if (!dateStr) return false;
   const d = new Date(dateStr), now = new Date();
@@ -113,6 +128,10 @@ export default function SalesPage() {
   const [productSuggestions, setProductSuggestions]   = useState<Product[]>([]);
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const productInputRef = useRef<HTMLInputElement>(null);
+
+  // Cut mode state
+  const [isCutMode, setIsCutMode]   = useState(false);
+  const [cutLength, setCutLength]   = useState('');
 
   // Service form
   const [serviceCart, setServiceCart]         = useState<ServiceCartItem[]>([]);
@@ -203,6 +222,7 @@ export default function SalesPage() {
     setPrice(p.unitPrice);
     setProductSuggestions([]);
     setShowProductDropdown(false);
+    if (!p.isCuttable) { setIsCutMode(false); setCutLength(''); }
   }
 
   function switchTab(t: Tab) {
@@ -278,13 +298,32 @@ export default function SalesPage() {
   function addToCart() {
     const product = products.find(p => p._id === selectedProduct);
     if (!product) return;
-    const alreadyInCart = cart.find(c => c.product._id === selectedProduct)?.quantity ?? 0;
+
+    if (isCutMode && product.isCuttable) {
+      const cut = parseFloat(cutLength);
+      const unitLen = product.unitLengthInches ?? 0;
+      if (!cut || cut < 8.5) { setError('Minimum cut size is 8.5 inches'); return; }
+      if (unitLen > 0 && cut > unitLen) { setError(`Cut (${cut}") exceeds full unit length (${unitLen}")`); return; }
+      const deductFraction = unitLen > 0 ? cut / unitLen : 1;
+      const available = getStock(selectedProduct);
+      if (deductFraction > available) {
+        setError(`Not enough stock for "${product.name}". Available: ${(available * unitLen).toFixed(1)}" total`);
+        return;
+      }
+      setCart([...cart, { product, quantity: 1, unitPrice: price || product.unitPrice, isCut: true, cutLengthInches: cut }]);
+      setSelectedProduct(''); setProductSearch(''); setQty(1); setPrice(0);
+      setCutLength(''); setIsCutMode(false); setError('');
+      return;
+    }
+
+    const alreadyInCart = cart.filter(c => c.product._id === selectedProduct && !c.isCut)
+      .reduce((s, c) => s + c.quantity, 0);
     const available = getStock(selectedProduct);
     if (alreadyInCart + qty > available) {
       setError(`Not enough stock for "${product.name}". Available: ${available - alreadyInCart}`);
       return;
     }
-    const idx = cart.findIndex(c => c.product._id === selectedProduct);
+    const idx = cart.findIndex(c => c.product._id === selectedProduct && !c.isCut);
     if (idx >= 0) {
       setCart(cart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + qty } : c));
     } else {
@@ -348,6 +387,11 @@ export default function SalesPage() {
           ...cart.map(c => ({
             productId: c.product._id, productName: c.product.name,
             quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
+            ...(c.isCut && c.cutLengthInches ? {
+              cutLengthInches: c.cutLengthInches,
+              unitLengthInches: c.product.unitLengthInches,
+              isCut: true,
+            } : {}),
           })),
           ...serviceCart.map(s => ({
             productId: null, productName: s.serviceName, itemType: 'service',
@@ -899,6 +943,55 @@ export default function SalesPage() {
                   </div>
                 )}
 
+                {/* Cut mode toggle — shown only when a cuttable product is selected */}
+                {selectedProduct && products.find(p => p._id === selectedProduct)?.isCuttable && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Scissors className="w-4 h-4 text-amber-600" />
+                        <span className="text-sm font-semibold text-amber-800">Sell a cut piece?</span>
+                        <span className="text-xs text-amber-600">
+                          (full unit = {products.find(p => p._id === selectedProduct)?.unitLengthInches}"
+                          = {inchesToDisplay(products.find(p => p._id === selectedProduct)?.unitLengthInches ?? 0)})
+                        </span>
+                      </div>
+                      <button type="button" onClick={() => { setIsCutMode(v => !v); setCutLength(''); }}
+                        className="text-amber-700 hover:text-amber-900 transition-colors">
+                        {isCutMode ? <ToggleRight className="w-6 h-6 text-amber-500" /> : <ToggleLeft className="w-6 h-6 text-slate-400" />}
+                      </button>
+                    </div>
+                    {isCutMode && (() => {
+                      const product = products.find(p => p._id === selectedProduct);
+                      const unitLen = product?.unitLengthInches ?? 0;
+                      const cut = parseFloat(cutLength) || 0;
+                      const leftover = unitLen > 0 && cut > 0 ? unitLen - cut : null;
+                      return (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="8.5"
+                              step="0.1"
+                              max={unitLen || undefined}
+                              value={cutLength}
+                              onChange={e => setCutLength(e.target.value)}
+                              placeholder={`Cut length in inches (min 8.5, max ${unitLen})`}
+                              className="flex-1 px-3 py-2 border border-amber-300 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                            />
+                            <span className="text-sm text-amber-700 font-medium">inches</span>
+                          </div>
+                          {cut >= 8.5 && leftover !== null && leftover >= 0 && (
+                            <div className={`text-xs font-medium rounded-lg px-3 py-2 ${leftover < 8.5 ? 'bg-orange-100 text-orange-700' : 'bg-green-50 text-green-700'}`}>
+                              Cut: {cut}" ({inchesToDisplay(cut)}) &nbsp;|&nbsp; Leftover returned to stock: {leftover.toFixed(1)}" ({inchesToDisplay(leftover)})
+                              {leftover < 8.5 && leftover > 0 && ' ⚠ Leftover too small to cut again'}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                   {/* Autocomplete product search */}
                   <div className="sm:col-span-2 relative">
@@ -978,16 +1071,19 @@ export default function SalesPage() {
                     )}
                   </div>
 
-                  <input type="number" min="0.01" step="0.01" value={qty}
-                    onChange={e => setQty(Number(e.target.value))}
-                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
-                    className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Qty" />
-                  <div className="flex gap-2">
+                  {!isCutMode && (
+                    <input type="number" min="0.01" step="0.01" value={qty}
+                      onChange={e => setQty(Number(e.target.value))}
+                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
+                      className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Qty" />
+                  )}
+                  <div className={`flex gap-2 ${isCutMode ? 'sm:col-span-2' : ''}`}>
                     <input type="number" min="0" step="0.01" value={price}
                       onChange={e => setPrice(Number(e.target.value))}
                       onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
                       className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Price (₦)" />
-                    <button type="button" onClick={addToCart} disabled={!selectedProduct}
+                    <button type="button" onClick={addToCart}
+                      disabled={!selectedProduct || (isCutMode && (parseFloat(cutLength) < 8.5 || !cutLength))}
                       className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-xl text-sm font-semibold transition-colors flex items-center gap-1">
                       <Plus className="w-4 h-4" />
                     </button>
@@ -1067,23 +1163,40 @@ export default function SalesPage() {
 
                   <div className="space-y-1">
                     {cart.map((item, idx) => (
-                      <div key={`p-${idx}`} className="flex items-center gap-3 py-2.5 px-3 bg-slate-50 rounded-xl">
-                        <div className="flex-1 font-medium text-slate-800 text-sm truncate">{item.product.name}</div>
-                        <span className="text-xs text-slate-400 hidden sm:block">{(item.product as any).unit}</span>
-                        <input type="number" min="0.01" step="0.01" value={item.quantity}
-                          onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
-                          className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
-                        <span className="text-slate-300 text-xs">×</span>
-                        <input type="number" min="0" step="0.01" value={item.unitPrice}
-                          onChange={e => updateItem(idx, 'unitPrice', Number(e.target.value))}
-                          className="w-24 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
-                        <span className="font-bold text-slate-700 text-sm w-24 text-right">
-                          {fmt(item.quantity * item.unitPrice)}
-                        </span>
-                        <button type="button" onClick={() => setCart(cart.filter((_, i) => i !== idx))}
-                          className="text-slate-300 hover:text-red-500 transition-colors">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      <div key={`p-${idx}`} className={`py-2.5 px-3 rounded-xl ${item.isCut ? 'bg-amber-50 border border-amber-100' : 'bg-slate-50'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              {item.isCut && <Scissors className="w-3 h-3 text-amber-500 flex-shrink-0" />}
+                              <span className="font-medium text-slate-800 text-sm truncate">{item.product.name}</span>
+                            </div>
+                            {item.isCut && item.cutLengthInches != null && item.product.unitLengthInches && (
+                              <p className="text-xs text-amber-700 mt-0.5">
+                                Cut: {item.cutLengthInches}" ({inchesToDisplay(item.cutLengthInches)})
+                                &nbsp;·&nbsp;
+                                Leftover returned to stock: {(item.product.unitLengthInches - item.cutLengthInches).toFixed(1)}"
+                                ({inchesToDisplay(item.product.unitLengthInches - item.cutLengthInches)})
+                              </p>
+                            )}
+                          </div>
+                          {!item.isCut && (
+                            <input type="number" min="0.01" step="0.01" value={item.quantity}
+                              onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
+                              className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                          )}
+                          {item.isCut && <span className="text-xs text-amber-600 font-semibold w-16 text-right">1 cut</span>}
+                          <span className="text-slate-300 text-xs">×</span>
+                          <input type="number" min="0" step="0.01" value={item.unitPrice}
+                            onChange={e => updateItem(idx, 'unitPrice', Number(e.target.value))}
+                            className="w-24 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                          <span className="font-bold text-slate-700 text-sm w-24 text-right">
+                            {fmt(item.quantity * item.unitPrice)}
+                          </span>
+                          <button type="button" onClick={() => setCart(cart.filter((_, i) => i !== idx))}
+                            className="text-slate-300 hover:text-red-500 transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                     {serviceCart.map((item, idx) => (

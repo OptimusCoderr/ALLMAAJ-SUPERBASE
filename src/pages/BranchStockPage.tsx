@@ -438,6 +438,8 @@ export default function BranchStockPage() {
           name: s.product.name, unit: s.product.unit,
           category: s.product.category,
           unitPrice: parseFloat(s.product.unit_price ?? s.product.current_price ?? 0),
+          isCuttable: s.product.is_cuttable ?? false,
+          unitLengthInches: s.product.unit_length_inches != null ? parseFloat(s.product.unit_length_inches) : null,
         } : undefined,
       })).filter((s: any) => s.product));
     } catch {}
@@ -545,6 +547,20 @@ export default function BranchStockPage() {
       await authFetch(`/api/branches/stock-requests/${req.id}/reject`, token, { method: 'PATCH' });
       fetchRequests(); showToast(`Rejected request for ${req.product_name}`, 'error');
     } catch (err: any) { alert(err.message || 'Failed to reject'); }
+  }
+
+  function displayCuttableQty(qty: number, unitLengthInches: number): string {
+    const fullPieces = Math.floor(qty);
+    const remnantInches = +(((qty - fullPieces) * unitLengthInches).toFixed(1));
+    if (remnantInches < 0.1) return `${fullPieces} ${fullPieces === 1 ? 'pc' : 'pcs'}`;
+    const ft = Math.floor(remnantInches / 12);
+    const inRem = +(remnantInches % 12).toFixed(1);
+    let remnantStr: string;
+    if (ft === 0) remnantStr = `${remnantInches}"`;
+    else if (inRem < 0.1) remnantStr = `${ft}ft`;
+    else remnantStr = `${ft}ft ${inRem}"`;
+    if (fullPieces === 0) return remnantStr;
+    return `${fullPieces} pcs + ${remnantStr}`;
   }
 
   // ── Sort icon helper ─────────────────────────────────────────────────────────
@@ -753,7 +769,19 @@ export default function BranchStockPage() {
                           <td className="py-3 text-slate-500 hidden md:table-cell pr-4">{item.product?.category || '–'}</td>
                           <td className="py-3 text-slate-500 hidden sm:table-cell pr-4">{item.product?.unit}</td>
                           <td className="py-3 text-right pr-4">
-                            <QtyBadge qty={item.quantity} />
+                            {(item.product as any)?.isCuttable && (item.product as any)?.unitLengthInches
+                              ? (
+                                <div>
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
+                                    {displayCuttableQty(item.quantity, (item.product as any).unitLengthInches)}
+                                  </span>
+                                  <div className="text-xs text-amber-600 mt-0.5">each = {(item.product as any).unitLengthInches}"</div>
+                                </div>
+                              )
+                              : (
+                                <QtyBadge qty={item.quantity} />
+                              )
+                            }
                             <div className="text-xs text-slate-500 mt-0.5">{fmt(item.product?.unitPrice || 0)}</div>
                           </td>
                           <td className="py-3 text-right text-slate-600 hidden lg:table-cell pr-4">{fmt(item.product?.unitPrice || 0)}</td>
