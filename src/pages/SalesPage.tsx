@@ -284,7 +284,7 @@ export default function SalesPage() {
       find(Collections.EXPENSES, { branchId, expenseDate: { $gte: start, $lte: end } }),
       find(Collections.DEBTORS,  { branchId, isCleared: false }),
     ]);
-    setTodaySales((salesData as any[]).filter(s => !s.reportId));
+    setTodaySales(salesData as any[]);
     setTodayExpenses(expensesData as Expense[]);
     setTodayDebtors(debtorsData as Debtor[]);
   }
@@ -529,7 +529,7 @@ export default function SalesPage() {
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
       setReportMsg({ ok: true, text: 'Daily report submitted! Awaiting admin review.' });
-      setTodaySales([]);
+      fetchTodayData(selectedBranch);
       setTimeout(() => setReportMsg(null), 6000);
     } catch (err: any) {
       setReportMsg({ ok: false, text: err.message || 'Failed to submit report' });
