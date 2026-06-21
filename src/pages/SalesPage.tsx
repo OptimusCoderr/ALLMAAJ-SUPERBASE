@@ -529,6 +529,7 @@ export default function SalesPage() {
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
       setReportMsg({ ok: true, text: 'Daily report submitted! Awaiting admin review.' });
+      setReportConfirmOpen(false);
       fetchTodayData(selectedBranch);
       setTimeout(() => setReportMsg(null), 6000);
     } catch (err: any) {
@@ -565,7 +566,13 @@ export default function SalesPage() {
           _id: productId, name: item.productName || item.product_name || productId,
           unitPrice: item.unit_price ?? item.unitPrice ?? 0, unit: '', isActive: true,
         } as unknown as Product;
-        return { product: found || fallback, quantity: item.quantity, unitPrice: item.unit_price ?? item.unitPrice ?? 0 };
+        const cutLen = item.cut_length_inches ?? item.cutLengthInches ?? null;
+      return {
+        product: found || fallback,
+        quantity: item.quantity,
+        unitPrice: item.unit_price ?? item.unitPrice ?? 0,
+        ...(cutLen ? { isCut: true, cutLengthInches: cutLen } : {}),
+      };
       });
     const rebuiltServices: ServiceCartItem[] = allItems
       .filter((item: any) => item.itemType === 'service')
@@ -624,6 +631,11 @@ export default function SalesPage() {
             ...editSale.cart.map(c => ({
               productId: c.product._id, productName: c.product.name,
               quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
+              ...(c.isCut && c.cutLengthInches ? {
+                cutLengthInches: c.cutLengthInches,
+                unitLengthInches: c.product.unitLengthInches,
+                isCut: true,
+              } : {}),
             })),
             ...editSale.serviceCart.map(s => ({
               productId: null, productName: s.serviceName, itemType: 'service',
@@ -1732,7 +1744,7 @@ export default function SalesPage() {
               </div>
 
               <p className="text-xs text-slate-400 text-center">
-                Submitting will lock today's sales and send this report for admin review.
+                This sends today's summary for admin review. You can still add or edit sales and resubmit anytime.
               </p>
             </div>
 
