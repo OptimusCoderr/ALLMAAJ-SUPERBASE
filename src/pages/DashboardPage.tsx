@@ -1,11 +1,11 @@
 // src/pages/DashboardPage.tsx
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { find, Collections } from '../lib/api';
+import { find, Collections, resetAllSalesData } from '../lib/api';
 import type { Sale, DailyReport, Debtor } from '../lib/types';
 import {
   TrendingUp, TrendingDown, Clock, CheckCircle, DollarSign,
-  CreditCard, Package, HandCoins, XCircle, ArrowUpDown, RefreshCw,
+  CreditCard, Package, HandCoins, XCircle, ArrowUpDown, RefreshCw, Trash2,
 } from 'lucide-react';
 
 interface Stats {
@@ -44,6 +44,10 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<Stats>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   useEffect(() => { fetchStats(); }, [user]);
 
@@ -105,6 +109,22 @@ export default function DashboardPage() {
     else setLoading(false);
   }
 
+  async function handleReset() {
+    if (resetConfirmText !== 'RESET') return;
+    setResetting(true);
+    setResetError(null);
+    try {
+      await resetAllSalesData();
+      setStats(EMPTY);
+      setShowResetModal(false);
+      setResetConfirmText('');
+    } catch (err: any) {
+      setResetError(err?.message ?? 'Reset failed. Please try again.');
+    } finally {
+      setResetting(false);
+    }
+  }
+
   const fmt = (n: number) =>
     `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -126,15 +146,82 @@ export default function DashboardPage() {
             {new Date().toLocaleDateString('en-NG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
-        <button
-          onClick={() => fetchStats(true)}
-          disabled={refreshing}
-          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors shrink-0"
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {user?.role === 'admin' && (
+            <button
+              onClick={() => { setShowResetModal(true); setResetConfirmText(''); setResetError(null); }}
+              className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 hover:border-red-400 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Reset Data
+            </button>
+          )}
+          <button
+            onClick={() => fetchStats(true)}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* ── Reset Confirmation Modal (admin only) ── */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-100 p-2.5 rounded-full">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h2 className="font-bold text-slate-800 text-lg">Reset All Sales Data</h2>
+                <p className="text-xs text-red-500 font-medium">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <p className="text-slate-600 text-sm leading-relaxed">
+              This will permanently delete <strong>all sales, expenses, debtors, and daily reports</strong> across every branch. User accounts and products will not be affected.
+            </p>
+
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+              Type <span className="font-mono font-bold">RESET</span> below to confirm:
+            </div>
+
+            <input
+              type="text"
+              value={resetConfirmText}
+              onChange={e => setResetConfirmText(e.target.value)}
+              placeholder="Type RESET to confirm"
+              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-red-400"
+              autoFocus
+            />
+
+            {resetError && (
+              <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{resetError}</p>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => { setShowResetModal(false); setResetConfirmText(''); setResetError(null); }}
+                disabled={resetting}
+                className="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReset}
+                disabled={resetConfirmText !== 'RESET' || resetting}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              >
+                {resetting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                {resetting ? 'Resetting…' : 'Reset All Data'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Top stat cards ── */}
       {loading ? (

@@ -405,4 +405,24 @@ router.get('/analytics/dashboard', async (req: Request, res: Response) => {
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
+// POST /api/reports/reset-all  (admin only)
+// Deletes all sales, expenses, debtors and daily reports data.
+router.post('/reset-all', adminOnly, async (req: Request, res: Response) => {
+  try {
+    // Order matters: child rows must be removed before parents to satisfy FK constraints.
+    // debtors.sale_id → sales, sales.report_id → daily_reports
+    await sql`DELETE FROM debtors`;
+    await sql`UPDATE sales SET report_id = NULL`;
+    await sql`DELETE FROM daily_reports`;
+    await sql`DELETE FROM expenses`;
+    await sql`DELETE FROM sales`;
+
+    console.log(`[RESET] All sales data reset by admin user ${req.userId}`);
+    return sendResponse(res, 200, 'All sales and report data has been reset', {
+      resetAt: new Date().toISOString(),
+      resetBy: req.userId,
+    });
+  } catch (err) { console.error('[POST /reports/reset-all]', err); return sendError(res, 500, 'Server error', err); }
+});
+
 export default router;
