@@ -72,7 +72,7 @@ export default function Layout() {
             className={navLinkClass}
           >
             {item.icon}
-            <span className="flex-1 text-left">{item.label}</span>
+            <span className="flex-1 text-left truncate">{item.label}</span>
           </NavLink>
         ))}
       </nav>
@@ -116,7 +116,7 @@ export default function Layout() {
       )}
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="lg:hidden flex items-center gap-3 p-4 bg-white border-b border-slate-200">
+          <div className="lg:hidden flex items-center gap-3 p-3 sm:p-4 bg-white border-b border-slate-200">
           <button onClick={() => setSidebarOpen(true)} className="text-slate-600 hover:text-slate-900">
             <Menu className="w-6 h-6" />
           </button>

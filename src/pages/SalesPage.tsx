@@ -1521,8 +1521,8 @@ export default function SalesPage() {
       {/* ── Daily Report Confirmation Modal ────────────────────────────────────── */}
       {reportConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
                   <FileText className="w-5 h-5 text-amber-600" />
@@ -1538,7 +1538,7 @@ export default function SalesPage() {
               </button>
             </div>
 
-            <div className="p-6 space-y-3">
+            <div className="p-4 sm:p-6 space-y-3">
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Sales Breakdown</p>
               <div className="space-y-2">
                 <div className="flex justify-between items-center py-2 border-b border-slate-100">
@@ -1591,7 +1591,7 @@ export default function SalesPage() {
               </p>
             </div>
 
-            <div className="flex gap-3 p-6 border-t border-slate-100">
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
               <button onClick={() => setReportConfirmOpen(false)}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
@@ -1608,8 +1608,8 @@ export default function SalesPage() {
       {/* ── Edit Sale Modal ──────────────────────────────────────────────────── */}
       {editSale && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <div>
                 <h2 className="text-lg font-bold text-slate-800">Edit Sale</h2>
                 <p className="text-xs text-slate-400 mt-0.5">Changes will sync linked debtor balances automatically.</p>
@@ -1619,7 +1619,7 @@ export default function SalesPage() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-5">
+            <div className="p-4 sm:p-6 space-y-5">
               {editSale.error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{editSale.error}</div>
               )}
@@ -1859,7 +1859,7 @@ export default function SalesPage() {
                 <span className="text-xl font-extrabold text-amber-600">{fmt(eTotal)}</span>
               </div>
             </div>
-            <div className="flex gap-3 p-6 border-t border-slate-100">
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
               <button onClick={() => setEditSale(null)} disabled={editSale.loading}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
@@ -1877,8 +1877,8 @@ export default function SalesPage() {
       {/* ── Edit Expense Modal ───────────────────────────────────────────────── */}
       {editExpense && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <h2 className="text-lg font-bold text-slate-800">Edit Expense</h2>
               <button 
                 onClick={() => setEditExpense(null)}
@@ -1888,7 +1888,7 @@ export default function SalesPage() {
               </button>
             </div>
             
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4">
               {editExpense.error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
                   {editExpense.error}

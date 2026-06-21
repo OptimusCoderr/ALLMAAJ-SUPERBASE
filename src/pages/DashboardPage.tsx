@@ -158,13 +158,13 @@ export default function DashboardPage() {
   const today = new Date().toISOString().split('T')[0];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
 
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-bold text-slate-800">
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-800">
               Welcome back, {user?.fullName?.split(' ')[0] || 'there'}
             </h1>
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${ROLE_BADGE[user?.role ?? ''] ?? 'bg-slate-100 text-slate-600'}`}>
@@ -180,19 +180,20 @@ export default function DashboardPage() {
           {user?.role === 'admin' && (
             <button
               onClick={openResetModal}
-              className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 hover:border-red-400 hover:bg-red-50 transition-colors"
+              className="flex items-center gap-1.5 text-xs sm:text-sm text-red-500 hover:text-red-700 px-2 sm:px-3 py-1.5 rounded-lg border border-red-200 hover:border-red-400 hover:bg-red-50 transition-colors"
             >
-              <Trash2 className="w-4 h-4" />
-              Reset Data
+              <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">Reset Data</span>
+              <span className="sm:hidden">Reset</span>
             </button>
           )}
           <button
             onClick={() => fetchStats(true)}
             disabled={refreshing}
-            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
+            className="flex items-center gap-1.5 text-xs sm:text-sm text-slate-500 hover:text-slate-700 px-2 sm:px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
           >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
+            <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
       </div>
@@ -213,7 +214,7 @@ export default function DashboardPage() {
       {/* ── Reset Confirmation Modal (admin only) ── */}
       {showResetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-[95vw] sm:max-w-md p-4 sm:p-6 space-y-4">
 
             {/* Modal header */}
             <div className="flex items-center gap-3">
@@ -293,13 +294,13 @@ export default function DashboardPage() {
 
       {/* ── Top stat cards ── */}
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
           {[...Array(5)].map((_, i) => (
             <div key={i} className="bg-white rounded-xl p-6 animate-pulse h-28 border border-slate-100" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
           {[
             { label: "Today's Sales",    value: fmt(stats.todaySales),    icon: <TrendingUp className="w-5 h-5" />,  bg: 'bg-amber-500' },
             { label: 'Cash Sales',       value: fmt(stats.todayCash),     icon: <DollarSign className="w-5 h-5" />,  bg: 'bg-green-500' },
@@ -312,11 +313,11 @@ export default function DashboardPage() {
               bg:    stats.todayNet >= 0 ? 'bg-emerald-500' : 'bg-rose-600',
             },
           ].map(c => (
-            <div key={c.label} className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+            <div key={c.label} className="bg-white rounded-xl p-3 sm:p-5 shadow-sm border border-slate-100">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-slate-500 text-xs truncate">{c.label}</p>
-                  <p className="text-lg font-bold text-slate-800 mt-1 truncate">{c.value}</p>
+                  <p className="text-sm sm:text-lg font-bold text-slate-800 mt-1 truncate">{c.value}</p>
                 </div>
                 <div className={`${c.bg} p-2 rounded-lg text-white shrink-0`}>{c.icon}</div>
               </div>
@@ -327,7 +328,7 @@ export default function DashboardPage() {
 
       {/* ── Summary strip ── */}
       {!loading && (
-        <div className="bg-white rounded-xl px-5 py-4 shadow-sm border border-slate-100 flex flex-wrap items-center gap-6">
+        <div className="bg-white rounded-xl px-4 sm:px-5 py-3 sm:py-4 shadow-sm border border-slate-100 flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-6">
           <div className="flex items-center gap-2">
             <ArrowUpDown className="w-4 h-4 text-slate-400" />
             <span className="text-slate-500 text-sm">Transactions today:</span>
@@ -352,16 +353,15 @@ export default function DashboardPage() {
 
       {/* ── Bottom cards ── */}
       {loading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {[...Array(2)].map((_, i) => (
             <div key={i} className="bg-white rounded-xl p-6 animate-pulse h-52 border border-slate-100" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {/* Report Status */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+           <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
             <h3 className="font-semibold text-slate-800 mb-4">Report Status (Last 7 Days)</h3>
             <div className="space-y-4">
               {(() => {
@@ -392,7 +392,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Debtors Overview */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
             <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
               <HandCoins className="w-5 h-5 text-amber-500" />
               Debtors Overview
