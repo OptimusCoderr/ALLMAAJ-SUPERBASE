@@ -305,14 +305,22 @@ export default function SalesPage() {
       if (!cut || cut < 8.5) { setError('Minimum cut size is 8.5 inches'); return; }
       if (unitLen > 0 && cut > unitLen) { setError(`Cut (${cut}") exceeds full unit length (${unitLen}")`); return; }
       const deductFraction = unitLen > 0 ? cut / unitLen : 1;
+      // account for cuts already in cart for this product
+      const alreadyDeducted = cart
+        .filter(c => c.product._id === selectedProduct)
+        .reduce((sum, c) => {
+          if (c.isCut && c.cutLengthInches && unitLen > 0) return sum + c.cutLengthInches / unitLen;
+          return sum + c.quantity;
+        }, 0);
       const available = getStock(selectedProduct);
-      if (deductFraction > available) {
-        setError(`Not enough stock for "${product.name}". Available: ${(available * unitLen).toFixed(1)}" total`);
+      if (alreadyDeducted + deductFraction > available) {
+        const remainingInches = Math.max(0, (available - alreadyDeducted) * unitLen);
+        setError(`Not enough stock for "${product.name}". Remaining available: ${remainingInches.toFixed(1)}"`);
         return;
       }
       setCart([...cart, { product, quantity: 1, unitPrice: price || product.unitPrice, isCut: true, cutLengthInches: cut }]);
-      setSelectedProduct(''); setProductSearch(''); setQty(1); setPrice(0);
-      setCutLength(''); setIsCutMode(false); setError('');
+      // keep product selected and cut mode on so user can add another cut immediately
+      setCutLength(''); setError('');
       return;
     }
 
@@ -965,17 +973,29 @@ export default function SalesPage() {
                       const unitLen = product?.unitLengthInches ?? 0;
                       const cut = parseFloat(cutLength) || 0;
                       const leftover = unitLen > 0 && cut > 0 ? unitLen - cut : null;
+                      // remaining stock after accounting for cuts already in cart
+                      const alreadyDeductedInches = cart
+                        .filter(c => c.product._id === selectedProduct && c.isCut && c.cutLengthInches)
+                        .reduce((s, c) => s + (c.cutLengthInches ?? 0), 0);
+                      const stockInches = unitLen > 0 ? getStock(selectedProduct) * unitLen : null;
+                      const remainingInches = stockInches != null ? stockInches - alreadyDeductedInches : null;
                       return (
                         <div className="space-y-2">
+                          {alreadyDeductedInches > 0 && remainingInches !== null && (
+                            <div className="text-xs bg-slate-100 text-slate-600 rounded-lg px-3 py-1.5 flex items-center justify-between">
+                              <span>Already in cart: {alreadyDeductedInches.toFixed(1)}" ({cart.filter(c => c.product._id === selectedProduct && c.isCut).length} cut{cart.filter(c => c.product._id === selectedProduct && c.isCut).length > 1 ? 's' : ''})</span>
+                              <span className="font-semibold text-amber-700">Remaining: {remainingInches.toFixed(1)}"</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
                               min="8.5"
                               step="0.1"
-                              max={unitLen || undefined}
+                              max={remainingInches != null ? remainingInches : (unitLen || undefined)}
                               value={cutLength}
                               onChange={e => setCutLength(e.target.value)}
-                              placeholder={`Cut length in inches (min 8.5, max ${unitLen})`}
+                              placeholder={`Cut length in inches (min 8.5${remainingInches != null ? `, max ${remainingInches.toFixed(1)}` : ''})`}
                               className="flex-1 px-3 py-2 border border-amber-300 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
                             />
                             <span className="text-sm text-amber-700 font-medium">inches</span>
