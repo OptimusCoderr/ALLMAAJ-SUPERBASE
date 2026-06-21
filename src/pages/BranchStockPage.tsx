@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { find, Collections, getAuthToken } from '../lib/api';
 import type { Branch, Product } from '../lib/types';
@@ -118,6 +118,19 @@ export default function BranchStockPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState('');
 
+  // Product search state — shared pattern for Request & Add forms
+  const [reqSearch, setReqSearch] = useState('');
+  const [reqCategory, setReqCategory] = useState('all');
+  const [reqSuggestions, setReqSuggestions] = useState<Product[]>([]);
+  const [showReqDropdown, setShowReqDropdown] = useState(false);
+  const reqInputRef = useRef<HTMLInputElement>(null);
+
+  const [addSearch, setAddSearch] = useState('');
+  const [addCategory, setAddCategory] = useState('all');
+  const [addSuggestions, setAddSuggestions] = useState<Product[]>([]);
+  const [showAddDropdown, setShowAddDropdown] = useState(false);
+  const addInputRef = useRef<HTMLInputElement>(null);
+
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
@@ -192,6 +205,7 @@ export default function BranchStockPage() {
       });
       setShowReqForm(false);
       setReqForm({ productId: '', quantity: 1, notes: '' });
+      resetReqSearch();
       fetchMyRequests();
       setTab('my-requests');
       showToast('Stock request submitted successfully');
@@ -211,6 +225,7 @@ export default function BranchStockPage() {
       });
       setShowAddForm(false);
       setAddForm({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
+      resetAddSearch();
       fetchStock();
       showToast('Stock added successfully');
     } catch (err: any) { setAddError(err.message || 'Failed to add stock'); }
@@ -270,10 +285,82 @@ export default function BranchStockPage() {
     } catch (err: any) { alert(err.message || 'Failed to remove stock item'); }
   }
 
+  // ── Product search helpers (for Request & Add modals) ──────────────────────
+
+  function getProductMatches(search: string, category: string): Product[] {
+    if (!search.trim()) return [];
+    const q = search.toLowerCase();
+    const base = category !== 'all' ? products.filter(p => p.category === category) : products;
+    return base.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.sku ?? '').toLowerCase().includes(q) ||
+      (p.category ?? '').toLowerCase().includes(q)
+    );
+  }
+
+  function handleReqSearchChange(value: string) {
+    setReqSearch(value);
+    setReqForm(f => ({ ...f, productId: '' }));
+    const matches = value.trim() ? getProductMatches(value, reqCategory) : [];
+    setReqSuggestions(matches);
+    setShowReqDropdown(value.trim().length > 0);
+  }
+
+  function handleReqCategoryChange(cat: string) {
+    setReqCategory(cat);
+    setReqSearch('');
+    setReqForm(f => ({ ...f, productId: '' }));
+    setReqSuggestions([]);
+    setShowReqDropdown(false);
+  }
+
+  function selectReqProduct(p: Product) {
+    setReqForm(f => ({ ...f, productId: p._id }));
+    setReqSearch(p.name);
+    setReqSuggestions([]);
+    setShowReqDropdown(false);
+  }
+
+  function handleAddSearchChange(value: string) {
+    setAddSearch(value);
+    setAddForm(f => ({ ...f, productId: '' }));
+    const matches = value.trim() ? getProductMatches(value, addCategory) : [];
+    setAddSuggestions(matches);
+    setShowAddDropdown(value.trim().length > 0);
+  }
+
+  function handleAddCategoryChange(cat: string) {
+    setAddCategory(cat);
+    setAddSearch('');
+    setAddForm(f => ({ ...f, productId: '' }));
+    setAddSuggestions([]);
+    setShowAddDropdown(false);
+  }
+
+  function selectAddProduct(p: Product) {
+    setAddForm(f => ({ ...f, productId: p._id }));
+    setAddSearch(p.name);
+    setAddSuggestions([]);
+    setShowAddDropdown(false);
+  }
+
+  function resetReqSearch() {
+    setReqSearch(''); setReqCategory('all'); setReqSuggestions([]); setShowReqDropdown(false);
+  }
+
+  function resetAddSearch() {
+    setAddSearch(''); setAddCategory('all'); setAddSuggestions([]); setShowAddDropdown(false);
+  }
+
   function toggleSort(col: typeof sortBy) {
     if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortBy(col); setSortDir('asc'); }
   }
+
+  const productCategories = useMemo(() =>
+    ['all', ...Array.from(new Set(products.filter(p => p.category).map(p => p.category as string))).sort()],
+    [products]
+  );
 
   const filtered = useMemo(() => {
     let items = stock.filter(s =>
@@ -335,12 +422,12 @@ export default function BranchStockPage() {
         </div>
         <div className="flex gap-2">
           {isAdmin && (
-            <button onClick={() => { setShowAddForm(true); setAddError(''); }}
+            <button onClick={() => { setShowAddForm(true); setAddError(''); resetAddSearch(); }}
               className="flex items-center gap-2 px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
               <Plus className="w-4 h-4" />Add Stock
             </button>
           )}
-          <button onClick={() => { setShowReqForm(true); setReqError(''); }}
+          <button onClick={() => { setShowReqForm(true); setReqError(''); resetReqSearch(); }}
             className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
             <Plus className="w-4 h-4" />{isAdmin ? 'Add Request' : 'Request Stock'}
           </button>
@@ -672,7 +759,7 @@ export default function BranchStockPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-semibold text-slate-800">Request Stock</h3>
-              <button onClick={() => setShowReqForm(false)}><X className="w-5 h-5 text-slate-400" /></button>
+              <button onClick={() => { setShowReqForm(false); resetReqSearch(); }}><X className="w-5 h-5 text-slate-400" /></button>
             </div>
             {reqError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{reqError}</div>}
             <form onSubmit={submitRequest} className="space-y-4">
@@ -687,11 +774,80 @@ export default function BranchStockPage() {
               )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
-                <select value={reqForm.productId} onChange={e => setReqForm(f => ({ ...f, productId: e.target.value }))} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                  <option value="">Select product...</option>
-                  {products.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
-                </select>
+
+                {/* Category filter pills */}
+                {productCategories.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {productCategories.map(cat => (
+                      <button key={cat} type="button" onClick={() => handleReqCategoryChange(cat)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                          reqCategory === cat
+                            ? 'bg-amber-500 text-white border-amber-500'
+                            : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                        }`}>
+                        {cat === 'all' ? 'All' : cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Search input with autocomplete */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input
+                    ref={reqInputRef}
+                    type="text"
+                    value={reqSearch}
+                    onChange={e => handleReqSearchChange(e.target.value)}
+                    onFocus={() => { if (reqSuggestions.length > 0) setShowReqDropdown(true); }}
+                    onBlur={() => setTimeout(() => setShowReqDropdown(false), 150)}
+                    placeholder="Type to search products..."
+                    className={`w-full pl-9 pr-9 py-2.5 border rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+                      reqForm.productId ? 'border-amber-400 bg-amber-50/30' : 'border-slate-200'
+                    }`}
+                  />
+                  {reqSearch && (
+                    <button type="button"
+                      onClick={() => { setReqSearch(''); setReqForm(f => ({ ...f, productId: '' })); setReqSuggestions([]); setShowReqDropdown(false); reqInputRef.current?.focus(); }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+
+                  {/* Dropdown suggestions */}
+                  {showReqDropdown && reqSuggestions.length > 0 && (
+                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+                      {reqSuggestions.map(p => {
+                        const currentQty = stock.find(s => s.productId === p._id)?.quantity ?? null;
+                        return (
+                          <button key={p._id} type="button" onMouseDown={() => selectReqProduct(p)}
+                            className="w-full text-left px-3 py-2.5 flex items-center justify-between gap-3 border-b border-slate-100 last:border-0 hover:bg-amber-50 transition-colors">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                              {p.category && <p className="text-xs text-amber-600 font-medium">{p.category}</p>}
+                            </div>
+                            {currentQty !== null && (
+                              <span className={`text-xs font-semibold shrink-0 ${currentQty <= 5 ? 'text-red-500' : currentQty <= 20 ? 'text-amber-500' : 'text-green-600'}`}>
+                                {currentQty} in stock
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {showReqDropdown && reqSearch.trim() && reqSuggestions.length === 0 && (
+                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 text-center text-sm text-slate-400">
+                      No products found for "{reqSearch}"
+                    </div>
+                  )}
+                </div>
+
+                {reqForm.productId && (
+                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                    <Check className="w-3 h-3" />{products.find(p => p._id === reqForm.productId)?.name} selected
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
@@ -706,7 +862,7 @@ export default function BranchStockPage() {
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
               </div>
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowReqForm(false)}
+                <button type="button" onClick={() => { setShowReqForm(false); resetReqSearch(); }}
                   className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
                 <button type="submit" disabled={reqSaving}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
@@ -725,7 +881,7 @@ export default function BranchStockPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-lg font-semibold text-slate-800">Add Stock to Branch</h3>
-              <button onClick={() => setShowAddForm(false)}><X className="w-5 h-5 text-slate-400" /></button>
+              <button onClick={() => { setShowAddForm(false); resetAddSearch(); }}><X className="w-5 h-5 text-slate-400" /></button>
             </div>
             <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
               Adding directly to: <span className="font-semibold">{branchName}</span>
@@ -741,11 +897,73 @@ export default function BranchStockPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
-                <select value={addForm.productId} onChange={e => setAddForm(f => ({ ...f, productId: e.target.value }))} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
-                  <option value="">Select product...</option>
-                  {products.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
-                </select>
+
+                {/* Category filter pills */}
+                {productCategories.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {productCategories.map(cat => (
+                      <button key={cat} type="button" onClick={() => handleAddCategoryChange(cat)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-all ${
+                          addCategory === cat
+                            ? 'bg-blue-500 text-white border-blue-500'
+                            : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                        }`}>
+                        {cat === 'all' ? 'All' : cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Search input with autocomplete */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input
+                    ref={addInputRef}
+                    type="text"
+                    value={addSearch}
+                    onChange={e => handleAddSearchChange(e.target.value)}
+                    onFocus={() => { if (addSuggestions.length > 0) setShowAddDropdown(true); }}
+                    onBlur={() => setTimeout(() => setShowAddDropdown(false), 150)}
+                    placeholder="Type to search products..."
+                    className={`w-full pl-9 pr-9 py-2.5 border rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      addForm.productId ? 'border-blue-400 bg-blue-50/30' : 'border-slate-200'
+                    }`}
+                  />
+                  {addSearch && (
+                    <button type="button"
+                      onClick={() => { setAddSearch(''); setAddForm(f => ({ ...f, productId: '' })); setAddSuggestions([]); setShowAddDropdown(false); addInputRef.current?.focus(); }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+
+                  {/* Dropdown suggestions */}
+                  {showAddDropdown && addSuggestions.length > 0 && (
+                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+                      {addSuggestions.map(p => (
+                        <button key={p._id} type="button" onMouseDown={() => selectAddProduct(p)}
+                          className="w-full text-left px-3 py-2.5 flex items-center justify-between gap-3 border-b border-slate-100 last:border-0 hover:bg-blue-50 transition-colors">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
+                            {p.category && <p className="text-xs text-blue-600 font-medium">{p.category}</p>}
+                          </div>
+                          <span className="text-xs text-slate-400 shrink-0">{p.unit}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showAddDropdown && addSearch.trim() && addSuggestions.length === 0 && (
+                    <div className="absolute z-30 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-4 py-3 text-center text-sm text-slate-400">
+                      No products found for "{addSearch}"
+                    </div>
+                  )}
+                </div>
+
+                {addForm.productId && (
+                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                    <Check className="w-3 h-3" />{products.find(p => p._id === addForm.productId)?.name} selected
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
@@ -772,7 +990,7 @@ export default function BranchStockPage() {
                 </div>
               )}
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowAddForm(false)}
+                <button type="button" onClick={() => { setShowAddForm(false); resetAddSearch(); }}
                   className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
                 <button type="submit" disabled={addSaving}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
