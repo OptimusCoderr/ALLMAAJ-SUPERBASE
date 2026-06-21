@@ -205,9 +205,34 @@ router.put('/:id', adminOnly, async (req: Request, res: Response) => {
 
 router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
   try {
+    const [counts] = await sql`
+      SELECT
+        (SELECT COUNT(*) FROM sales          WHERE branch_id = ${req.params.id})::int AS sales_count,
+        (SELECT COUNT(*) FROM daily_reports  WHERE branch_id = ${req.params.id})::int AS reports_count,
+        (SELECT COUNT(*) FROM stock_requests WHERE branch_id = ${req.params.id})::int AS requests_count,
+        (SELECT COUNT(*) FROM debtors        WHERE branch_id = ${req.params.id})::int AS debtors_count,
+        (SELECT COUNT(*) FROM expenses       WHERE branch_id = ${req.params.id})::int AS expenses_count
+    `;
+
+    const blocking: string[] = [];
+    if (counts.sales_count    > 0) blocking.push(`${counts.sales_count} sale${counts.sales_count !== 1 ? 's' : ''}`);
+    if (counts.reports_count  > 0) blocking.push(`${counts.reports_count} daily report${counts.reports_count !== 1 ? 's' : ''}`);
+    if (counts.requests_count > 0) blocking.push(`${counts.requests_count} stock request${counts.requests_count !== 1 ? 's' : ''}`);
+    if (counts.debtors_count  > 0) blocking.push(`${counts.debtors_count} debtor record${counts.debtors_count !== 1 ? 's' : ''}`);
+    if (counts.expenses_count > 0) blocking.push(`${counts.expenses_count} expense${counts.expenses_count !== 1 ? 's' : ''}`);
+
+    if (blocking.length > 0) {
+      return sendError(res, 409, `Cannot delete: this branch has ${blocking.join(', ')}. Deactivate it instead to preserve the records.`);
+    }
+
     await sql`DELETE FROM branches WHERE id = ${req.params.id}`;
     return sendResponse(res, 200, 'Branch deleted');
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err: any) {
+    if (err.code === '23503') {
+      return sendError(res, 409, 'Cannot delete: this branch has linked records. Deactivate it instead.');
+    }
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 router.post('/:id/stock/add', adminOnly, async (req: Request, res: Response) => {
