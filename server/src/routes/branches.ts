@@ -205,9 +205,33 @@ router.put('/:id', adminOnly, async (req: Request, res: Response) => {
 
 router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
   try {
+    const [counts] = await sql`
+      SELECT
+        (SELECT COUNT(*) FROM sales          WHERE branch_id = ${req.params.id})::int AS sales_count,
+        (SELECT COUNT(*) FROM daily_reports  WHERE branch_id = ${req.params.id})::int AS reports_count,
+        (SELECT COUNT(*) FROM stock_requests WHERE branch_id = ${req.params.id})::int AS requests_count,
+        (SELECT COUNT(*) FROM debtors        WHERE branch_id = ${req.params.id})::int AS debtors_count,
+        (SELECT COUNT(*) FROM expenses       WHERE branch_id = ${req.params.id})::int AS expenses_count
+    `;
+
+    const blocking: string[] = [];
+    if (counts.sales_count    > 0) blocking.push(`${counts.sales_count} sale${counts.sales_count !== 1 ? 's' : ''}`);
+    if (counts.reports_count  > 0) blocking.push(`${counts.reports_count} daily report${counts.reports_count !== 1 ? 's' : ''}`);
+    if (counts.requests_count > 0) blocking.push(`${counts.requests_count} stock request${counts.requests_count !== 1 ? 's' : ''}`);
+    if (counts.debtors_count  > 0) blocking.push(`${counts.debtors_count} debtor record${counts.debtors_count !== 1 ? 's' : ''}`);
+    if (counts.expenses_count > 0) blocking.push(`${counts.expenses_count} expense${counts.expenses_count !== 1 ? 's' : ''}`);
+
+    if (blocking.length > 0) {
+      return sendError(res, 409, `Cannot delete: this branch has ${blocking.join(', ')}. Deactivate it instead to preserve the records.`);
+    }
     await sql`DELETE FROM branches WHERE id = ${req.params.id}`;
     return sendResponse(res, 200, 'Branch deleted');
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+    } catch (err: any) {
+    if (err.code === '23503') {
+      return sendError(res, 409, 'Cannot delete: this branch has linked records. Deactivate it instead.');
+    }
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 router.post('/:id/stock/add', adminOnly, async (req: Request, res: Response) => {
@@ -234,5 +258,37 @@ router.post('/:id/stock/add', adminOnly, async (req: Request, res: Response) => 
     return sendResponse(res, 200, 'Stock added');
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
+
+
+// Set stock quantity directly (absolute value, not additive) — admin only
+router.put('/:id/stock/:productId', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { quantity } = req.body;
+    if (quantity === undefined || quantity === null) return sendError(res, 400, 'quantity is required');
+    if (Number(quantity) < 0) return sendError(res, 400, 'quantity cannot be negative');
+
+    await sql`
+      INSERT INTO branch_stock (branch_id, product_id, quantity)
+      VALUES (${req.params.id}, ${req.params.productId}, ${Number(quantity)})
+      ON CONFLICT (branch_id, product_id)
+      DO UPDATE SET quantity = ${Number(quantity)}, updated_at = now()
+    `;
+    return sendResponse(res, 200, 'Stock updated');
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+// Remove a product from branch stock entirely — admin only
+router.delete('/:id/stock/:productId', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const result = await sql`
+      DELETE FROM branch_stock
+      WHERE branch_id = ${req.params.id} AND product_id = ${req.params.productId}
+      RETURNING product_id
+    `;
+    if (result.length === 0) return sendError(res, 404, 'Stock item not found');
+    return sendResponse(res, 200, 'Stock item removed');
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
 
 export default router;
