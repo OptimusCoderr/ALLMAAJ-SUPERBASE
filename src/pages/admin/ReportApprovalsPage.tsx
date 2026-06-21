@@ -833,7 +833,11 @@ function ReviewModal({
                           const paid    = s.amountPaid ?? (s.paymentMethod === 'unpaid' ? 0 : s.totalAmount);
                           const items   = Array.isArray(s.items) ? s.items : [];
                           const itemStr = items
-                            .map((it: any) => `${it.product_name ?? it.productName ?? ''}×${it.quantity}`)
+                            .map((it: any) => {
+                              const name = it.product_name ?? it.productName ?? '';
+                              const cutInches = it.cutLengthInches ?? it.cut_length_inches;
+                              return cutInches ? `${name} (${cutInches}" cut)` : `${name}×${it.quantity}`;
+                            })
                             .filter(Boolean).join(', ');
                           return (
                             <tr key={s._id} className={`${balance > 0 ? 'bg-red-50/30' : ''} hover:bg-slate-50/50`}>

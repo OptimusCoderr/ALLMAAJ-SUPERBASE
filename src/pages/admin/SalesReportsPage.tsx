@@ -510,16 +510,25 @@ export default function SalesReportsPage() {
                           <span className="text-slate-400">—</span>
                         ) : (
                           <ul className="space-y-1">
-                            {items.map((item: any, i: number) => (
-                              <li key={i} className="flex items-center gap-1.5">
-                                <span className="font-medium text-slate-700">
-                                  {item.product_name || item.productName || 'Unknown'}
-                                </span>
-                                <span className="text-slate-400">×</span>
-                                <span className="font-bold text-amber-600">{item.quantity}</span>
-                                <span className="text-slate-400 text-[10px]">@ {fmt(item.unit_price ?? item.unitPrice ?? 0)}</span>
-                              </li>
-                            ))}
+                            {items.map((item: any, i: number) => {
+                              const cutInches = item.cutLengthInches ?? item.cut_length_inches;
+                              return (
+                                <li key={i} className="flex items-center gap-1.5">
+                                  <span className="font-medium text-slate-700">
+                                    {item.product_name || item.productName || 'Unknown'}
+                                  </span>
+                                  {cutInches ? (
+                                    <span className="font-bold text-amber-600">({cutInches}" cut)</span>
+                                  ) : (
+                                    <>
+                                      <span className="text-slate-400">×</span>
+                                      <span className="font-bold text-amber-600">{item.quantity}</span>
+                                    </>
+                                  )}
+                                  <span className="text-slate-400 text-[10px]">@ {fmt(item.unit_price ?? item.unitPrice ?? 0)}</span>
+                                </li>
+                              );
+                            })}
                           </ul>
                         )}
                       </td>
@@ -716,15 +725,24 @@ export default function SalesReportsPage() {
                       <td className="px-4 py-3 text-xs">
                         {saleItems.length > 0 ? (
                           <ul className="space-y-0.5">
-                            {saleItems.map((item, i) => (
-                              <li key={i} className="flex items-center gap-1.5">
-                                <span className="font-medium text-slate-700">
-                                  {(item as any).product_name || (item as any).productName || item.product_id}
-                                </span>
-                                <span className="text-slate-400">×</span>
-                                <span className="font-bold text-amber-600">{item.quantity}</span>
-                              </li>
-                            ))}
+                            {saleItems.map((item, i) => {
+                              const cutInches = (item as any).cutLengthInches ?? (item as any).cut_length_inches;
+                              return (
+                                <li key={i} className="flex items-center gap-1.5">
+                                  <span className="font-medium text-slate-700">
+                                    {(item as any).product_name || (item as any).productName || item.product_id}
+                                  </span>
+                                  {cutInches ? (
+                                    <span className="font-bold text-amber-600">({cutInches}" cut)</span>
+                                  ) : (
+                                    <>
+                                      <span className="text-slate-400">×</span>
+                                      <span className="font-bold text-amber-600">{item.quantity}</span>
+                                    </>
+                                  )}
+                                </li>
+                              );
+                            })}
                           </ul>
                         ) : d.notes ? (
                           <span className="text-slate-400 text-[11px]">{d.notes}</span>
