@@ -235,4 +235,34 @@ router.post('/:id/stock/add', adminOnly, async (req: Request, res: Response) => 
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
+// Set stock quantity directly (absolute value, not additive) — admin only
+router.put('/:id/stock/:productId', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { quantity } = req.body;
+    if (quantity === undefined || quantity === null) return sendError(res, 400, 'quantity is required');
+    if (Number(quantity) < 0) return sendError(res, 400, 'quantity cannot be negative');
+
+    await sql`
+      INSERT INTO branch_stock (branch_id, product_id, quantity)
+      VALUES (${req.params.id}, ${req.params.productId}, ${Number(quantity)})
+      ON CONFLICT (branch_id, product_id)
+      DO UPDATE SET quantity = ${Number(quantity)}, updated_at = now()
+    `;
+    return sendResponse(res, 200, 'Stock updated');
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+// Remove a product from branch stock entirely — admin only
+router.delete('/:id/stock/:productId', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const result = await sql`
+      DELETE FROM branch_stock
+      WHERE branch_id = ${req.params.id} AND product_id = ${req.params.productId}
+      RETURNING product_id
+    `;
+    if (result.length === 0) return sendError(res, 404, 'Stock item not found');
+    return sendResponse(res, 200, 'Stock item removed');
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
 export default router;

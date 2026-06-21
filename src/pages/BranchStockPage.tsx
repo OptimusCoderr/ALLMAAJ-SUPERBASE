@@ -5,6 +5,7 @@ import type { Branch, Product } from '../lib/types';
 import {
   Search, Package, Plus, X, Check, Clock, CheckCircle, XCircle,
   RefreshCw, TrendingDown, AlertTriangle, DollarSign, ArrowUpDown,
+  Pencil, Trash2,
 } from 'lucide-react';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -110,6 +111,12 @@ export default function BranchStockPage() {
   const [approveForm, setApproveForm] = useState({ sourceType: 'warehouse', warehouseId: '' });
   const [approveSaving, setApproveSaving] = useState(false);
   const [approveError, setApproveError] = useState('');
+
+  // Admin edit stock modal
+  const [editingStock, setEditingStock] = useState<StockItem | null>(null);
+  const [editForm, setEditForm] = useState({ quantity: 0 });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
 
   function showToast(msg: string, type: 'success' | 'error' = 'success') {
     setToast({ msg, type });
@@ -236,6 +243,31 @@ export default function BranchStockPage() {
       fetchRequests();
       showToast(`Rejected request for ${req.product_name}`, 'error');
     } catch (err: any) { alert(err.message || 'Failed to reject'); }
+  }
+
+  async function submitEditStock(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingStock) return;
+    setEditSaving(true); setEditError('');
+    try {
+      await authFetch(`/api/branches/${selectedBranch}/stock/${editingStock.productId}`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ quantity: editForm.quantity }),
+      });
+      setEditingStock(null);
+      fetchStock();
+      showToast('Stock quantity updated');
+    } catch (err: any) { setEditError(err.message || 'Failed to update stock'); }
+    setEditSaving(false);
+  }
+
+  async function deleteStockItem(item: StockItem) {
+    if (!confirm(`Remove "${item.product?.name}" from ${branchName} stock? This cannot be undone.`)) return;
+    try {
+      await authFetch(`/api/branches/${selectedBranch}/stock/${item.productId}`, token, { method: 'DELETE' });
+      fetchStock();
+      showToast(`Removed ${item.product?.name} from stock`, 'error');
+    } catch (err: any) { alert(err.message || 'Failed to remove stock item'); }
   }
 
   function toggleSort(col: typeof sortBy) {
@@ -463,6 +495,7 @@ export default function BranchStockPage() {
                     <th className="pb-3 font-medium text-slate-600 cursor-pointer select-none hover:text-slate-800" onClick={() => toggleSort('updated')}>
                       Updated<SortIcon col="updated" />
                     </th>
+                    {isAdmin && <th className="pb-3 font-medium text-slate-600 text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -484,6 +517,26 @@ export default function BranchStockPage() {
                       <td className="py-3 text-slate-400 text-xs" title={new Date(item.updatedAt).toLocaleString()}>
                         {relativeTime(item.updatedAt)}
                       </td>
+                      {isAdmin && (
+                        <td className="py-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => { setEditingStock(item); setEditForm({ quantity: item.quantity }); setEditError(''); }}
+                              title="Edit quantity"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => deleteStockItem(item)}
+                              title="Remove from stock"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -725,6 +778,48 @@ export default function BranchStockPage() {
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors">
                   {addSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
                   Add Stock
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Edit Stock Modal */}
+      {editingStock && isAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-semibold text-slate-800">Edit Stock Quantity</h3>
+              <button onClick={() => setEditingStock(null)}><X className="w-5 h-5 text-slate-400" /></button>
+            </div>
+            <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
+              <p className="font-medium">{editingStock.product?.name}</p>
+              <p className="text-slate-500 text-xs mt-0.5">
+                Current quantity: <span className="font-semibold">{editingStock.quantity.toLocaleString()} {editingStock.product?.unit}</span>
+              </p>
+              <p className="text-slate-400 text-xs mt-0.5">Branch: {branchName}</p>
+            </div>
+            {editError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{editError}</div>}
+            <form onSubmit={submitEditStock} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">New Quantity *</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={editForm.quantity}
+                  onChange={e => setEditForm({ quantity: Number(e.target.value) })}
+                  required autoFocus
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <p className="text-xs text-slate-400 mt-1">This sets the exact quantity (does not add to existing).</p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setEditingStock(null)}
+                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+                <button type="submit" disabled={editSaving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
+                  {editSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-4 h-4" />}
+                  Save Changes
                 </button>
               </div>
             </form>
