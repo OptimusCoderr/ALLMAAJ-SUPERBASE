@@ -752,7 +752,10 @@ export default function BranchStockPage() {
                           <td className="py-3 font-medium text-slate-800 pr-4">{item.product?.name}</td>
                           <td className="py-3 text-slate-500 hidden md:table-cell pr-4">{item.product?.category || '–'}</td>
                           <td className="py-3 text-slate-500 hidden sm:table-cell pr-4">{item.product?.unit}</td>
-                          <td className="py-3 text-right pr-4"><QtyBadge qty={item.quantity} /></td>
+                          <td className="py-3 text-right pr-4">
+                            <QtyBadge qty={item.quantity} />
+                            <div className="text-xs text-slate-500 mt-0.5">{fmt(item.product?.unitPrice || 0)}</div>
+                          </td>
                           <td className="py-3 text-right text-slate-600 hidden lg:table-cell pr-4">{fmt(item.product?.unitPrice || 0)}</td>
                           <td className="py-3 text-slate-400 text-xs hidden lg:table-cell pr-4"
                             title={new Date(item.updatedAt).toLocaleString()}>
