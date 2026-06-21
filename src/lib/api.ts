@@ -1,8 +1,8 @@
 /**
- * REST API client — talks to our Express/MongoDB backend.
+ * REST API client — talks to our Express backend.
  *
  * Base URL comes from VITE_API_URL (e.g. https://your-api.onrender.com).
- * The JWT is stored in sessionStorage (cleared on tab close) for XSS safety.
+ * The JWT is kept in memory (cleared on tab close) for XSS safety.
  */
 
 const BASE_URL =
@@ -29,17 +29,17 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
   if (!res.ok) {
-  const body = await res.json().catch(() => ({ message: res.statusText }));
-  const detail = Array.isArray(body?.errors)
-    ? body.errors.map((e: any) => e.msg || e.message || JSON.stringify(e)).join('; ')
-    : null;
-  throw new Error(detail || body?.message || `HTTP ${res.status}`);
+    const body = await res.json().catch(() => ({ message: res.statusText }));
+    const detail = Array.isArray(body?.errors)
+      ? body.errors.map((e: any) => e.msg || e.message || JSON.stringify(e)).join('; ')
+      : null;
+    throw new Error(detail || body?.message || `HTTP ${res.status}`);
   }
   const json = await res.json();
   return json?.data ?? json;
 }
 
-// ─── Generic CRUD helpers ────────────────────────────────────────────────────
+// ─── Generic CRUD helpers ─────────────────────────────────────────────────────
 
 export async function find(
   collection: string,
@@ -50,17 +50,12 @@ export async function find(
   const params   = new URLSearchParams();
   const f        = filter as any;
 
-  // ── BUG FIX #4: _id.$in  →  ?ids=id1,id2,id3 ─────────────────────────────
-  // ReportApprovalsPage calls find(SALES, { _id: { $in: [...] } }) to load the
-  // exact sales that belong to a daily report.  The old code silently dropped
-  // the $in filter, always returning [].  We now serialise it as a comma-
-  // separated ?ids= param that the backend sales route understands.
+  // _id.$in  →  ?ids=id1,id2,id3
   if (f._id?.$in) {
     const ids: string[] = (f._id.$in as any[]).map((v: any) =>
       typeof v === 'string' ? v : (v?.$oid ?? String(v))
     );
     if (ids.length > 0) params.set('ids', ids.join(','));
-    // No other filters apply when fetching by explicit id list
     const qs   = params.toString();
     const data = await apiFetch(`${endpoint}${qs ? `?${qs}` : ''}`);
     if (Array.isArray(data)) return data;
@@ -88,7 +83,7 @@ export async function find(
     return Array.isArray(data) ? data : [];
   }
 
-  // ── Standard filters ──────────────────────────────────────────────────────
+  // Standard filters
   if (f.isActive   !== undefined) params.set('active',    String(f.isActive));
   if (f.branchId)                 params.set('branchId',  f.branchId);
   if (f.status)                   params.set('status',    f.status);
@@ -135,7 +130,6 @@ export async function updateOne(
   const id       = filter?._id?.$oid ?? filter?._id ?? null;
   const payload  = update?.$set ?? update;
 
-  // Special-case PATCH endpoints
   if (collection === Collections.DAILY_REPORTS && payload?.status) {
     await apiFetch(`/api/reports/daily/${id}/review`, {
       method: 'PATCH',
@@ -158,7 +152,6 @@ export async function updateOne(
     return 1;
   }
 
-  // Upsert-style stock endpoints
   if (collection === Collections.BRANCH_STOCK) {
     const { branchId, productId, quantity } = payload;
     await apiFetch(`/api/products/${productId}/stock`, {
@@ -198,39 +191,45 @@ export async function aggregate(
   _collection: string,
   _pipeline: object[]
 ): Promise<any[]> {
-  // Aggregation runs server-side via /api/reports/analytics/dashboard
   return [];
+}
+
+// ─── Admin: reset sales data for a specific date ──────────────────────────────
+export async function resetAllSalesData(date: string): Promise<void> {
+  await apiFetch('/api/reports/reset-all', {
+    method: 'POST',
+    body: JSON.stringify({ date }),
+  });
 }
 
 // ─── Collection → endpoint mapping ───────────────────────────────────────────
 export const Collections = {
-  USERS:           'users',
-  BRANCHES:        'branches',
-  WAREHOUSES:      'warehouses',
-  PRODUCTS:        'products',
-  BRANCH_STOCK:    'branch_stock',
-  WAREHOUSE_STOCK: 'warehouse_stock',
-  SALES:           'sales',
-  DAILY_REPORTS:   'daily_reports',
-  DEBTORS:         'debtors',   // ← BUG FIX: was DEPTORS (missing B)
-  EXPENSES:        'expenses',
+  USERS:             'users',
+  BRANCHES:          'branches',
+  WAREHOUSES:        'warehouses',
+  PRODUCTS:          'products',
+  BRANCH_STOCK:      'branch_stock',
+  WAREHOUSE_STOCK:   'warehouse_stock',
+  SALES:             'sales',
+  DAILY_REPORTS:     'daily_reports',
+  DEBTORS:           'debtors',
+  EXPENSES:          'expenses',
   SPECIAL_CUSTOMERS: 'special_customers',
 } as const;
 
 function collectionToEndpoint(collection: string): string {
   switch (collection) {
-    case Collections.USERS:           return '/api/users';
-    case Collections.BRANCHES:        return '/api/branches';
-    case Collections.WAREHOUSES:      return '/api/warehouses';
-    case Collections.PRODUCTS:        return '/api/products';
-    case Collections.BRANCH_STOCK:    return '/api/branches/stock';
-    case Collections.WAREHOUSE_STOCK: return '/api/warehouses/stock';
-    case Collections.SALES:           return '/api/sales';
-    case Collections.DAILY_REPORTS:   return '/api/reports/daily';
-    case Collections.DEBTORS:         return '/api/reports/debtors';
-    case Collections.EXPENSES:        return '/api/reports/expenses';
+    case Collections.USERS:             return '/api/users';
+    case Collections.BRANCHES:          return '/api/branches';
+    case Collections.WAREHOUSES:        return '/api/warehouses';
+    case Collections.PRODUCTS:          return '/api/products';
+    case Collections.BRANCH_STOCK:      return '/api/branches/stock';
+    case Collections.WAREHOUSE_STOCK:   return '/api/warehouses/stock';
+    case Collections.SALES:             return '/api/sales';
+    case Collections.DAILY_REPORTS:     return '/api/reports/daily';
+    case Collections.DEBTORS:           return '/api/reports/debtors';
+    case Collections.EXPENSES:          return '/api/reports/expenses';
     case Collections.SPECIAL_CUSTOMERS: return '/api/special-customers';
-    default:                          return `/api/${collection}`;
+    default:                            return `/api/${collection}`;
   }
 }
-                        

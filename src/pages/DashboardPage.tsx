@@ -1,11 +1,10 @@
-// src/pages/DashboardPage.tsx
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { find, Collections } from '../lib/api';
+import { find, Collections, resetAllSalesData } from '../lib/api';
 import type { Sale, DailyReport, Debtor } from '../lib/types';
 import {
   TrendingUp, TrendingDown, Clock, CheckCircle, DollarSign,
-  CreditCard, Package, HandCoins, XCircle, ArrowUpDown, RefreshCw,
+  CreditCard, Package, HandCoins, XCircle, ArrowUpDown, RefreshCw, Trash2,
 } from 'lucide-react';
 
 interface Stats {
@@ -44,69 +43,119 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<Stats>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  // Reset modal state
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetDate, setResetDate] = useState('');
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   useEffect(() => { fetchStats(); }, [user]);
+
+  // Re-fetch whenever the user navigates back to this tab/window
+  useEffect(() => {
+    const onFocus = () => fetchStats(true);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [user]);
 
   async function fetchStats(isRefresh = false) {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
+    setFetchError(null);
 
-    const today = new Date().toISOString().split('T')[0];
-    const start = `${today}T00:00:00.000Z`;
-    const end   = `${today}T23:59:59.999Z`;
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+    try {
+      const today        = new Date().toISOString().split('T')[0];
+      const start        = `${today}T00:00:00.000Z`;
+      const end          = `${today}T23:59:59.999Z`;
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
 
-    const saleFilter:    Record<string, any> = { saleDate:    { $gte: start, $lte: end } };
-    const expenseFilter: Record<string, any> = { expenseDate: { $gte: start, $lte: end } };
-    const reportFilter:  Record<string, any> = { reportDate:  { $gte: `${sevenDaysAgo}T00:00:00.000Z` } };
-    const debtorFilter:  Record<string, any> = {};
+      const saleFilter:    Record<string, any> = { saleDate:    { $gte: start, $lte: end } };
+      const expenseFilter: Record<string, any> = { expenseDate: { $gte: start, $lte: end } };
+      const reportFilter:  Record<string, any> = { reportDate:  { $gte: `${sevenDaysAgo}T00:00:00.000Z` } };
+      const debtorFilter:  Record<string, any> = {};
 
-    if (user?.role !== 'admin' && user?.branchId) {
-      saleFilter.branchId    = user.branchId;
-      expenseFilter.branchId = user.branchId;
-      reportFilter.branchId  = user.branchId;
-      debtorFilter.branchId  = user.branchId;
+      if (user?.role !== 'admin' && user?.branchId) {
+        saleFilter.branchId    = user.branchId;
+        expenseFilter.branchId = user.branchId;
+        reportFilter.branchId  = user.branchId;
+        debtorFilter.branchId  = user.branchId;
+      }
+
+      const [sales, expenses, reports, debtors] = await Promise.all([
+        find(Collections.SALES,         saleFilter),
+        find(Collections.EXPENSES,      expenseFilter),
+        find(Collections.DAILY_REPORTS, reportFilter),
+        find(Collections.DEBTORS,       debtorFilter),
+      ]);
+
+      const s = sales   as Sale[];
+      const r = reports as DailyReport[];
+      const d = debtors as Debtor[];
+
+      const todaySales    = s.reduce((acc, x) => acc + Number(x.totalAmount), 0);
+      const todayExpenses = (expenses as any[]).reduce((acc, x) => acc + Number(x.amount), 0);
+
+      setStats({
+        todaySales,
+        todayCash:          s.filter(x => x.paymentMethod === 'cash').reduce((acc, x) => acc + Number(x.totalAmount), 0),
+        todayPos:           s.filter(x => x.paymentMethod === 'pos').reduce((acc, x) => acc + Number(x.totalAmount), 0),
+        todayExpenses,
+        todayNet:           todaySales - todayExpenses,
+        totalTransactions:  s.length,
+        unpaidCount:        s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part').length,
+        unpaidAmount:       s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part')
+                             .reduce((acc, x) => acc + Number(x.balanceDue ?? 0), 0),
+        pendingReports:     r.filter(x => x.status === 'pending').length,
+        approvedReports:    r.filter(x => x.status === 'approved').length,
+        rejectedReports:    r.filter(x => x.status === 'rejected').length,
+        activeDebtors:      d.filter(x => !x.isCleared).length,
+        totalDebtorAmount:  d.filter(x => !x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
+        clearedDebtors:     d.filter(x => x.isCleared).length,
+        totalClearedAmount: d.filter(x => x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
+      });
+    } catch (err: any) {
+      setFetchError(err?.message ?? 'Failed to load dashboard data. Please refresh.');
+    } finally {
+      if (isRefresh) setRefreshing(false);
+      else setLoading(false);
     }
+  }
 
-    const [sales, expenses, reports, debtors] = await Promise.all([
-      find(Collections.SALES,         saleFilter),
-      find(Collections.EXPENSES,      expenseFilter),
-      find(Collections.DAILY_REPORTS, reportFilter),
-      find(Collections.DEBTORS,       debtorFilter),
-    ]);
+  function openResetModal() {
+    setResetDate(new Date().toISOString().split('T')[0]);
+    setResetConfirmText('');
+    setResetError(null);
+    setShowResetModal(true);
+  }
 
-    const s = sales    as Sale[];
-    const r = reports  as DailyReport[];
-    const d = debtors  as Debtor[];
+  function closeResetModal() {
+    setShowResetModal(false);
+    setResetConfirmText('');
+    setResetError(null);
+  }
 
-    const todaySales    = s.reduce((acc, x) => acc + Number(x.totalAmount), 0);
-    const todayExpenses = (expenses as any[]).reduce((acc, x) => acc + Number(x.amount), 0);
-
-    setStats({
-      todaySales,
-      todayCash:          s.filter(x => x.paymentMethod === 'cash').reduce((acc, x) => acc + Number(x.totalAmount), 0),
-      todayPos:           s.filter(x => x.paymentMethod === 'pos').reduce((acc, x) => acc + Number(x.totalAmount), 0),
-      todayExpenses,
-      todayNet:           todaySales - todayExpenses,
-      totalTransactions:  s.length,
-      unpaidCount:        s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part').length,
-      unpaidAmount:       s.filter(x => x.paymentMethod === 'unpaid' || x.paymentMethod === 'part')
-                           .reduce((acc, x) => acc + Number(x.balanceDue ?? 0), 0),
-      pendingReports:     r.filter(x => x.status === 'pending').length,
-      approvedReports:    r.filter(x => x.status === 'approved').length,   // was hardcoded 0
-      rejectedReports:    r.filter(x => x.status === 'rejected').length,
-      activeDebtors:      d.filter(x => !x.isCleared).length,
-      totalDebtorAmount:  d.filter(x => !x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
-      clearedDebtors:     d.filter(x => x.isCleared).length,
-      totalClearedAmount: d.filter(x => x.isCleared).reduce((acc, x) => acc + Number(x.amountOwed), 0),
-    });
-
-    if (isRefresh) setRefreshing(false);
-    else setLoading(false);
+  async function handleReset() {
+    if (resetConfirmText !== 'RESET' || !resetDate) return;
+    setResetting(true);
+    setResetError(null);
+    try {
+      await resetAllSalesData(resetDate);
+      closeResetModal();
+      fetchStats(true);
+    } catch (err: any) {
+      setResetError(err?.message ?? 'Reset failed. Please try again.');
+    } finally {
+      setResetting(false);
+    }
   }
 
   const fmt = (n: number) =>
     `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const today = new Date().toISOString().split('T')[0];
 
   return (
     <div className="p-6 space-y-6">
@@ -126,15 +175,121 @@ export default function DashboardPage() {
             {new Date().toLocaleDateString('en-NG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
-        <button
-          onClick={() => fetchStats(true)}
-          disabled={refreshing}
-          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors shrink-0"
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {user?.role === 'admin' && (
+            <button
+              onClick={openResetModal}
+              className="flex items-center gap-1.5 text-sm text-red-500 hover:text-red-700 px-3 py-1.5 rounded-lg border border-red-200 hover:border-red-400 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Reset Data
+            </button>
+          )}
+          <button
+            onClick={() => fetchStats(true)}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* ── Fetch error banner ── */}
+      {fetchError && (
+        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+          <span className="flex-1">{fetchError}</span>
+          <button
+            onClick={() => fetchStats(true)}
+            className="shrink-0 font-medium underline hover:no-underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* ── Reset Confirmation Modal (admin only) ── */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+
+            {/* Modal header */}
+            <div className="flex items-center gap-3">
+              <div className="bg-red-100 p-2.5 rounded-full shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h2 className="font-bold text-slate-800 text-lg">Reset Sales Data</h2>
+                <p className="text-xs text-red-500 font-medium">This action cannot be undone</p>
+              </div>
+            </div>
+
+            {/* Description */}
+            <p className="text-slate-600 text-sm leading-relaxed">
+              This will permanently delete <strong>all sales, expenses, debtors, and the daily report</strong> for the selected date across every branch. User accounts and products will not be affected.
+            </p>
+
+            {/* Date picker */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Select date to reset
+              </label>
+              <input
+                type="date"
+                value={resetDate}
+                max={today}
+                onChange={e => setResetDate(e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-red-400"
+              />
+            </div>
+
+            {/* Confirm prompt */}
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+              Type <span className="font-mono font-bold">RESET</span> to confirm:
+            </div>
+
+            <input
+              type="text"
+              value={resetConfirmText}
+              onChange={e => setResetConfirmText(e.target.value)}
+              placeholder="Type RESET to confirm"
+              autoFocus
+              className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-red-400"
+            />
+
+            {/* Error */}
+            {resetError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                {resetError}
+              </p>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={closeResetModal}
+                disabled={resetting}
+                className="flex-1 px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReset}
+                disabled={resetConfirmText !== 'RESET' || !resetDate || resetting}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+              >
+                {resetting
+                  ? <><RefreshCw className="w-4 h-4 animate-spin" /> Resetting…</>
+                  : <><Trash2 className="w-4 h-4" /> Reset Data</>
+                }
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* ── Top stat cards ── */}
       {loading ? (
@@ -148,8 +303,8 @@ export default function DashboardPage() {
           {[
             { label: "Today's Sales",    value: fmt(stats.todaySales),    icon: <TrendingUp className="w-5 h-5" />,  bg: 'bg-amber-500' },
             { label: 'Cash Sales',       value: fmt(stats.todayCash),     icon: <DollarSign className="w-5 h-5" />,  bg: 'bg-green-500' },
-            { label: 'POS Sales',        value: fmt(stats.todayPos),      icon: <CreditCard className="w-5 h-5" />,  bg: 'bg-blue-500' },
-            { label: "Today's Expenses", value: fmt(stats.todayExpenses), icon: <Package className="w-5 h-5" />,    bg: 'bg-red-500' },
+            { label: 'POS Sales',        value: fmt(stats.todayPos),      icon: <CreditCard className="w-5 h-5" />,  bg: 'bg-blue-500'  },
+            { label: "Today's Expenses", value: fmt(stats.todayExpenses), icon: <Package    className="w-5 h-5" />,  bg: 'bg-red-500'   },
             {
               label: 'Net Income',
               value: fmt(stats.todayNet),
@@ -212,13 +367,16 @@ export default function DashboardPage() {
               {(() => {
                 const total = stats.pendingReports + stats.approvedReports + stats.rejectedReports || 1;
                 return [
-                  { label: 'Pending',  count: stats.pendingReports,  icon: <Clock      className="w-4 h-4 text-amber-500" />, color: 'text-amber-600', bar: 'bg-amber-400' },
+                  { label: 'Pending',  count: stats.pendingReports,  icon: <Clock       className="w-4 h-4 text-amber-500" />, color: 'text-amber-600', bar: 'bg-amber-400' },
                   { label: 'Approved', count: stats.approvedReports, icon: <CheckCircle className="w-4 h-4 text-green-500" />, color: 'text-green-600', bar: 'bg-green-400' },
-                  { label: 'Rejected', count: stats.rejectedReports, icon: <XCircle    className="w-4 h-4 text-red-500" />,   color: 'text-red-600',   bar: 'bg-red-400'   },
+                  { label: 'Rejected', count: stats.rejectedReports, icon: <XCircle     className="w-4 h-4 text-red-500"   />, color: 'text-red-600',   bar: 'bg-red-400'   },
                 ].map(row => (
                   <div key={row.label}>
                     <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">{row.icon}<span className="text-slate-600 text-sm">{row.label}</span></div>
+                      <div className="flex items-center gap-2">
+                        {row.icon}
+                        <span className="text-slate-600 text-sm">{row.label}</span>
+                      </div>
                       <span className={`font-semibold ${row.color}`}>{row.count}</span>
                     </div>
                     <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">

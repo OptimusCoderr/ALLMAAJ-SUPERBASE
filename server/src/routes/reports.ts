@@ -9,10 +9,10 @@ const router = Router();
 router.use(authMiddleware);
 
 // ── Mappers ───────────────────────────────────────────────────────────────────
-// *_name fields are resolved via JOIN users — not stored in the row.
+
 const toReport = (r: DailyReportRow & { submitted_by_name?: string | null; reviewed_by_name?: string | null }) => ({
   id:                r.id,
-  _id:               r.id,   // ← ADD THIS
+  _id:               r.id,
   branchId:          r.branch_id,
   submittedBy:       r.submitted_by,
   submittedByName:   r.submitted_by_name  ?? null,
@@ -36,7 +36,13 @@ const toReport = (r: DailyReportRow & { submitted_by_name?: string | null; revie
   updatedAt:         r.updated_at,
 });
 
-const toDebtor = (d: DebtorRow & { created_by_name?: string | null; cleared_by_name?: string | null; sale_payment_method?: string | null; sale_total_amount?: string | null; sale_items?: any }) => ({
+const toDebtor = (d: DebtorRow & {
+  created_by_name?: string | null;
+  cleared_by_name?: string | null;
+  sale_payment_method?: string | null;
+  sale_total_amount?: string | null;
+  sale_items?: any;
+}) => ({
   id:              d.id,
   _id:             d.id,
   branchId:        d.branch_id,
@@ -97,7 +103,10 @@ router.get('/daily', async (req: Request, res: Response) => {
       LIMIT ${parseInt(limit)}
     `;
     return sendResponse(res, 200, 'Reports fetched', reports.map(toReport));
-  } catch (err) { console.error('[GET /reports/daily]', err); return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    console.error('[GET /reports/daily]', err);
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // GET /api/reports/daily/:id
@@ -112,16 +121,18 @@ router.get('/daily/:id', async (req: Request, res: Response) => {
     `;
     if (!report) return sendError(res, 404, 'Report not found');
     return sendResponse(res, 200, 'Report fetched', toReport(report));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // POST /api/reports/daily  (upsert — one report per branch per day)
 router.post('/daily', async (req: Request, res: Response) => {
   try {
-      const { reportDate } = req.body;
-      const branchId = req.user?.role !== 'admin' && req.user?.branchId
-          ? req.user.branchId
-          : req.body.branchId;
+    const { reportDate } = req.body;
+    const branchId = req.user?.role !== 'admin' && req.user?.branchId
+      ? req.user.branchId
+      : req.body.branchId;
 
     if (!branchId || !reportDate) return sendError(res, 400, 'branchId and reportDate are required');
 
@@ -129,7 +140,6 @@ router.post('/daily', async (req: Request, res: Response) => {
       totalCashSales = 0, totalPosSales = 0, totalUnpaidSales = 0,
       totalExpenses = 0, netIncome = 0,
       debtorCount = 0, totalDebtorAmount = 0, notes,
-      // saleIds no longer accepted — sales link to report via sales.report_id
     } = req.body;
 
     const [report] = await sql<DailyReportRow[]>`
@@ -169,24 +179,24 @@ router.post('/daily', async (req: Request, res: Response) => {
     `;
 
     return sendResponse(res, 201, 'Report submitted', toReport(report));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // DELETE /api/reports/daily/:id  (admin only)
 router.delete('/daily/:id', adminOnly, async (req: Request, res: Response) => {
   try {
-    // Unlink any sales that were tied to this report
-    await sql`
-      UPDATE sales SET report_id = NULL WHERE report_id = ${req.params.id}
-    `;
+    await sql`UPDATE sales SET report_id = NULL WHERE report_id = ${req.params.id}`;
     const [deleted] = await sql<DailyReportRow[]>`
       DELETE FROM daily_reports WHERE id = ${req.params.id} RETURNING *
     `;
     if (!deleted) return sendError(res, 404, 'Report not found');
     return sendResponse(res, 200, 'Report deleted', { id: req.params.id });
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
-
 
 // PATCH /api/reports/daily/:id/review  (admin only)
 router.patch('/daily/:id/review', adminOnly, async (req: Request, res: Response) => {
@@ -207,9 +217,10 @@ router.patch('/daily/:id/review', adminOnly, async (req: Request, res: Response)
     `;
     if (!report) return sendError(res, 404, 'Report not found');
     return sendResponse(res, 200, 'Report reviewed', toReport(report));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
-
 
 // ── DEBTORS ───────────────────────────────────────────────────────────────────
 
@@ -221,7 +232,6 @@ router.get('/debtors', async (req: Request, res: Response) => {
       req.user?.role !== 'admin' && req.user?.branchId ? req.user.branchId : (branchId ?? null);
     const clearedFilter = isCleared === 'true' ? true : isCleared === 'false' ? false : null;
 
-    // Build optional WHERE fragments to avoid untyped-null parameter issues
     const branchCond  = effectiveBranchId !== null
       ? sql`AND d.branch_id = ${effectiveBranchId}::uuid`
       : sql``;
@@ -253,11 +263,12 @@ router.get('/debtors', async (req: Request, res: Response) => {
       ORDER BY d.created_at DESC
     `;
     return sendResponse(res, 200, 'Debtors fetched', debtors.map(toDebtor));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // POST /api/reports/debtors
-// NEW
 router.post('/debtors', async (req: Request, res: Response) => {
   try {
     const { name, phone, amountOwed, saleId, notes } = req.body;
@@ -275,7 +286,9 @@ router.post('/debtors', async (req: Request, res: Response) => {
       RETURNING *
     `;
     return sendResponse(res, 201, 'Debtor recorded', toDebtor(debtor));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // PATCH /api/reports/debtors/:id/clear  (admin only)
@@ -290,7 +303,9 @@ router.patch('/debtors/:id/clear', adminOnly, async (req: Request, res: Response
     `;
     if (!debtor) return sendError(res, 404, 'Debtor not found');
     return sendResponse(res, 200, 'Debtor cleared', toDebtor(debtor));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // PATCH /api/reports/debtors/:id/reactivate  (admin only)
@@ -304,7 +319,9 @@ router.patch('/debtors/:id/reactivate', adminOnly, async (req: Request, res: Res
     `;
     if (!debtor) return sendError(res, 404, 'Debtor not found');
     return sendResponse(res, 200, 'Debtor reactivated', toDebtor(debtor));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // ── EXPENSES ──────────────────────────────────────────────────────────────────
@@ -327,18 +344,19 @@ router.get('/expenses', async (req: Request, res: Response) => {
       ORDER BY e.expense_date DESC
     `;
     return sendResponse(res, 200, 'Expenses fetched', expenses.map(toExpense));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // POST /api/reports/expenses
-// NEW
 router.post('/expenses', async (req: Request, res: Response) => {
   try {
     const { description, amount, category, expenseDate, notes } = req.body;
     const branchId = req.user?.role !== 'admin' && req.user?.branchId
       ? req.user.branchId
       : req.body.branchId;
-      
+
     const [expense] = await sql<ExpenseRow[]>`
       INSERT INTO expenses (branch_id, description, amount, category, recorded_by, expense_date, notes)
       VALUES (
@@ -351,7 +369,9 @@ router.post('/expenses', async (req: Request, res: Response) => {
       RETURNING *
     `;
     return sendResponse(res, 201, 'Expense recorded', toExpense(expense));
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 // ── DASHBOARD ANALYTICS ───────────────────────────────────────────────────────
@@ -394,15 +414,55 @@ router.get('/analytics/dashboard', async (req: Request, res: Response) => {
 
     const by = Object.fromEntries(salesAgg.map(r => [r.payment_method, num(r.total)]));
     return sendResponse(res, 200, 'Dashboard data fetched', {
-      todaySales:        (by.cash ?? 0) + (by.pos ?? 0) + (by.unpaid ?? 0),
-      todayCash:          by.cash    ?? 0,
-      todayPos:           by.pos     ?? 0,
-      todayExpenses:      num(expenseAgg[0]?.total),
-      pendingReports:     parseInt(pendingRow?.count ?? '0'),
-      activeDebtors:      parseInt(debtorAgg[0]?.count ?? '0'),
-      totalDebtorAmount:  num(debtorAgg[0]?.total),
+      todaySales:       (by.cash ?? 0) + (by.pos ?? 0) + (by.unpaid ?? 0),
+      todayCash:         by.cash    ?? 0,
+      todayPos:          by.pos     ?? 0,
+      todayExpenses:     num(expenseAgg[0]?.total),
+      pendingReports:    parseInt(pendingRow?.count ?? '0'),
+      activeDebtors:     parseInt(debtorAgg[0]?.count ?? '0'),
+      totalDebtorAmount: num(debtorAgg[0]?.total),
     });
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
+// ── RESET (admin only) ────────────────────────────────────────────────────────
+
+// POST /api/reports/reset-all
+// Permanently deletes all sales, expenses, debtors and the daily report for
+// the specified date. Requires admin role. Body: { date: "YYYY-MM-DD" }
+router.post('/reset-all', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { date } = req.body;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+      return sendError(res, 400, 'A valid date (YYYY-MM-DD) is required');
+
+    // Delete debtors whose linked sale falls on this date, or debtors with no
+    // sale link that were created on this date.
+    await sql`
+      DELETE FROM debtors
+      WHERE sale_id IN (SELECT id FROM sales WHERE sale_date::date = ${date}::date)
+         OR (sale_id IS NULL AND created_at::date = ${date}::date)
+    `;
+
+    // Unlink sales from their report before removing the report row.
+    await sql`UPDATE sales SET report_id = NULL WHERE sale_date::date = ${date}::date`;
+
+    await sql`DELETE FROM daily_reports WHERE report_date        = ${date}::date`;
+    await sql`DELETE FROM expenses       WHERE expense_date::date = ${date}::date`;
+    await sql`DELETE FROM sales          WHERE sale_date::date    = ${date}::date`;
+
+    console.log(`[RESET] Data for ${date} deleted by admin ${req.userId}`);
+    return sendResponse(res, 200, `Data for ${date} has been reset`, {
+      resetAt: new Date().toISOString(),
+      resetBy: req.userId,
+      date,
+    });
+  } catch (err) {
+    console.error('[POST /reports/reset-all]', err);
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
 export default router;
