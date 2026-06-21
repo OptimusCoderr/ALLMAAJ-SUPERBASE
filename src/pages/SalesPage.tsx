@@ -390,7 +390,14 @@ export default function SalesPage() {
         branchId: selectedBranch, staffId: user!.id, staffName: user!.fullName,
         customerName: customerName.trim(), customerPhone: customerPhone.trim(),
         paymentMethod, totalAmount: total, amountPaid: paid, balanceDue: balance,
-        notes: notes.trim(),
+        notes: (() => {
+          const cutSummary = cart
+            .filter(c => c.isCut && c.cutLengthInches)
+            .map(c => `${c.product.name} (${c.cutLengthInches} INCHES CUT)`)
+            .join(', ');
+          const base = notes.trim();
+          return base && cutSummary ? `${base} | ${cutSummary}` : cutSummary || base;
+        })(),
         items: [
           ...cart.map(c => ({
             productId: c.product._id, productName: c.product.name,
@@ -1536,9 +1543,14 @@ export default function SalesPage() {
                         )}
                         {items.length > 0 && (
                           <p className="text-xs text-slate-400 mb-1 truncate">
-                            {items.map((it: any) =>
-                              `${it.productName || it.product_name || it.product_id} ×${it.quantity}`
-                            ).join(', ')}
+                            {items.map((it: any) => {
+                              const name = it.productName || it.product_name || it.product_id;
+                              if (it.cutLengthInches || it.cut_length_inches) {
+                                const inches = it.cutLengthInches ?? it.cut_length_inches;
+                                return `${name} (${inches}" cut)`;
+                              }
+                              return `${name} ×${it.quantity}`;
+                            }).join(', ')}
                           </p>
                         )}
                         <p className="text-xs text-slate-400 mb-2">By: {s.staffName}</p>
