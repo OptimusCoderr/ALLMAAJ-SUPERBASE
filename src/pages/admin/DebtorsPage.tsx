@@ -103,20 +103,20 @@ export default function DebtorsPage() {
   const fmt = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800">Debtors</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-800">Debtors</h1>
         <p className="text-slate-500 text-sm mt-1">Manage customers with unpaid balances</p>
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+        <div className="bg-white rounded-xl p-4 sm:p-5 shadow-sm border border-slate-100">
           <p className="text-slate-500 text-sm">Active Debtors</p>
           <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => !d.isCleared).length}</p>
           <p className="text-sm font-medium mt-1 text-red-600">{fmt(totalActive)}</p>
         </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-blue-100 bg-blue-50/30">
+        <div className="bg-white rounded-xl p-4 sm:p-5 shadow-sm border border-blue-100 bg-blue-50/30">
           <p className="text-slate-500 text-sm">Cleared Debtors</p>
           <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => d.isCleared).length}</p>
           <p className="text-sm font-medium mt-1 text-blue-600">{fmt(totalCleared)}</p>

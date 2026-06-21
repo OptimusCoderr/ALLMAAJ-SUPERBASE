@@ -172,9 +172,9 @@ export default function DailyReportPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800">Daily Sales Report</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-slate-800">Daily Sales Report</h1>
         <p className="text-slate-500 text-sm mt-1">Submit end-of-day summary for admin review</p>
       </div>
 
@@ -223,7 +223,7 @@ export default function DailyReportPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         <div className="xl:col-span-2 space-y-5">
 
           {/* Branch + date selector */}
@@ -263,7 +263,7 @@ export default function DailyReportPage() {
 
           {/* Report summary */}
           {!loading && selectedBranch && (
-            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+            <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
               <div className="flex items-center justify-between mb-5">
                 <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                   <FileText className="w-5 h-5 text-amber-500" />
@@ -429,7 +429,7 @@ export default function DailyReportPage() {
         </div>
 
         {/* Recent reports sidebar */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 h-fit">
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100 h-fit">
           <h3 className="font-semibold text-slate-800 mb-4">Recent Reports</h3>
           {pastReports.length === 0 ? (
             <p className="text-slate-400 text-sm text-center py-4">No reports yet</p>

@@ -198,7 +198,7 @@ function ProductSearch({
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md p-4 sm:p-6">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -571,7 +571,7 @@ export default function BranchStockPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Branch Stock</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-800">Branch Stock</h1>
           <p className="text-slate-500 text-sm mt-0.5">Inventory at each branch</p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -592,7 +592,7 @@ export default function BranchStockPage() {
 
       {/* Stats cards */}
       {stock.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {[
             { icon: <Package className="w-5 h-5 text-blue-500" />, bg: 'bg-blue-50', label: 'Total Products', value: stock.length, color: '' },
             { icon: <AlertTriangle className="w-5 h-5 text-red-500" />, bg: 'bg-red-50', label: 'Critical (≤5)', value: critical, color: critical > 0 ? 'text-red-600' : '' },
@@ -797,7 +797,7 @@ export default function BranchStockPage() {
 
       {/* ── Admin: Pending Requests Tab ── */}
       {tab === 'requests' && isAdmin && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
             <div>
               <h3 className="font-semibold text-slate-700">Pending Stock Requests</h3>
@@ -866,7 +866,7 @@ export default function BranchStockPage() {
 
       {/* ── Staff: My Requests Tab ── */}
       {tab === 'my-requests' && !isAdmin && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-semibold text-slate-700">My Stock Requests</h3>

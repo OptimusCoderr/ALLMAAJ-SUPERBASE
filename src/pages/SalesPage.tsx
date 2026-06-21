@@ -745,7 +745,7 @@ export default function SalesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Record Transactions</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-800">Record Transactions</h1>
           <p className="text-slate-400 text-sm mt-0.5">
             {user?.fullName} &middot; {branches.find(b => b._id === selectedBranch)?.name || 'Branch'}
           </p>
@@ -774,7 +774,7 @@ export default function SalesPage() {
         <button onClick={() => switchTab('expense')} className={tabStyle('expense')}><Receipt className="w-4 h-4" />Add Expense</button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
 
         {/* ── Left panel ──────────────────────────────────────────────────── */}
         <div className="xl:col-span-2">
@@ -784,7 +784,7 @@ export default function SalesPage() {
             <form onSubmit={handleSale} className="bg-white rounded-2xl shadow-sm border border-slate-100 divide-y divide-slate-100">
 
               {/* Section: Branch / Date / Payment */}
-              <div className="p-6 space-y-4">
+              <div className="p-4 sm:p-6 space-y-4">
                 <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">Sale Details</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -810,7 +810,7 @@ export default function SalesPage() {
                 {/* Payment method */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Payment Method</label>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
                       <button key={m} type="button" onClick={() => { setPaymentMethod(m); setAmountPaid(0); }}
                         className={pmButtonStyle(m, paymentMethod)}>
@@ -874,7 +874,7 @@ export default function SalesPage() {
               </div>
 
               {/* Section: Add Products */}
-              <div className="p-6 space-y-3">
+              <div className="p-4 sm:p-6 space-y-3">
                 <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
                   <ShoppingCart className="w-4 h-4 text-amber-500" />Products
                 </h3>
@@ -996,7 +996,7 @@ export default function SalesPage() {
               </div>
 
               {/* Section: Add Services */}
-              <div className="p-6 space-y-3">
+              <div className="p-4 sm:p-6 space-y-3">
                 <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
                   <Wrench className="w-4 h-4 text-purple-500" />Services
                 </h3>
@@ -1054,7 +1054,7 @@ export default function SalesPage() {
 
               {/* Cart + Submit */}
               {(cart.length > 0 || serviceCart.length > 0) && (
-                <div className="p-6 space-y-4">
+                <div className="p-4 sm:p-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">
                       Cart · {cart.length + serviceCart.length} item{(cart.length + serviceCart.length) !== 1 ? 's' : ''}
@@ -1203,7 +1203,7 @@ export default function SalesPage() {
 
           {/* DEBTOR FORM */}
           {tab === 'debtor' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6">
               <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2">
                 <UserPlus className="w-5 h-5 text-amber-500" />
                 Record Debtor
@@ -1256,7 +1256,7 @@ export default function SalesPage() {
 
           {/* EXPENSE FORM */}
           {tab === 'expense' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6">
               <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-amber-500" />
                 Record Expense
@@ -1521,8 +1521,8 @@ export default function SalesPage() {
       {/* ── Daily Report Confirmation Modal ────────────────────────────────────── */}
       {reportConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
                   <FileText className="w-5 h-5 text-amber-600" />
@@ -1538,7 +1538,7 @@ export default function SalesPage() {
               </button>
             </div>
 
-            <div className="p-6 space-y-3">
+            <div className="p-4 sm:p-6 space-y-3">
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Sales Breakdown</p>
               <div className="space-y-2">
                 <div className="flex justify-between items-center py-2 border-b border-slate-100">
@@ -1591,7 +1591,7 @@ export default function SalesPage() {
               </p>
             </div>
 
-            <div className="flex gap-3 p-6 border-t border-slate-100">
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
               <button onClick={() => setReportConfirmOpen(false)}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
@@ -1608,8 +1608,8 @@ export default function SalesPage() {
       {/* ── Edit Sale Modal ──────────────────────────────────────────────────── */}
       {editSale && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <div>
                 <h2 className="text-lg font-bold text-slate-800">Edit Sale</h2>
                 <p className="text-xs text-slate-400 mt-0.5">Changes will sync linked debtor balances automatically.</p>
@@ -1619,7 +1619,7 @@ export default function SalesPage() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-5">
+            <div className="p-4 sm:p-6 space-y-5">
               {editSale.error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{editSale.error}</div>
               )}
@@ -1859,7 +1859,7 @@ export default function SalesPage() {
                 <span className="text-xl font-extrabold text-amber-600">{fmt(eTotal)}</span>
               </div>
             </div>
-            <div className="flex gap-3 p-6 border-t border-slate-100">
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
               <button onClick={() => setEditSale(null)} disabled={editSale.loading}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
@@ -1877,8 +1877,8 @@ export default function SalesPage() {
       {/* ── Edit Expense Modal ───────────────────────────────────────────────── */}
       {editExpense && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <h2 className="text-lg font-bold text-slate-800">Edit Expense</h2>
               <button 
                 onClick={() => setEditExpense(null)}
@@ -1888,7 +1888,7 @@ export default function SalesPage() {
               </button>
             </div>
             
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4">
               {editExpense.error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
                   {editExpense.error}
@@ -1953,8 +1953,8 @@ export default function SalesPage() {
               </div>
             </div>
             
-            <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button 
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
+              <button
                 onClick={() => setEditExpense(null)} 
                 disabled={editExpense.loading}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors"
@@ -1979,15 +1979,15 @@ export default function SalesPage() {
       {/* ── Edit Debtor Modal ────────────────────────────────────────────────── */}
       {editDebtor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <h2 className="text-lg font-bold text-slate-800">Edit Debtor</h2>
               <button onClick={() => setEditDebtor(null)}
                 className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4">
               {editDebtor.error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{editDebtor.error}</div>
               )}
@@ -2017,7 +2017,7 @@ export default function SalesPage() {
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-slate-50" />
               </div>
             </div>
-            <div className="flex gap-3 p-6 border-t border-slate-100">
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
               <button onClick={() => setEditDebtor(null)} disabled={editDebtor.loading}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel
