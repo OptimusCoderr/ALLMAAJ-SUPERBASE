@@ -291,6 +291,30 @@ router.post('/debtors', async (req: Request, res: Response) => {
   }
 });
 
+// PUT /api/reports/debtors/:id
+router.put('/debtors/:id', async (req: Request, res: Response) => {
+  try {
+    const { name, phone, amountOwed, notes } = req.body;
+    const isAdmin = req.user?.role === 'admin';
+
+    const [debtor] = await sql<DebtorRow[]>`
+      UPDATE debtors SET
+        name         = COALESCE(${name ?? null}, name),
+        phone        = COALESCE(${phone ?? null}, phone),
+        amount_owed  = COALESCE(${amountOwed ?? null}, amount_owed),
+        notes        = ${notes ?? null},
+        updated_at   = now()
+      WHERE id = ${req.params.id}
+        ${isAdmin ? sql`` : sql`AND created_by = ${req.userId!}`}
+      RETURNING *
+    `;
+    if (!debtor) return sendError(res, 404, 'Debtor not found or not authorised');
+    return sendResponse(res, 200, 'Debtor updated', toDebtor(debtor));
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
 // PATCH /api/reports/debtors/:id/clear  (admin only)
 router.patch('/debtors/:id/clear', adminOnly, async (req: Request, res: Response) => {
   try {
