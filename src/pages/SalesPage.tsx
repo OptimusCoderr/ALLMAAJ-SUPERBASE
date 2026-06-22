@@ -5,11 +5,18 @@ import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer } f
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
   Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText, Search,
+  Scissors, ToggleLeft, ToggleRight,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface CartItem { product: Product; quantity: number; unitPrice: number }
+interface CartItem {
+  product: Product;
+  quantity: number;
+  unitPrice: number;
+  isCut?: boolean;
+  cutLengthInches?: number;
+}
 interface ServiceCartItem { serviceName: string; serviceNotes: string; quantity: number; unitPrice: number }
 type Tab           = 'sale' | 'debtor' | 'expense';
 type PaymentMethod = 'cash' | 'pos' | 'part' | 'unpaid';
@@ -58,6 +65,14 @@ function fmt(n: number) {
 function getToken() {
   return sessionStorage.getItem('bt_session') || localStorage.getItem('bt_session') || '';
 }
+function inchesToDisplay(inches: number): string {
+  const ft = Math.floor(inches / 12);
+  const inRem = +(inches % 12).toFixed(1);
+  if (ft === 0) return `${inRem}"`;
+  if (inRem === 0) return `${ft}ft`;
+  return `${ft}ft ${inRem}"`;
+}
+
 function isToday(dateStr: string): boolean {
   if (!dateStr) return false;
   const d = new Date(dateStr), now = new Date();
@@ -113,6 +128,10 @@ export default function SalesPage() {
   const [productSuggestions, setProductSuggestions]   = useState<Product[]>([]);
   const [showProductDropdown, setShowProductDropdown] = useState(false);
   const productInputRef = useRef<HTMLInputElement>(null);
+
+  // Cut mode state
+  const [isCutMode, setIsCutMode]   = useState(false);
+  const [cutLength, setCutLength]   = useState('');
 
   // Service form
   const [serviceCart, setServiceCart]         = useState<ServiceCartItem[]>([]);
@@ -203,6 +222,7 @@ export default function SalesPage() {
     setPrice(p.unitPrice);
     setProductSuggestions([]);
     setShowProductDropdown(false);
+    if (!p.isCuttable) { setIsCutMode(false); setCutLength(''); }
   }
 
   function switchTab(t: Tab) {
@@ -264,7 +284,7 @@ export default function SalesPage() {
       find(Collections.EXPENSES, { branchId, expenseDate: { $gte: start, $lte: end } }),
       find(Collections.DEBTORS,  { branchId, isCleared: false }),
     ]);
-    setTodaySales((salesData as any[]).filter(s => !s.reportId));
+    setTodaySales(salesData as any[]);
     setTodayExpenses(expensesData as Expense[]);
     setTodayDebtors(debtorsData as Debtor[]);
   }
@@ -278,13 +298,40 @@ export default function SalesPage() {
   function addToCart() {
     const product = products.find(p => p._id === selectedProduct);
     if (!product) return;
-    const alreadyInCart = cart.find(c => c.product._id === selectedProduct)?.quantity ?? 0;
+
+    if (isCutMode && product.isCuttable) {
+      const cut = parseFloat(cutLength);
+      const unitLen = product.unitLengthInches ?? 0;
+      if (!cut || cut < 8.5) { setError('Minimum cut size is 8.5 inches'); return; }
+      if (unitLen > 0 && cut > unitLen) { setError(`Cut (${cut}") exceeds full unit length (${unitLen}")`); return; }
+      const deductFraction = unitLen > 0 ? cut / unitLen : 1;
+      // account for cuts already in cart for this product
+      const alreadyDeducted = cart
+        .filter(c => c.product._id === selectedProduct)
+        .reduce((sum, c) => {
+          if (c.isCut && c.cutLengthInches && unitLen > 0) return sum + c.cutLengthInches / unitLen;
+          return sum + c.quantity;
+        }, 0);
+      const available = getStock(selectedProduct);
+      if (alreadyDeducted + deductFraction > available) {
+        const remainingInches = Math.max(0, (available - alreadyDeducted) * unitLen);
+        setError(`Not enough stock for "${product.name}". Remaining available: ${remainingInches.toFixed(1)}"`);
+        return;
+      }
+      setCart([...cart, { product, quantity: 1, unitPrice: price || product.unitPrice, isCut: true, cutLengthInches: cut }]);
+      // keep product selected and cut mode on so user can add another cut immediately
+      setCutLength(''); setError('');
+      return;
+    }
+
+    const alreadyInCart = cart.filter(c => c.product._id === selectedProduct && !c.isCut)
+      .reduce((s, c) => s + c.quantity, 0);
     const available = getStock(selectedProduct);
     if (alreadyInCart + qty > available) {
       setError(`Not enough stock for "${product.name}". Available: ${available - alreadyInCart}`);
       return;
     }
-    const idx = cart.findIndex(c => c.product._id === selectedProduct);
+    const idx = cart.findIndex(c => c.product._id === selectedProduct && !c.isCut);
     if (idx >= 0) {
       setCart(cart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + qty } : c));
     } else {
@@ -343,11 +390,23 @@ export default function SalesPage() {
         branchId: selectedBranch, staffId: user!.id, staffName: user!.fullName,
         customerName: customerName.trim(), customerPhone: customerPhone.trim(),
         paymentMethod, totalAmount: total, amountPaid: paid, balanceDue: balance,
-        notes: notes.trim(),
+        notes: (() => {
+          const cutSummary = cart
+            .filter(c => c.isCut && c.cutLengthInches)
+            .map(c => `${c.product.name} (${c.cutLengthInches} INCHES CUT)`)
+            .join(', ');
+          const base = notes.trim();
+          return base && cutSummary ? `${base} | ${cutSummary}` : cutSummary || base;
+        })(),
         items: [
           ...cart.map(c => ({
             productId: c.product._id, productName: c.product.name,
             quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
+            ...(c.isCut && c.cutLengthInches ? {
+              cutLengthInches: c.cutLengthInches,
+              unitLengthInches: c.product.unitLengthInches,
+              isCut: true,
+            } : {}),
           })),
           ...serviceCart.map(s => ({
             productId: null, productName: s.serviceName, itemType: 'service',
@@ -470,7 +529,8 @@ export default function SalesPage() {
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
       setReportMsg({ ok: true, text: 'Daily report submitted! Awaiting admin review.' });
-      setTodaySales([]);
+      setReportConfirmOpen(false);
+      fetchTodayData(selectedBranch);
       setTimeout(() => setReportMsg(null), 6000);
     } catch (err: any) {
       setReportMsg({ ok: false, text: err.message || 'Failed to submit report' });
@@ -506,7 +566,13 @@ export default function SalesPage() {
           _id: productId, name: item.productName || item.product_name || productId,
           unitPrice: item.unit_price ?? item.unitPrice ?? 0, unit: '', isActive: true,
         } as unknown as Product;
-        return { product: found || fallback, quantity: item.quantity, unitPrice: item.unit_price ?? item.unitPrice ?? 0 };
+        const cutLen = item.cut_length_inches ?? item.cutLengthInches ?? null;
+      return {
+        product: found || fallback,
+        quantity: item.quantity,
+        unitPrice: item.unit_price ?? item.unitPrice ?? 0,
+        ...(cutLen ? { isCut: true, cutLengthInches: cutLen } : {}),
+      };
       });
     const rebuiltServices: ServiceCartItem[] = allItems
       .filter((item: any) => item.itemType === 'service')
@@ -565,6 +631,11 @@ export default function SalesPage() {
             ...editSale.cart.map(c => ({
               productId: c.product._id, productName: c.product.name,
               quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.quantity * c.unitPrice,
+              ...(c.isCut && c.cutLengthInches ? {
+                cutLengthInches: c.cutLengthInches,
+                unitLengthInches: c.product.unitLengthInches,
+                isCut: true,
+              } : {}),
             })),
             ...editSale.serviceCart.map(s => ({
               productId: null, productName: s.serviceName, itemType: 'service',
@@ -745,7 +816,7 @@ export default function SalesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Record Transactions</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-800">Record Transactions</h1>
           <p className="text-slate-400 text-sm mt-0.5">
             {user?.fullName} &middot; {branches.find(b => b._id === selectedBranch)?.name || 'Branch'}
           </p>
@@ -774,7 +845,7 @@ export default function SalesPage() {
         <button onClick={() => switchTab('expense')} className={tabStyle('expense')}><Receipt className="w-4 h-4" />Add Expense</button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
 
         {/* ── Left panel ──────────────────────────────────────────────────── */}
         <div className="xl:col-span-2">
@@ -784,7 +855,7 @@ export default function SalesPage() {
             <form onSubmit={handleSale} className="bg-white rounded-2xl shadow-sm border border-slate-100 divide-y divide-slate-100">
 
               {/* Section: Branch / Date / Payment */}
-              <div className="p-6 space-y-4">
+              <div className="p-4 sm:p-6 space-y-4">
                 <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">Sale Details</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -810,7 +881,7 @@ export default function SalesPage() {
                 {/* Payment method */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Payment Method</label>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
                       <button key={m} type="button" onClick={() => { setPaymentMethod(m); setAmountPaid(0); }}
                         className={pmButtonStyle(m, paymentMethod)}>
@@ -874,7 +945,7 @@ export default function SalesPage() {
               </div>
 
               {/* Section: Add Products */}
-              <div className="p-6 space-y-3">
+              <div className="p-4 sm:p-6 space-y-3">
                 <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
                   <ShoppingCart className="w-4 h-4 text-amber-500" />Products
                 </h3>
@@ -896,6 +967,67 @@ export default function SalesPage() {
                         {cat === 'all' ? 'All Categories' : cat}
                       </button>
                     ))}
+                  </div>
+                )}
+
+                {/* Cut mode toggle — shown only when a cuttable product is selected */}
+                {selectedProduct && products.find(p => p._id === selectedProduct)?.isCuttable && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Scissors className="w-4 h-4 text-amber-600" />
+                        <span className="text-sm font-semibold text-amber-800">Sell a cut piece?</span>
+                        <span className="text-xs text-amber-600">
+                          (full unit = {products.find(p => p._id === selectedProduct)?.unitLengthInches}"
+                          = {inchesToDisplay(products.find(p => p._id === selectedProduct)?.unitLengthInches ?? 0)})
+                        </span>
+                      </div>
+                      <button type="button" onClick={() => { setIsCutMode(v => !v); setCutLength(''); }}
+                        className="text-amber-700 hover:text-amber-900 transition-colors">
+                        {isCutMode ? <ToggleRight className="w-6 h-6 text-amber-500" /> : <ToggleLeft className="w-6 h-6 text-slate-400" />}
+                      </button>
+                    </div>
+                    {isCutMode && (() => {
+                      const product = products.find(p => p._id === selectedProduct);
+                      const unitLen = product?.unitLengthInches ?? 0;
+                      const cut = parseFloat(cutLength) || 0;
+                      const leftover = unitLen > 0 && cut > 0 ? unitLen - cut : null;
+                      // remaining stock after accounting for cuts already in cart
+                      const alreadyDeductedInches = cart
+                        .filter(c => c.product._id === selectedProduct && c.isCut && c.cutLengthInches)
+                        .reduce((s, c) => s + (c.cutLengthInches ?? 0), 0);
+                      const stockInches = unitLen > 0 ? getStock(selectedProduct) * unitLen : null;
+                      const remainingInches = stockInches != null ? stockInches - alreadyDeductedInches : null;
+                      return (
+                        <div className="space-y-2">
+                          {alreadyDeductedInches > 0 && remainingInches !== null && (
+                            <div className="text-xs bg-slate-100 text-slate-600 rounded-lg px-3 py-1.5 flex items-center justify-between">
+                              <span>Already in cart: {alreadyDeductedInches.toFixed(1)}" ({cart.filter(c => c.product._id === selectedProduct && c.isCut).length} cut{cart.filter(c => c.product._id === selectedProduct && c.isCut).length > 1 ? 's' : ''})</span>
+                              <span className="font-semibold text-amber-700">Remaining: {remainingInches.toFixed(1)}"</span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="8.5"
+                              step="0.1"
+                              max={remainingInches != null ? remainingInches : (unitLen || undefined)}
+                              value={cutLength}
+                              onChange={e => setCutLength(e.target.value)}
+                              placeholder={`Cut length in inches (min 8.5${remainingInches != null ? `, max ${remainingInches.toFixed(1)}` : ''})`}
+                              className="flex-1 px-3 py-2 border border-amber-300 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                            />
+                            <span className="text-sm text-amber-700 font-medium">inches</span>
+                          </div>
+                          {cut >= 8.5 && leftover !== null && leftover >= 0 && (
+                            <div className={`text-xs font-medium rounded-lg px-3 py-2 ${leftover < 8.5 ? 'bg-orange-100 text-orange-700' : 'bg-green-50 text-green-700'}`}>
+                              Cut: {cut}" ({inchesToDisplay(cut)}) &nbsp;|&nbsp; Leftover returned to stock: {leftover.toFixed(1)}" ({inchesToDisplay(leftover)})
+                              {leftover < 8.5 && leftover > 0 && ' ⚠ Leftover too small to cut again'}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -978,16 +1110,19 @@ export default function SalesPage() {
                     )}
                   </div>
 
-                  <input type="number" min="0.01" step="0.01" value={qty}
-                    onChange={e => setQty(Number(e.target.value))}
-                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
-                    className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Qty" />
-                  <div className="flex gap-2">
+                  {!isCutMode && (
+                    <input type="number" min="0.01" step="0.01" value={qty}
+                      onChange={e => setQty(Number(e.target.value))}
+                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
+                      className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Qty" />
+                  )}
+                  <div className={`flex gap-2 ${isCutMode ? 'sm:col-span-2' : ''}`}>
                     <input type="number" min="0" step="0.01" value={price}
                       onChange={e => setPrice(Number(e.target.value))}
                       onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addToCart())}
                       className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" placeholder="Price (₦)" />
-                    <button type="button" onClick={addToCart} disabled={!selectedProduct}
+                    <button type="button" onClick={addToCart}
+                      disabled={!selectedProduct || (isCutMode && (parseFloat(cutLength) < 8.5 || !cutLength))}
                       className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 text-white rounded-xl text-sm font-semibold transition-colors flex items-center gap-1">
                       <Plus className="w-4 h-4" />
                     </button>
@@ -996,7 +1131,7 @@ export default function SalesPage() {
               </div>
 
               {/* Section: Add Services */}
-              <div className="p-6 space-y-3">
+              <div className="p-4 sm:p-6 space-y-3">
                 <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
                   <Wrench className="w-4 h-4 text-purple-500" />Services
                 </h3>
@@ -1054,7 +1189,7 @@ export default function SalesPage() {
 
               {/* Cart + Submit */}
               {(cart.length > 0 || serviceCart.length > 0) && (
-                <div className="p-6 space-y-4">
+                <div className="p-4 sm:p-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">
                       Cart · {cart.length + serviceCart.length} item{(cart.length + serviceCart.length) !== 1 ? 's' : ''}
@@ -1067,23 +1202,40 @@ export default function SalesPage() {
 
                   <div className="space-y-1">
                     {cart.map((item, idx) => (
-                      <div key={`p-${idx}`} className="flex items-center gap-3 py-2.5 px-3 bg-slate-50 rounded-xl">
-                        <div className="flex-1 font-medium text-slate-800 text-sm truncate">{item.product.name}</div>
-                        <span className="text-xs text-slate-400 hidden sm:block">{(item.product as any).unit}</span>
-                        <input type="number" min="0.01" step="0.01" value={item.quantity}
-                          onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
-                          className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
-                        <span className="text-slate-300 text-xs">×</span>
-                        <input type="number" min="0" step="0.01" value={item.unitPrice}
-                          onChange={e => updateItem(idx, 'unitPrice', Number(e.target.value))}
-                          className="w-24 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
-                        <span className="font-bold text-slate-700 text-sm w-24 text-right">
-                          {fmt(item.quantity * item.unitPrice)}
-                        </span>
-                        <button type="button" onClick={() => setCart(cart.filter((_, i) => i !== idx))}
-                          className="text-slate-300 hover:text-red-500 transition-colors">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      <div key={`p-${idx}`} className={`py-2.5 px-3 rounded-xl ${item.isCut ? 'bg-amber-50 border border-amber-100' : 'bg-slate-50'}`}>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              {item.isCut && <Scissors className="w-3 h-3 text-amber-500 flex-shrink-0" />}
+                              <span className="font-medium text-slate-800 text-sm truncate">{item.product.name}</span>
+                            </div>
+                            {item.isCut && item.cutLengthInches != null && item.product.unitLengthInches && (
+                              <p className="text-xs text-amber-700 mt-0.5">
+                                Cut: {item.cutLengthInches}" ({inchesToDisplay(item.cutLengthInches)})
+                                &nbsp;·&nbsp;
+                                Leftover returned to stock: {(item.product.unitLengthInches - item.cutLengthInches).toFixed(1)}"
+                                ({inchesToDisplay(item.product.unitLengthInches - item.cutLengthInches)})
+                              </p>
+                            )}
+                          </div>
+                          {!item.isCut && (
+                            <input type="number" min="0.01" step="0.01" value={item.quantity}
+                              onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
+                              className="w-16 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                          )}
+                          {item.isCut && <span className="text-xs text-amber-600 font-semibold w-16 text-right">1 cut</span>}
+                          <span className="text-slate-300 text-xs">×</span>
+                          <input type="number" min="0" step="0.01" value={item.unitPrice}
+                            onChange={e => updateItem(idx, 'unitPrice', Number(e.target.value))}
+                            className="w-24 px-2 py-1 border border-slate-200 rounded-lg text-sm text-right text-slate-800 bg-white" />
+                          <span className="font-bold text-slate-700 text-sm w-24 text-right">
+                            {fmt(item.quantity * item.unitPrice)}
+                          </span>
+                          <button type="button" onClick={() => setCart(cart.filter((_, i) => i !== idx))}
+                            className="text-slate-300 hover:text-red-500 transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                     {serviceCart.map((item, idx) => (
@@ -1203,7 +1355,7 @@ export default function SalesPage() {
 
           {/* DEBTOR FORM */}
           {tab === 'debtor' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6">
               <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2">
                 <UserPlus className="w-5 h-5 text-amber-500" />
                 Record Debtor
@@ -1256,7 +1408,7 @@ export default function SalesPage() {
 
           {/* EXPENSE FORM */}
           {tab === 'expense' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-6">
               <h3 className="font-bold text-slate-800 mb-5 flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-amber-500" />
                 Record Expense
@@ -1403,9 +1555,14 @@ export default function SalesPage() {
                         )}
                         {items.length > 0 && (
                           <p className="text-xs text-slate-400 mb-1 truncate">
-                            {items.map((it: any) =>
-                              `${it.productName || it.product_name || it.product_id} ×${it.quantity}`
-                            ).join(', ')}
+                            {items.map((it: any) => {
+                              const name = it.productName || it.product_name || it.product_id;
+                              if (it.cutLengthInches || it.cut_length_inches) {
+                                const inches = it.cutLengthInches ?? it.cut_length_inches;
+                                return `${name} (${inches}" cut)`;
+                              }
+                              return `${name} ×${it.quantity}`;
+                            }).join(', ')}
                           </p>
                         )}
                         <p className="text-xs text-slate-400 mb-2">By: {s.staffName}</p>
@@ -1587,7 +1744,7 @@ export default function SalesPage() {
               </div>
 
               <p className="text-xs text-slate-400 text-center">
-                Submitting will lock today's sales and send this report for admin review.
+                This sends today's summary for admin review. You can still add or edit sales and resubmit anytime.
               </p>
             </div>
 
@@ -1953,8 +2110,8 @@ export default function SalesPage() {
               </div>
             </div>
             
-            <div className="flex gap-3 p-6 border-t border-slate-100">
-              <button 
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
+              <button
                 onClick={() => setEditExpense(null)} 
                 disabled={editExpense.loading}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors"
@@ -1979,15 +2136,15 @@ export default function SalesPage() {
       {/* ── Edit Debtor Modal ────────────────────────────────────────────────── */}
       {editDebtor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md">
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100">
               <h2 className="text-lg font-bold text-slate-800">Edit Debtor</h2>
               <button onClick={() => setEditDebtor(null)}
                 className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:p-6 space-y-4">
               {editDebtor.error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{editDebtor.error}</div>
               )}
@@ -2017,7 +2174,7 @@ export default function SalesPage() {
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none bg-slate-50" />
               </div>
             </div>
-            <div className="flex gap-3 p-6 border-t border-slate-100">
+            <div className="flex gap-3 p-4 sm:p-6 border-t border-slate-100">
               <button onClick={() => setEditDebtor(null)} disabled={editDebtor.loading}
                 className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
                 Cancel

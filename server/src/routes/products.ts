@@ -14,6 +14,8 @@ const toProduct = (p: ProductRow) => ({
   unitPrice: num(p.unit_price), previousPrice: num(p.previous_price),
   currentPrice: num(p.current_price), unit: p.unit,
   category: p.category, isActive: p.is_active,
+  isCuttable: p.is_cuttable ?? false,
+  unitLengthInches: p.unit_length_inches != null ? num(p.unit_length_inches) : null,
   createdAt: p.created_at, updatedAt: p.updated_at,
 });
 
@@ -43,11 +45,12 @@ router.post('/', adminOnly,
     const errors = validationResult(req);
     if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
     try {
-      const { name, sku, description, unitPrice, unit, category } = req.body;
+      const { name, sku, description, unitPrice, unit, category, isCuttable, unitLengthInches } = req.body;
       const [product] = await sql<ProductRow[]>`
-        INSERT INTO products (name, sku, description, unit_price, previous_price, current_price, unit, category)
+        INSERT INTO products (name, sku, description, unit_price, previous_price, current_price, unit, category, is_cuttable, unit_length_inches)
         VALUES (${name}, ${sku ?? null}, ${description ?? null}, ${unitPrice}, 0,
-                ${req.body.currentPrice ?? unitPrice}, ${unit}::product_unit, ${category ?? null})
+                ${req.body.currentPrice ?? unitPrice}, ${unit}::product_unit, ${category ?? null},
+                ${isCuttable ?? false}, ${isCuttable && unitLengthInches ? unitLengthInches : null})
         RETURNING *
       `;
       return sendResponse(res, 201, 'Product created', toProduct(product));
@@ -62,23 +65,29 @@ router.put('/:id', adminOnly, [body('name').optional().trim().notEmpty()], async
   try {
     const [existing] = await sql<ProductRow[]>`SELECT * FROM products WHERE id = ${req.params.id}`;
     if (!existing) return sendError(res, 404, 'Product not found');
-    const { name, sku, description, unitPrice, unit, category, isActive } = req.body;
+    const { name, sku, description, unitPrice, unit, category, isActive, isCuttable, unitLengthInches } = req.body;
     const newUnit      = num(existing.unit_price);
     const newCurrent   = unitPrice !== undefined ? unitPrice : num(existing.current_price);
     const newPrevious  = unitPrice !== undefined && unitPrice !== newUnit
                          ? num(existing.current_price) : num(existing.previous_price);
+    const newIsCuttable = isCuttable !== undefined ? isCuttable : existing.is_cuttable;
+    const newUnitLengthInches = newIsCuttable && unitLengthInches != null ? unitLengthInches
+                              : isCuttable === false ? null
+                              : existing.unit_length_inches;
     const [product] = await sql<ProductRow[]>`
       UPDATE products SET
-        name           = COALESCE(${name        ?? null}, name),
-        sku            = COALESCE(${sku         ?? null}, sku),
-        description    = COALESCE(${description ?? null}, description),
-        unit_price     = ${unitPrice ?? newUnit},
-        previous_price = ${newPrevious},
-        current_price  = ${newCurrent},
-        unit           = COALESCE(${unit        ?? null}::product_unit, unit),
-        category       = COALESCE(${category    ?? null}, category),
-        is_active      = COALESCE(${isActive    ?? null}, is_active),
-        updated_at     = now()
+        name               = COALESCE(${name        ?? null}, name),
+        sku                = COALESCE(${sku         ?? null}, sku),
+        description        = COALESCE(${description ?? null}, description),
+        unit_price         = ${unitPrice ?? newUnit},
+        previous_price     = ${newPrevious},
+        current_price      = ${newCurrent},
+        unit               = COALESCE(${unit        ?? null}::product_unit, unit),
+        category           = COALESCE(${category    ?? null}, category),
+        is_active          = COALESCE(${isActive    ?? null}, is_active),
+        is_cuttable        = ${newIsCuttable},
+        unit_length_inches = ${newUnitLengthInches},
+        updated_at         = now()
       WHERE id = ${req.params.id}
       RETURNING *
     `;

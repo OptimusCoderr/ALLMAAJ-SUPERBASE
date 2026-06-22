@@ -198,7 +198,7 @@ function ProductSearch({
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md p-4 sm:p-6">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
@@ -438,6 +438,8 @@ export default function BranchStockPage() {
           name: s.product.name, unit: s.product.unit,
           category: s.product.category,
           unitPrice: parseFloat(s.product.unit_price ?? s.product.current_price ?? 0),
+          isCuttable: s.product.is_cuttable ?? false,
+          unitLengthInches: s.product.unit_length_inches != null ? parseFloat(s.product.unit_length_inches) : null,
         } : undefined,
       })).filter((s: any) => s.product));
     } catch {}
@@ -547,6 +549,20 @@ export default function BranchStockPage() {
     } catch (err: any) { alert(err.message || 'Failed to reject'); }
   }
 
+  function displayCuttableQty(qty: number, unitLengthInches: number): string {
+    const fullPieces = Math.floor(qty);
+    const remnantInches = +(((qty - fullPieces) * unitLengthInches).toFixed(1));
+    if (remnantInches < 0.1) return `${fullPieces} ${fullPieces === 1 ? 'pc' : 'pcs'}`;
+    const ft = Math.floor(remnantInches / 12);
+    const inRem = +(remnantInches % 12).toFixed(1);
+    let remnantStr: string;
+    if (ft === 0) remnantStr = `${remnantInches}"`;
+    else if (inRem < 0.1) remnantStr = `${ft}ft`;
+    else remnantStr = `${ft}ft ${inRem}"`;
+    if (fullPieces === 0) return remnantStr;
+    return `${fullPieces} pcs + ${remnantStr}`;
+  }
+
   // ── Sort icon helper ─────────────────────────────────────────────────────────
 
   function SortIcon({ col }: { col: typeof sortBy }) {
@@ -571,7 +587,7 @@ export default function BranchStockPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Branch Stock</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-800">Branch Stock</h1>
           <p className="text-slate-500 text-sm mt-0.5">Inventory at each branch</p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -592,7 +608,7 @@ export default function BranchStockPage() {
 
       {/* Stats cards */}
       {stock.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {[
             { icon: <Package className="w-5 h-5 text-blue-500" />, bg: 'bg-blue-50', label: 'Total Products', value: stock.length, color: '' },
             { icon: <AlertTriangle className="w-5 h-5 text-red-500" />, bg: 'bg-red-50', label: 'Critical (≤5)', value: critical, color: critical > 0 ? 'text-red-600' : '' },
@@ -753,7 +769,19 @@ export default function BranchStockPage() {
                           <td className="py-3 text-slate-500 hidden md:table-cell pr-4">{item.product?.category || '–'}</td>
                           <td className="py-3 text-slate-500 hidden sm:table-cell pr-4">{item.product?.unit}</td>
                           <td className="py-3 text-right pr-4">
-                            <QtyBadge qty={item.quantity} />
+                            {(item.product as any)?.isCuttable && (item.product as any)?.unitLengthInches
+                              ? (
+                                <div>
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
+                                    {displayCuttableQty(item.quantity, (item.product as any).unitLengthInches)}
+                                  </span>
+                                  <div className="text-xs text-amber-600 mt-0.5">each = {(item.product as any).unitLengthInches}"</div>
+                                </div>
+                              )
+                              : (
+                                <QtyBadge qty={item.quantity} />
+                              )
+                            }
                             <div className="text-xs text-slate-500 mt-0.5">{fmt(item.product?.unitPrice || 0)}</div>
                           </td>
                           <td className="py-3 text-right text-slate-600 hidden lg:table-cell pr-4">{fmt(item.product?.unitPrice || 0)}</td>
@@ -797,7 +825,7 @@ export default function BranchStockPage() {
 
       {/* ── Admin: Pending Requests Tab ── */}
       {tab === 'requests' && isAdmin && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
             <div>
               <h3 className="font-semibold text-slate-700">Pending Stock Requests</h3>
@@ -866,7 +894,7 @@ export default function BranchStockPage() {
 
       {/* ── Staff: My Requests Tab ── */}
       {tab === 'my-requests' && !isAdmin && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-semibold text-slate-700">My Stock Requests</h3>

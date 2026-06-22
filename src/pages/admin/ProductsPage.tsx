@@ -5,7 +5,7 @@ import {
   Plus, Edit2, Trash2, Package, X, Check, Search,
   Download, RefreshCw, CheckCircle, XCircle, AlertCircle,
   Tag, ToggleLeft, ToggleRight, LayoutGrid, LayoutList,
-  TrendingUp, ShoppingBag, Archive,
+  TrendingUp, ShoppingBag, Archive, Scissors,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -13,10 +13,12 @@ import {
 type ProductForm = {
   name: string; sku: string; description: string;
   unitPrice: string; unit: string; category: string;
+  isCuttable: boolean; unitLengthInches: string;
 };
 
 const BLANK: ProductForm = {
   name: '', sku: '', description: '', unitPrice: '', unit: 'piece', category: '',
+  isCuttable: false, unitLengthInches: '',
 };
 
 const UNITS = ['piece', 'kg', 'litre', 'box', 'carton', 'bag', 'roll', 'pair', 'set', 'dozen', 'pack', 'bottle', 'tin', 'sachet'];
@@ -176,6 +178,8 @@ export default function ProductsPage() {
     setForm({
       name: p.name, sku: p.sku ?? '', description: p.description ?? '',
       unitPrice: String(p.unitPrice), unit: p.unit, category: p.category ?? '',
+      isCuttable: p.isCuttable ?? false,
+      unitLengthInches: p.unitLengthInches != null ? String(p.unitLengthInches) : '',
     });
     setFormError(''); setShowForm(true);
   }
@@ -185,10 +189,15 @@ export default function ProductsPage() {
     if (!form.name.trim())     { setFormError('Product name is required'); return; }
     if (!form.unitPrice.trim()) { setFormError('Unit price is required'); return; }
     setSaving(true); setFormError('');
+    if (form.isCuttable && (!form.unitLengthInches || parseFloat(form.unitLengthInches) <= 0)) {
+      setFormError('Unit length in inches is required for cuttable products'); setSaving(false); return;
+    }
     const payload = {
       name: form.name.trim(), sku: form.sku.trim(),
       description: form.description.trim(), unitPrice: parseFloat(form.unitPrice) || 0,
       unit: form.unit, category: form.category.trim(), updatedAt: new Date().toISOString(),
+      isCuttable: form.isCuttable,
+      unitLengthInches: form.isCuttable ? (parseFloat(form.unitLengthInches) || null) : null,
     };
     try {
       if (editing) {
@@ -277,7 +286,7 @@ export default function ProductsPage() {
       </div>
 
       {/* ── Stats bar ──────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3 shadow-sm">
           <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
             <ShoppingBag className="w-5 h-5 text-amber-600" />
@@ -583,7 +592,7 @@ export default function ProductsPage() {
       {/* ── Product form modal ──────────────────────────────────────────────── */}
       {showForm && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-lg max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
               <h3 className="text-lg font-bold text-slate-800">
                 {editing ? 'Edit Product' : 'New Product'}
@@ -685,6 +694,45 @@ export default function ProductsPage() {
                 />
               </div>
 
+              {/* Cuttable toggle */}
+              <div className="p-3 border border-slate-200 rounded-xl space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setForm(p => ({ ...p, isCuttable: !p.isCuttable, unitLengthInches: '' }))}
+                  className="w-full flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <Scissors className="w-4 h-4 text-slate-500" />
+                    <div className="text-left">
+                      <p className="text-sm font-medium text-slate-700">Cuttable Product</p>
+                      <p className="text-xs text-slate-400">Can be cut into smaller pieces and sold</p>
+                    </div>
+                  </div>
+                  {form.isCuttable
+                    ? <ToggleRight className="w-6 h-6 text-amber-500 flex-shrink-0" />
+                    : <ToggleLeft className="w-6 h-6 text-slate-300 flex-shrink-0" />}
+                </button>
+                {form.isCuttable && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
+                      Full Unit Length (inches) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="8.6"
+                      step="0.1"
+                      value={form.unitLengthInches}
+                      onChange={e => setForm(p => ({ ...p, unitLengthInches: e.target.value }))}
+                      placeholder="e.g. 43 for a 3ft 7in stone"
+                      className="w-full px-3 py-2.5 border border-amber-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-amber-50/30"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      Minimum cut will be 8.5". This is the length of one full piece in stock.
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {/* Price preview */}
               {form.unitPrice && (
                 <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl text-sm text-amber-800">
@@ -719,7 +767,7 @@ export default function ProductsPage() {
       {/* ── Assign branch stock modal ───────────────────────────────────────── */}
       {showStock && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[95vw] sm:max-w-md">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
               <h3 className="text-lg font-bold text-slate-800">Assign Branch Stock</h3>
               <button

@@ -161,9 +161,10 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 app.listen(PORT, () => {
   console.log(`ALLMAAJ API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   sql`SELECT 1`
-    .then(() => {
+    .then(async () => {
       console.log('Database connected ✓');
-      return seedAdmin();  // ← add this line
+      
+      return seedAdmin();
     })
     .catch(e => { console.error('Database connection failed:', e.message); process.exit(1); });
 });

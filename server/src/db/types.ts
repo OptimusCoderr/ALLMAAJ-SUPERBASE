@@ -46,6 +46,8 @@ export interface ProductRow {
   unit: string;
   category: string | null;
   is_active: boolean;
+  is_cuttable: boolean;
+  unit_length_inches: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +76,9 @@ export interface SaleItemJson {
   quantity: number;
   unit_price: number;
   subtotal: number;
+  cut_length_inches?: number | null;
+  unit_length_inches?: number | null;
+  stock_deduct_qty?: number;
 }
 
 export interface SaleRow {
