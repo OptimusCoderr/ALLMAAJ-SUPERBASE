@@ -833,6 +833,15 @@ export default function SalesPage() {
             {user?.fullName} &middot; {branches.find(b => b._id === selectedBranch)?.name || 'Branch'}
           </p>
         </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Refresh data"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 shadow-sm text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors disabled:opacity-50 text-sm font-medium"
+        >
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
       </div>
 
       {/* Feedback banners */}
