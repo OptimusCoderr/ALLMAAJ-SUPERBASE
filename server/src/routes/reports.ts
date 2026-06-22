@@ -324,6 +324,22 @@ router.patch('/debtors/:id/reactivate', adminOnly, async (req: Request, res: Res
   }
 });
 
+// DELETE /api/reports/debtors/:id
+router.delete('/debtors/:id', async (req: Request, res: Response) => {
+  try {
+    const isAdmin = req.user?.role === 'admin';
+    const query = isAdmin
+      ? sql<DebtorRow[]>`DELETE FROM debtors WHERE id = ${req.params.id} RETURNING *`
+      : sql<DebtorRow[]>`DELETE FROM debtors WHERE id = ${req.params.id} AND created_by = ${req.userId!} RETURNING *`;
+
+    const [deleted] = await query;
+    if (!deleted) return sendError(res, 404, 'Debtor not found or not authorised');
+    return sendResponse(res, 200, 'Debtor deleted', toDebtor(deleted));
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
 // ── EXPENSES ──────────────────────────────────────────────────────────────────
 
 // GET /api/reports/expenses
