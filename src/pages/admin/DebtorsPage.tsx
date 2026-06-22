@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { find, updateOne, Collections } from '../../lib/api';
+import { find, updateOne, getAuthToken, Collections } from '../../lib/api';
 import type { Debtor, Branch } from '../../lib/types';
-import { UserCheck, Search, CheckCircle, XCircle, Phone, User, Clock } from 'lucide-react';
+import { UserCheck, Search, CheckCircle, XCircle, Phone, User, Clock, Trash2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+
+const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
 function timeOwing(createdAt: string): { label: string; days: number } {
   const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
@@ -36,6 +38,7 @@ export default function DebtorsPage() {
   const [branchFilter, setBranchFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'cleared'>('active');
   const [clearing, setClearing]     = useState<string | null>(null);
+  const [deleting, setDeleting]     = useState<string | null>(null);
 
   useEffect(() => {
     find(Collections.BRANCHES, {}, { sort: { name: 1 } }).then(b => setBranches(b as Branch[]));
@@ -74,6 +77,25 @@ export default function DebtorsPage() {
       ? { ...x, isCleared: true, clearedBy: user!.id, clearedByName: user!.fullName, clearedAt: new Date().toISOString() }
       : x));
     setClearing(null);
+  }
+
+  async function deleteDebtor(d: Debtor) {
+    if (!confirm(`Permanently delete debtor "${d.name}"? This cannot be undone.`)) return;
+    setDeleting(d._id);
+    try {
+      const res = await fetch(`${BASE}/api/reports/debtors/${d._id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || `HTTP ${res.status}`);
+      }
+      setDebtors(prev => prev.filter(x => x._id !== d._id));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete debtor');
+    }
+    setDeleting(null);
   }
 
   async function reactivateDebtor(d: Debtor) {
@@ -249,30 +271,42 @@ export default function DebtorsPage() {
                       </span>
                     )}
 
-                    {/* Action button */}
-                    {d.isCleared ? (
+                    {/* Action buttons */}
+                    <div className="flex flex-col gap-1.5 items-end">
+                      {d.isCleared ? (
+                        <button
+                          onClick={() => reactivateDebtor(d)}
+                          disabled={clearing === d._id || deleting === d._id}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {clearing === d._id
+                            ? <span className="w-3 h-3 border border-amber-600 border-t-transparent rounded-full animate-spin" />
+                            : <XCircle className="w-3.5 h-3.5" />}
+                          Reactivate
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => clearDebtor(d)}
+                          disabled={clearing === d._id || deleting === d._id}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {clearing === d._id
+                            ? <span className="w-3 h-3 border border-green-600 border-t-transparent rounded-full animate-spin" />
+                            : <CheckCircle className="w-3.5 h-3.5" />}
+                          Clear Debt
+                        </button>
+                      )}
                       <button
-                        onClick={() => reactivateDebtor(d)}
-                        disabled={clearing === d._id}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors"
+                        onClick={() => deleteDebtor(d)}
+                        disabled={deleting === d._id || clearing === d._id}
+                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors disabled:opacity-50"
                       >
-                        {clearing === d._id
-                          ? <span className="w-3 h-3 border border-amber-600 border-t-transparent rounded-full animate-spin" />
-                          : <XCircle className="w-3.5 h-3.5" />}
-                        Reactivate
+                        {deleting === d._id
+                          ? <span className="w-3 h-3 border border-red-600 border-t-transparent rounded-full animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" />}
+                        Delete
                       </button>
-                    ) : (
-                      <button
-                        onClick={() => clearDebtor(d)}
-                        disabled={clearing === d._id}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
-                      >
-                        {clearing === d._id
-                          ? <span className="w-3 h-3 border border-green-600 border-t-transparent rounded-full animate-spin" />
-                          : <CheckCircle className="w-3.5 h-3.5" />}
-                        Clear Debt
-                      </button>
-                    )}
+                    </div>
                   </div>
                 </div>
               </div>

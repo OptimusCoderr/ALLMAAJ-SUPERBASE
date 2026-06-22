@@ -5,7 +5,7 @@ import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer } f
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
   Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText, Search,
-  Scissors, ToggleLeft, ToggleRight,
+  Scissors, ToggleLeft, ToggleRight, RefreshCw,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -110,6 +110,7 @@ export default function SalesPage() {
   const [todayExpenses, setTodayExpenses] = useState<Expense[]>([]);
   const [todayDebtors, setTodayDebtors]   = useState<Debtor[]>([]);
   const [rightTab, setRightTab] = useState<'sales' | 'expenses' | 'debtors'>('sales');
+  const [refreshing, setRefreshing] = useState(false);
 
   // Sale form
   const [selectedBranch, setSelectedBranch]   = useState(user?.branchId || '');
@@ -179,7 +180,19 @@ export default function SalesPage() {
     [products]);
 
   useEffect(() => { fetchData(); }, [user]);
-  useEffect(() => { if (selectedBranch) fetchStock(selectedBranch); }, [selectedBranch]);
+  useEffect(() => {
+    if (selectedBranch) {
+      fetchStock(selectedBranch);
+      fetchTodayData(selectedBranch);
+    }
+  }, [selectedBranch]);
+
+  async function handleRefresh() {
+    if (!selectedBranch || refreshing) return;
+    setRefreshing(true);
+    await Promise.all([fetchStock(selectedBranch), fetchTodayData(selectedBranch)]);
+    setRefreshing(false);
+  }
 
   // ── Product search autocomplete ───────────────────────────────────────────
 
@@ -243,7 +256,6 @@ export default function SalesPage() {
     const branch = user?.branchId || (brs[0]?._id ?? '');
     if (branch) {
       setSelectedBranch(branch);
-      fetchTodayData(branch);
     }
   }
 
@@ -1499,7 +1511,7 @@ export default function SalesPage() {
 
           {/* Sub-tabs */}
           <div className="p-3 border-b border-slate-100">
-            <div className="flex gap-1">
+            <div className="flex gap-1 items-center">
               {([
                 { key: 'sales',    label: `Sales (${todaySales.length})` },
                 { key: 'expenses', label: `Expenses (${todayExpenses.length})` },
@@ -1512,6 +1524,14 @@ export default function SalesPage() {
                   {t.label}
                 </button>
               ))}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Refresh data"
+                className="flex-shrink-0 p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              </button>
             </div>
           </div>
 
