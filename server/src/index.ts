@@ -165,6 +165,29 @@ app.listen(PORT, () => {
       console.log('Database connected ✓');
       await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_cuttable boolean NOT NULL DEFAULT false`;
       await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS unit_length_inches numeric`;
+      await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS previous_price numeric(12,2) NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS current_price  numeric(12,2) NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE sales    ADD COLUMN IF NOT EXISTS amount_paid numeric(12,2) NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE sales    ADD COLUMN IF NOT EXISTS balance_due numeric(12,2) NOT NULL DEFAULT 0`;
+      await sql`DO $$ BEGIN ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'part'; EXCEPTION WHEN others THEN NULL; END $$`;
+      await sql`DO $$ BEGIN ALTER TYPE product_unit   ADD VALUE IF NOT EXISTS 'yard'; EXCEPTION WHEN others THEN NULL; END $$`;
+      await sql`DO $$ BEGIN ALTER TYPE product_unit   ADD VALUE IF NOT EXISTS 'metre'; EXCEPTION WHEN others THEN NULL; END $$`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS special_customers (
+          id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name        VARCHAR(150) NOT NULL,
+          phone       VARCHAR(30),
+          email       VARCHAR(254),
+          address     TEXT,
+          notes       TEXT,
+          created_by  UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+          is_active   BOOLEAN NOT NULL DEFAULT true,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS idx_special_customers_name   ON special_customers(name)`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_special_customers_active ON special_customers(is_active)`;
       console.log('Schema migration ✓');
       return seedAdmin();
     })

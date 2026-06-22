@@ -190,7 +190,13 @@ router.post(
                     : paymentMethod === 'part'   ? Number(amountPaid ?? 0)
                     : totalAmount;
       const balance = totalAmount - paid;
-      const staffName = (req.user as any)?.fullName ?? (req.user as any)?.email ?? 'Unknown';
+      const staffName = req.user?.fullName ?? req.user?.email ?? 'Unknown';
+      const saleDateIso = saleDate ? new Date(saleDate).toISOString() : new Date().toISOString();
+
+      console.log('[POST /api/sales] Inserting sale:', {
+        branchId, staffId: req.userId, staffName, paymentMethod,
+        totalAmount, paid, balance, itemCount: processedItems.length,
+      });
 
       const [sale] = await sql<SaleRow[]>`
         INSERT INTO sales
@@ -202,7 +208,7 @@ router.post(
           ${paymentMethod}::payment_method, ${totalAmount},
           ${paid}, ${balance},
           ${notes ?? null}, ${JSON.stringify(processedItems)},
-          ${saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()}
+          ${saleDateIso}
         )
         RETURNING *
       `;
@@ -218,7 +224,12 @@ router.post(
       }
 
       return sendResponse(res, 201, 'Sale recorded', toSale(sale));
-    } catch (err) { return sendError(res, 500, 'Server error', err); }
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      const pgCode = err?.code ?? '';
+      console.error('[POST /api/sales] Error:', err);
+      return sendError(res, 500, `Server error: ${msg} (pg ${pgCode})`, err);
+    }
   }
 );
 
