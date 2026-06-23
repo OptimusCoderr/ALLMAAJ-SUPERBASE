@@ -525,12 +525,18 @@ export default function SalesPage() {
         find(Collections.EXPENSES, { branchId: selectedBranch, expenseDate: { $gte: start, $lte: end } }),
         find(Collections.DEBTORS,  { branchId: selectedBranch, isCleared: false }),
       ]);
-      const totalCashSales    = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0);
-      const totalPosSales     = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0);
-      const totalPartSales    = todaySales.filter(s => s.paymentMethod === 'part').reduce((a, s) => a + Number(s.totalAmount), 0);
+      const partSales         = todaySales.filter(s => s.paymentMethod === 'part');
+      const taggedCashPart    = partSales.filter(s => (s.notes || '').includes('[Part:CASH]'));
+      const taggedPosPart     = partSales.filter(s => (s.notes || '').includes('[Part:POS]'));
+      const legacyPart        = partSales.filter(s => !(s.notes || '').includes('[Part:CASH]') && !(s.notes || '').includes('[Part:POS]'));
+      const partCashPaid      = taggedCashPart.reduce((a: number, s: any) => a + Number(s.amountPaid), 0);
+      const partPosPaid       = taggedPosPart.reduce((a: number, s: any) => a + Number(s.amountPaid), 0);
+      const totalCashSales    = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0) + partCashPaid;
+      const totalPosSales     = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0) + partPosPaid;
+      const totalPartSales    = legacyPart.reduce((a: number, s: any) => a + Number(s.totalAmount), 0);
       const totalUnpaidSales  = todaySales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
       const totalExpenses     = (expensesData as Expense[]).reduce((a, e) => a + Number(e.amount), 0);
-      const netIncome         = totalCashSales + totalPosSales + totalPartSales - totalExpenses;
+      const netIncome         = totalCashSales + totalPosSales + totalPartSales - totalExpenses; // cash/pos already include tagged part amounts
       const debtorCount       = (debtorsData as Debtor[]).length;
       const totalDebtorAmount = (debtorsData as Debtor[]).reduce((a, d) => a + Number(d.amountOwed), 0);
 
@@ -559,9 +565,15 @@ export default function SalesPage() {
   }
 
   // ── Report summary (for confirm modal) ────────────────────────────────────
-  const rsCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0);
-  const rsPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0);
-  const rsPart     = todaySales.filter(s => s.paymentMethod === 'part').reduce((a, s) => a + Number(s.totalAmount), 0);
+  const _rPartSales     = todaySales.filter(s => s.paymentMethod === 'part');
+  const _rTaggedCash    = _rPartSales.filter(s => (s.notes || '').includes('[Part:CASH]'));
+  const _rTaggedPos     = _rPartSales.filter(s => (s.notes || '').includes('[Part:POS]'));
+  const _rLegacyPart    = _rPartSales.filter(s => !(s.notes || '').includes('[Part:CASH]') && !(s.notes || '').includes('[Part:POS]'));
+  const _rPartCashPaid  = _rTaggedCash.reduce((a, s) => a + Number(s.amountPaid), 0);
+  const _rPartPosPaid   = _rTaggedPos.reduce((a, s) => a + Number(s.amountPaid), 0);
+  const rsCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0) + _rPartCashPaid;
+  const rsPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0) + _rPartPosPaid;
+  const rsPart     = _rLegacyPart.reduce((a, s) => a + Number(s.totalAmount), 0);
   const rsUnpaid   = todaySales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
   const rsExpenses = todayExpenses.reduce((a, e) => a + Number(e.amount), 0);
   const reportSummary = {
