@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { find, Collections, getAuthToken } from '../lib/api';
 import type { Branch, Product } from '../lib/types';
 import {
@@ -215,6 +217,8 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 export default function BranchStockPage() {
   const { user } = useAuth();
+  const toast    = useToast();
+  const confirm  = useConfirm();
   const token = getAuthToken() ?? '';
   const isAdmin = user?.role?.toLowerCase() === 'admin';
 
@@ -232,7 +236,6 @@ export default function BranchStockPage() {
 
   // ── UI state ─────────────────────────────────────────────────────────────────
   const [tab, setTab]               = useState<'stock' | 'requests' | 'my-requests'>('stock');
-  const [toast, setToast]           = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   // Stock table filters
   const [tableSearch, setTableSearch]     = useState('');
@@ -342,11 +345,6 @@ export default function BranchStockPage() {
   const hasTableFilters = tableSearch || tableCategory !== 'all' || showLowOnly;
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
-
-  function showToast(msg: string, type: 'success' | 'error' = 'success') {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  }
 
   function toggleSort(col: typeof sortBy) {
     if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -478,7 +476,7 @@ export default function BranchStockPage() {
       setShowReqModal(false);
       setReqQty(1); setReqNotes(''); resetReqSearch();
       fetchMyRequests(); setTab('my-requests');
-      showToast('Stock request submitted successfully');
+      toast.success('Stock request submitted successfully');
     } catch (err: any) { setReqError(err.message || 'Failed to submit'); }
     setReqSaving(false);
   }
@@ -495,7 +493,7 @@ export default function BranchStockPage() {
       });
       setShowAddModal(false);
       setAddQty(1); setAddSourceType('warehouse'); setAddWarehouseId(''); resetAddSearch();
-      fetchStock(); showToast('Stock added successfully');
+      fetchStock(); toast.success('Stock added successfully');
     } catch (err: any) { setAddError(err.message || 'Failed to add stock'); }
     setAddSaving(false);
   }
@@ -509,17 +507,17 @@ export default function BranchStockPage() {
         method: 'PUT',
         body: JSON.stringify({ quantity: editQty }),
       });
-      setEditingStock(null); fetchStock(); showToast('Stock quantity updated');
+      setEditingStock(null); fetchStock(); toast.success('Stock quantity updated');
     } catch (err: any) { setEditError(err.message || 'Failed to update stock'); }
     setEditSaving(false);
   }
 
   async function deleteStockItem(item: StockItem) {
-    if (!confirm(`Remove "${item.product?.name}" from ${branchName} stock? This cannot be undone.`)) return;
+    if (!await confirm({ title: 'Remove Stock', message: `Remove "${item.product?.name}" from ${branchName} stock? This cannot be undone.`, confirmText: 'Remove', danger: true })) return;
     try {
       await authFetch(`/api/branches/${selectedBranch}/stock/${item.productId}`, token, { method: 'DELETE' });
-      fetchStock(); showToast(`Removed ${item.product?.name} from stock`, 'error');
-    } catch (err: any) { alert(err.message || 'Failed to remove stock item'); }
+      fetchStock(); toast.info(`Removed ${item.product?.name} from stock`);
+    } catch (err: any) { toast.error(err.message || 'Failed to remove stock item'); }
   }
 
   async function approveRequest(e: React.FormEvent) {
@@ -536,17 +534,17 @@ export default function BranchStockPage() {
       setApproving(null);
       fetchRequests();
       if (approving.branch_id === selectedBranch) fetchStock();
-      showToast(`Approved request for ${name}`);
+      toast.success(`Approved request for ${name}`);
     } catch (err: any) { setApproveError(err.message || 'Failed to approve'); }
     setApproveSaving(false);
   }
 
   async function rejectRequest(req: StockRequest) {
-    if (!confirm(`Reject stock request for "${req.product_name}" at ${req.branch_name}?`)) return;
+    if (!await confirm({ title: 'Reject Request', message: `Reject stock request for "${req.product_name}" at ${req.branch_name}?`, confirmText: 'Reject', danger: true })) return;
     try {
       await authFetch(`/api/branches/stock-requests/${req.id}/reject`, token, { method: 'PATCH' });
-      fetchRequests(); showToast(`Rejected request for ${req.product_name}`, 'error');
-    } catch (err: any) { alert(err.message || 'Failed to reject'); }
+      fetchRequests(); toast.error(`Rejected request for ${req.product_name}`);
+    } catch (err: any) { toast.error(err.message || 'Failed to reject'); }
   }
 
   function displayCuttableQty(qty: number, unitLengthInches: number): string {
@@ -575,14 +573,6 @@ export default function BranchStockPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
-
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium ${toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
-          {toast.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> : <XCircle className="w-4 h-4 shrink-0" />}
-          {toast.msg}
-        </div>
-      )}
 
       {/* Header */}
       <div className="flex items-center justify-between gap-4">

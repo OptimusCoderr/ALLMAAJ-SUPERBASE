@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { find, Collections, resetAllSalesData } from '../lib/api';
 import type { Sale, DailyReport, Debtor } from '../lib/types';
+import { SkeletonStatCard, Skeleton } from '../components/Skeleton';
 import {
   TrendingUp, TrendingDown, Clock, CheckCircle, DollarSign,
   CreditCard, Package, HandCoins, XCircle, ArrowUpDown, RefreshCw, Trash2,
@@ -295,9 +296,7 @@ export default function DashboardPage() {
       {/* ── Top stat cards ── */}
       {loading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="bg-white rounded-xl p-6 animate-pulse h-28 border border-slate-100" />
-          ))}
+          {[...Array(5)].map((_, i) => <SkeletonStatCard key={i} />)}
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
@@ -355,7 +354,12 @@ export default function DashboardPage() {
       {loading ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {[...Array(2)].map((_, i) => (
-            <div key={i} className="bg-white rounded-xl p-6 animate-pulse h-52 border border-slate-100" />
+            <div key={i} className="bg-white rounded-xl p-6 border border-slate-100 space-y-3">
+              <Skeleton className="h-5 w-48" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-4/6" />
+            </div>
           ))}
         </div>
       ) : (

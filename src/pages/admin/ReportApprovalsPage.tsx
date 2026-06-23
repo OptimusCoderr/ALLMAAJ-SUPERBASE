@@ -1,11 +1,13 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { find, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { DailyReport, Branch, Sale } from '../../lib/types';
 import {
   CheckCircle, XCircle, Clock, Eye, X, Trash2,
   Search, Download, RefreshCw, ChevronDown, ChevronUp,
-  TrendingUp, AlertCircle, BarChart2, FileText,
+  TrendingUp, BarChart2, FileText,
 } from 'lucide-react';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,38 +82,12 @@ function exportCSV(reports: (DailyReport & { branch?: Branch })[]) {
   URL.revokeObjectURL(url);
 }
 
-// ─── Toast ───────────────────────────────────────────────────────────────────
-
-interface Toast { id: number; message: string; type: 'success' | 'error' | 'info' }
-
-function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: number) => void }) {
-  return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
-      {toasts.map(t => (
-        <div
-          key={t.id}
-          className={`flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium pointer-events-auto transition-all
-            ${t.type === 'success' ? 'bg-green-600 text-white' :
-              t.type === 'error'   ? 'bg-red-600 text-white'   :
-                                     'bg-slate-800 text-white'}`}
-        >
-          {t.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> :
-           t.type === 'error'   ? <XCircle className="w-4 h-4 shrink-0" />    :
-                                  <AlertCircle className="w-4 h-4 shrink-0" />}
-          {t.message}
-          <button onClick={() => onRemove(t.id)} className="ml-1 opacity-70 hover:opacity-100">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ReportApprovalsPage() {
   useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
 
   const [reports, setReports]           = useState<(DailyReport & { branch?: Branch })[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -122,8 +98,6 @@ export default function ReportApprovalsPage() {
   const [showFilters, setShowFilters]   = useState(false);
   const [sortField, setSortField]       = useState<'reportDate' | 'totalSales'>('reportDate');
   const [sortAsc, setSortAsc]           = useState(false);
-  const [toasts, setToasts]             = useState<Toast[]>([]);
-  const [toastId, setToastId]           = useState(0);
 
   // Modal state
   const [viewReport, setViewReport]     = useState<(DailyReport & { branch?: Branch }) | null>(null);
@@ -134,16 +108,6 @@ export default function ReportApprovalsPage() {
   const [reportSales, setReportSales]   = useState<Sale[]>([]);
   const [loadingSales, setLoadingSales] = useState(false);
   const [reReview, setReReview]         = useState(false);
-
-  // ── Toast helper ────────────────────────────────────────────────────────────
-  const toast = useCallback((message: string, type: Toast['type'] = 'success') => {
-    const id = toastId + 1;
-    setToastId(id);
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
-  }, [toastId]);
-
-  const removeToast = (id: number) => setToasts(prev => prev.filter(t => t.id !== id));
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
   const fetchReports = useCallback(async () => {
@@ -158,7 +122,7 @@ export default function ReportApprovalsPage() {
       const branchMap = Object.fromEntries((branches as Branch[]).map(b => [b._id, b]));
       setReports((reps as DailyReport[]).map(r => ({ ...r, branch: branchMap[r.branchId] })));
     } catch {
-      toast('Failed to load reports', 'error');
+      toast.error('Failed to load reports');
     } finally {
       setLoading(false);
     }
@@ -233,11 +197,11 @@ export default function ReportApprovalsPage() {
         reviewNotes: reviewNotes.trim(),
       });
       const label = status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Sent back';
-      toast(`${label} report for ${viewReport.branch?.name}`, 'success');
+      toast.success(`${label} report for ${viewReport.branch?.name}`);
       await fetchReports();
       setViewReport(null);
     } catch (e: any) {
-      toast(e?.message || 'Action failed', 'error');
+      toast.error(e?.message || 'Action failed');
     } finally {
       setSaving(false);
     }
@@ -245,17 +209,20 @@ export default function ReportApprovalsPage() {
 
   // ── Delete ───────────────────────────────────────────────────────────────────
   async function handleDelete(r: typeof reports[number], fromModal = false) {
-    if (!confirm(
-      `Delete the report for ${r.branch?.name ?? 'this branch'} on ${fmtDate(r.reportDate)}?\n\nThis permanently removes the submission. The linked sales will NOT be deleted but will become unsubmitted.`
-    )) return;
+    if (!await confirm({
+      title: 'Delete Report',
+      message: `Delete the report for ${r.branch?.name ?? 'this branch'} on ${fmtDate(r.reportDate)}? This permanently removes the submission. The linked sales will NOT be deleted but will become unsubmitted.`,
+      confirmText: 'Delete',
+      danger: true,
+    })) return;
     setDeleting(r._id);
     try {
       await deleteOne(Collections.DAILY_REPORTS, { _id: r._id });
       setReports(prev => prev.filter(x => x._id !== r._id));
       if (fromModal) setViewReport(null);
-      toast(`Deleted report for ${r.branch?.name}`, 'info');
+      toast.info(`Deleted report for ${r.branch?.name}`);
     } catch (e: any) {
-      toast(e?.message || 'Delete failed', 'error');
+      toast.error(e?.message || 'Delete failed');
     } finally {
       setDeleting(null);
     }
@@ -506,7 +473,6 @@ export default function ReportApprovalsPage() {
         />
       )}
 
-      <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );
 }

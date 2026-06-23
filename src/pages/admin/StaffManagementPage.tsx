@@ -1,11 +1,13 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { User, Branch } from '../../lib/types';
 import {
   Plus, Edit2, X, Check, Search, Shield, RefreshCw,
   Download, Users, UserCheck, UserX, Building2,
-  CheckCircle, XCircle, AlertCircle, Eye, EyeOff,
+  Eye, EyeOff,
   ToggleLeft, ToggleRight, Phone, Mail, KeyRound, Trash2,
 } from 'lucide-react';
 
@@ -19,7 +21,6 @@ const BLANK: UserForm = { fullName: '', email: '', phone: '', password: '', role
 
 type RoleFilter   = 'all' | 'admin' | 'staff';
 type StatusFilter = 'all' | 'active' | 'inactive';
-interface Toast { id: number; message: string; type: 'success' | 'error' | 'info' }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,36 +67,12 @@ function exportCSV(users: User[], branches: Branch[]) {
   URL.revokeObjectURL(url);
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
-
-function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: number) => void }) {
-  return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
-      {toasts.map(t => (
-        <div
-          key={t.id}
-          className={`flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium pointer-events-auto
-            ${t.type === 'success' ? 'bg-green-600 text-white' :
-              t.type === 'error'   ? 'bg-red-600 text-white'   :
-                                     'bg-slate-800 text-white'}`}
-        >
-          {t.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> :
-           t.type === 'error'   ? <XCircle className="w-4 h-4 shrink-0" />    :
-                                  <AlertCircle className="w-4 h-4 shrink-0" />}
-          {t.message}
-          <button onClick={() => onRemove(t.id)} className="ml-1 opacity-70 hover:opacity-100">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function StaffManagementPage() {
   const { user: currentUser } = useAuth();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [staff, setStaff]           = useState<User[]>([]);
   const [branches, setBranches]     = useState<Branch[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -115,18 +92,6 @@ export default function StaffManagementPage() {
   const [formError, setFormError]       = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Toasts
-  const [toasts, setToasts]   = useState<Toast[]>([]);
-  const [toastId, setToastId] = useState(0);
-
-  // ── Toast helper ──────────────────────────────────────────────────────────
-  function toast(message: string, type: Toast['type'] = 'success') {
-    const id = toastId + 1;
-    setToastId(id);
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
-  }
-
   // ── Fetch ─────────────────────────────────────────────────────────────────
   async function fetchAll(quiet = false) {
     if (!quiet) setLoading(true);
@@ -139,7 +104,7 @@ export default function StaffManagementPage() {
       setStaff(s as User[]);
       setBranches(b as Branch[]);
     } catch {
-      toast('Failed to load staff', 'error');
+      toast.error('Failed to load staff');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -214,13 +179,13 @@ export default function StaffManagementPage() {
       if (editing) {
         if (form.password) payload.password = form.password;
         await updateOne(Collections.USERS, { _id: editing._id }, { $set: payload });
-        toast(`"${payload.fullName}" updated`);
+        toast.success(`"${payload.fullName}" updated`);
       } else {
         payload.password  = form.password;
         payload.isActive  = true;
         payload.createdAt = new Date().toISOString();
         await insertOne(Collections.USERS, payload);
-        toast(`"${payload.fullName}" created`);
+        toast.success(`"${payload.fullName}" created`);
       }
       await fetchAll(true);
       setShowForm(false); setEditing(null);
@@ -236,26 +201,29 @@ export default function StaffManagementPage() {
     try {
       await updateOne(Collections.USERS, { _id: u._id }, { $set: { isActive: next } });
       setStaff(prev => prev.map(x => x._id === u._id ? { ...x, isActive: next } : x));
-      toast(`"${u.fullName}" ${next ? 'activated' : 'deactivated'}`, next ? 'success' : 'info');
+      toast[next ? 'success' : 'info'](`"${u.fullName}" ${next ? 'activated' : 'deactivated'}`);
     } catch (err: any) {
-      toast(err.message || 'Update failed', 'error');
+      toast.error(err.message || 'Update failed');
     }
   }
 
   async function handleDelete(u: User) {
     if (u._id === currentUser?.id) {
-      toast('You cannot delete your own account', 'error');
+      toast.error('You cannot delete your own account');
       return;
     }
-    if (!window.confirm(
-      `Delete "${u.fullName}"?\n\nThis is permanent. If this user has sales or records linked to them, the delete will be blocked — deactivate them instead.`
-    )) return;
+    if (!await confirm({
+      title: 'Delete Staff Member',
+      message: `Delete "${u.fullName}"? This is permanent. If this user has sales or records linked to them, the delete will be blocked — deactivate them instead.`,
+      confirmText: 'Delete',
+      danger: true,
+    })) return;
     try {
       await deleteOne(Collections.USERS, { _id: u._id });
       setStaff(prev => prev.filter(x => x._id !== u._id));
-      toast(`"${u.fullName}" deleted`);
+      toast.success(`"${u.fullName}" deleted`);
     } catch (err: any) {
-      toast(err.message || 'Delete failed', 'error');
+      toast.error(err.message || 'Delete failed');
     }
   }
 
@@ -749,7 +717,6 @@ export default function StaffManagementPage() {
         </div>
       )}
 
-      <ToastContainer toasts={toasts} onRemove={id => setToasts(prev => prev.filter(t => t.id !== id))} />
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { Branch, User } from '../../lib/types';
 import {
   Plus, Edit2, Trash2, X, Check, Search, Download,
-  RefreshCw, MapPin, CheckCircle, XCircle, AlertCircle,
+  RefreshCw, MapPin,
   ToggleLeft, ToggleRight, Building2, Users, AlertTriangle,
 } from 'lucide-react';
 
@@ -12,7 +14,6 @@ import {
 type BranchForm = { name: string; location: string; description: string };
 const BLANK: BranchForm = { name: '', location: '', description: '' };
 type StatusFilter = 'all' | 'active' | 'inactive';
-interface Toast { id: number; message: string; type: 'success' | 'error' | 'info' }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -37,35 +38,11 @@ function exportCSV(branches: Branch[]) {
   URL.revokeObjectURL(url);
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
-
-function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: number) => void }) {
-  return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
-      {toasts.map(t => (
-        <div
-          key={t.id}
-          className={`flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium pointer-events-auto
-            ${t.type === 'success' ? 'bg-green-600 text-white' :
-              t.type === 'error'   ? 'bg-red-600 text-white'   :
-                                     'bg-slate-800 text-white'}`}
-        >
-          {t.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> :
-           t.type === 'error'   ? <XCircle className="w-4 h-4 shrink-0" />    :
-                                  <AlertCircle className="w-4 h-4 shrink-0" />}
-          {t.message}
-          <button onClick={() => onRemove(t.id)} className="ml-1 opacity-70 hover:opacity-100">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function BranchesPage() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [branches, setBranches]     = useState<Branch[]>([]);
   const [staffMap, setStaffMap]     = useState<Record<string, number>>({});
   const [loading, setLoading]       = useState(true);
@@ -85,18 +62,6 @@ export default function BranchesPage() {
   // Delete
   const [deleting, setDeleting]     = useState<string | null>(null);
 
-  // Toasts
-  const [toasts, setToasts]         = useState<Toast[]>([]);
-  const [toastId, setToastId]       = useState(0);
-
-  // ── Toast helper ─────────────────────────────────────────────────────────────
-  function toast(message: string, type: Toast['type'] = 'success') {
-    const id = toastId + 1;
-    setToastId(id);
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
-  }
-
   // ── Fetch ─────────────────────────────────────────────────────────────────────
   async function fetchAll(quiet = false) {
     if (!quiet) setLoading(true);
@@ -115,7 +80,7 @@ export default function BranchesPage() {
       }
       setStaffMap(map);
     } catch {
-      toast('Failed to load branches', 'error');
+      toast.error('Failed to load branches');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -166,10 +131,10 @@ export default function BranchesPage() {
       const payload = { ...form, updatedAt: new Date().toISOString() };
       if (editing) {
         await updateOne(Collections.BRANCHES, { _id: { $oid: editing._id } }, { $set: payload });
-        toast(`"${form.name}" updated`);
+        toast.success(`"${form.name}" updated`);
       } else {
         await insertOne(Collections.BRANCHES, { ...payload, isActive: true, createdAt: new Date().toISOString() });
-        toast(`Branch "${form.name}" created`);
+        toast.success(`Branch "${form.name}" created`);
       }
       await fetchAll(true);
       setShowForm(false); setEditing(null);
@@ -185,14 +150,14 @@ export default function BranchesPage() {
     const warning = staffCount > 0
       ? `\n\n⚠️ This branch has ${staffCount} staff member${staffCount !== 1 ? 's' : ''} assigned.`
       : '';
-    if (!confirm(`Delete branch "${b.name}"? This cannot be undone.${warning}`)) return;
+    if (!await confirm({ title: 'Delete Branch', message: `Delete branch "${b.name}"? This cannot be undone.${warning}`, confirmText: 'Delete', danger: true })) return;
     setDeleting(b._id);
     try {
       await deleteOne(Collections.BRANCHES, { _id: { $oid: b._id } });
       setBranches(prev => prev.filter(x => x._id !== b._id));
-      toast(`Deleted "${b.name}"`, 'info');
+      toast.info(`Deleted "${b.name}"`);
     } catch (err: any) {
-      toast(err.message || 'Delete failed', 'error');
+      toast.error(err.message || 'Delete failed');
     } finally {
       setDeleting(null);
     }
@@ -203,9 +168,9 @@ export default function BranchesPage() {
     try {
       await updateOne(Collections.BRANCHES, { _id: { $oid: b._id } }, { $set: { isActive: next } });
       setBranches(prev => prev.map(x => x._id === b._id ? { ...x, isActive: next } : x));
-      toast(`"${b.name}" ${next ? 'activated' : 'deactivated'}`, next ? 'success' : 'info');
+      toast[next ? 'success' : 'info'](`"${b.name}" ${next ? 'activated' : 'deactivated'}`);
     } catch (err: any) {
-      toast(err.message || 'Update failed', 'error');
+      toast.error(err.message || 'Update failed');
     }
   }
 
@@ -554,7 +519,6 @@ export default function BranchesPage() {
         </div>
       )}
 
-      <ToastContainer toasts={toasts} onRemove={id => setToasts(prev => prev.filter(t => t.id !== id))} />
     </div>
   );
 }
