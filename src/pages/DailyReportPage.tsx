@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { find, Collections } from '../lib/api';
 import type { Branch, Sale, DailyReport, Expense, Debtor } from '../lib/types';
 import {
@@ -47,6 +48,7 @@ function isFutureDate(dateStr: string): boolean {
 
 export default function DailyReportPage() {
   const { user } = useAuth();
+  const confirm  = useConfirm();
   const [branches, setBranches]             = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState(user?.branchId || '');
   const [reportDate, setReportDate]         = useState(new Date().toISOString().split('T')[0]);
@@ -131,9 +133,11 @@ export default function DailyReportPage() {
   async function submitReport() {
     if (!selectedBranch) { setError('Select a branch'); return; }
     if (futureDate)       { setError('Cannot submit a report for a future date'); return; }
-    if (isResubmit && !window.confirm(
-      `A ${existingReport?.status} report already exists for this date.\nResubmitting will replace it. Continue?`
-    )) return;
+    if (isResubmit && !await confirm({
+      title: 'Replace Existing Report',
+      message: `A ${existingReport?.status} report already exists for this date. Resubmitting will replace it. Continue?`,
+      confirmText: 'Resubmit',
+    })) return;
 
     setSubmitting(true);
     setError('');

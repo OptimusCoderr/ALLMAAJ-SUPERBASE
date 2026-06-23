@@ -3,6 +3,9 @@ import { find, updateOne, getAuthToken, Collections } from '../../lib/api';
 import type { Debtor, Branch } from '../../lib/types';
 import { UserCheck, Search, CheckCircle, XCircle, Phone, User, Clock, Trash2, Pencil, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
+import { SkeletonCard } from '../../components/Skeleton';
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
@@ -41,6 +44,8 @@ function parseProducts(notes: string | undefined): string {
 
 export default function DebtorsPage() {
   const { user } = useAuth();
+  const toast    = useToast();
+  const confirm  = useConfirm();
   const [debtors, setDebtors]       = useState<Debtor[]>([]);
   const [branches, setBranches]     = useState<Branch[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -73,7 +78,7 @@ export default function DebtorsPage() {
   }
 
   async function clearDebtor(d: Debtor) {
-    if (!confirm(`Mark "${d.name}" as cleared? They owed ₦${d.amountOwed.toLocaleString()}.`)) return;
+    if (!await confirm({ title: 'Clear Debt', message: `Mark "${d.name}" as cleared? They owed ₦${d.amountOwed.toLocaleString()}.`, confirmText: 'Clear Debt' })) return;
     setClearing(d._id);
     await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
       $set: {
@@ -91,7 +96,7 @@ export default function DebtorsPage() {
   }
 
   async function deleteDebtor(d: Debtor) {
-    if (!confirm(`Permanently delete debtor "${d.name}"? This cannot be undone.`)) return;
+    if (!await confirm({ title: 'Delete Debtor', message: `Permanently delete "${d.name}"? This cannot be undone.`, confirmText: 'Delete', danger: true })) return;
     setDeleting(d._id);
     try {
       const res = await fetch(`${BASE}/api/reports/debtors/${d._id}`, {
@@ -103,8 +108,9 @@ export default function DebtorsPage() {
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
       setDebtors(prev => prev.filter(x => x._id !== d._id));
+      toast.success('Debtor deleted');
     } catch (err: any) {
-      alert(err.message || 'Failed to delete debtor');
+      toast.error(err.message || 'Failed to delete debtor');
     }
     setDeleting(null);
   }
@@ -143,7 +149,7 @@ export default function DebtorsPage() {
   }
 
   async function reactivateDebtor(d: Debtor) {
-    if (!confirm(`Reactivate debtor "${d.name}"?`)) return;
+    if (!await confirm({ title: 'Reactivate Debtor', message: `Reactivate "${d.name}" as an active debtor?`, confirmText: 'Reactivate' })) return;
     setClearing(d._id);
     await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
       $set: { isCleared: false, clearedBy: null, clearedByName: null, clearedAt: null, updatedAt: new Date().toISOString() },
@@ -227,7 +233,7 @@ export default function DebtorsPage() {
       {/* Cards */}
       {loading ? (
         <div className="space-y-3">
-          {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-slate-100 rounded-xl animate-pulse" />)}
+          {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-slate-400">

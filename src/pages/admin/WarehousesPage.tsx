@@ -1,11 +1,13 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { Warehouse, Product, WarehouseStock } from '../../lib/types';
 import {
   Plus, Edit2, Trash2, X, Check, Package,
   ChevronDown, ChevronUp, Search, Download,
-  RefreshCw, AlertTriangle, TrendingUp,
-  Warehouse as WIcon, MapPin, CheckCircle, XCircle, AlertCircle,
+  RefreshCw, AlertTriangle, TrendingUp,XCircle, CheckCircle,
+  Warehouse as WIcon, MapPin,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -14,8 +16,6 @@ type WarehouseForm = { name: string; location: string; description: string };
 const BLANK_FORM: WarehouseForm = { name: '', location: '', description: '' };
 
 interface StockItem extends WarehouseStock { product: Product }
-
-interface Toast { id: number; message: string; type: 'success' | 'error' | 'info' }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -52,35 +52,11 @@ function exportStockCSV(warehouseName: string, items: StockItem[]) {
   URL.revokeObjectURL(url);
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
-
-function ToastContainer({ toasts, onRemove }: { toasts: Toast[]; onRemove: (id: number) => void }) {
-  return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
-      {toasts.map(t => (
-        <div
-          key={t.id}
-          className={`flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium pointer-events-auto
-            ${t.type === 'success' ? 'bg-green-600 text-white' :
-              t.type === 'error'   ? 'bg-red-600 text-white'   :
-                                     'bg-slate-800 text-white'}`}
-        >
-          {t.type === 'success' ? <CheckCircle className="w-4 h-4 shrink-0" /> :
-           t.type === 'error'   ? <XCircle className="w-4 h-4 shrink-0" />    :
-                                  <AlertCircle className="w-4 h-4 shrink-0" />}
-          {t.message}
-          <button onClick={() => onRemove(t.id)} className="ml-1 opacity-70 hover:opacity-100">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function WarehousesPage() {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [warehouses, setWarehouses]     = useState<Warehouse[]>([]);
   const [products, setProducts]         = useState<Product[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -105,18 +81,6 @@ export default function WarehousesPage() {
   const [stockForm, setStockForm]         = useState({ product_id: '', quantity: 0 });
   const [savingStock, setSavingStock]     = useState(false);
 
-  // Toasts
-  const [toasts, setToasts]             = useState<Toast[]>([]);
-  const [toastId, setToastId]           = useState(0);
-
-  // ── Toast helper ─────────────────────────────────────────────────────────────
-  function toast(message: string, type: Toast['type'] = 'success') {
-    const id = toastId + 1;
-    setToastId(id);
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
-  }
-
   // ── Fetch ─────────────────────────────────────────────────────────────────────
   async function fetchAll(quiet = false) {
     if (!quiet) setLoading(true);
@@ -129,7 +93,7 @@ export default function WarehousesPage() {
       setWarehouses(ws as Warehouse[]);
       setProducts(ps as Product[]);
     } catch {
-      toast('Failed to load warehouses', 'error');
+      toast.error('Failed to load warehouses');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -162,7 +126,7 @@ export default function WarehousesPage() {
         })).filter(s => s.product) as StockItem[],
       }));
     } catch {
-      toast('Failed to load stock', 'error');
+      toast.error('Failed to load stock');
     } finally {
       setLoadingStock(null);
     }
@@ -203,10 +167,10 @@ export default function WarehousesPage() {
       const payload = { ...form, updatedAt: new Date().toISOString() };
       if (editing) {
         await updateOne(Collections.WAREHOUSES, { _id: { $oid: editing._id } }, { $set: payload });
-        toast(`Warehouse "${form.name}" updated`);
+        toast.success(`Warehouse "${form.name}" updated`);
       } else {
         await insertOne(Collections.WAREHOUSES, { ...payload, isActive: true, createdAt: new Date().toISOString() });
-        toast(`Warehouse "${form.name}" created`);
+        toast.success(`Warehouse "${form.name}" created`);
       }
       await fetchAll(true);
       setShowForm(false);
@@ -219,13 +183,13 @@ export default function WarehousesPage() {
   }
 
   async function handleDelete(w: Warehouse) {
-    if (!confirm(`Delete warehouse "${w.name}"? This cannot be undone.`)) return;
+    if (!await confirm({ title: 'Delete Warehouse', message: `Delete warehouse "${w.name}"? This cannot be undone.`, confirmText: 'Delete', danger: true })) return;
     try {
       await deleteOne(Collections.WAREHOUSES, { _id: { $oid: w._id } });
       setWarehouses(prev => prev.filter(x => x._id !== w._id));
-      toast(`Deleted "${w.name}"`, 'info');
+      toast.info(`Deleted "${w.name}"`);
     } catch (err: any) {
-      toast(err.message || 'Delete failed', 'error');
+      toast.error(err.message || 'Delete failed');
     }
   }
 
@@ -244,25 +208,25 @@ export default function WarehousesPage() {
       await fetchStock(warehouseId);
       setShowStockForm(null);
       setStockForm({ product_id: '', quantity: 0 });
-      toast('Stock updated');
+      toast.success('Stock updated');
     } catch (err: any) {
-      toast(err.message || 'Stock save failed', 'error');
+      toast.error(err.message || 'Stock save failed');
     } finally {
       setSavingStock(false);
     }
   }
 
   async function handleDeleteStock(productId: string, warehouseId: string, productName: string) {
-    if (!confirm(`Remove "${productName}" from this warehouse's stock?`)) return;
+    if (!await confirm({ title: 'Remove Stock', message: `Remove "${productName}" from this warehouse's stock?`, confirmText: 'Remove', danger: true })) return;
     try {
       await deleteOne(Collections.WAREHOUSE_STOCK, { warehouseId, productId });
       setStock(prev => ({
         ...prev,
         [warehouseId]: (prev[warehouseId] || []).filter(s => s.productId !== productId),
       }));
-      toast(`Removed "${productName}" from stock`, 'info');
+      toast.info(`Removed "${productName}" from stock`);
     } catch (err: any) {
-      toast(err.message || 'Failed to remove stock item', 'error');
+      toast.error(err.message || 'Failed to remove stock item');
     }
   }
 
@@ -793,7 +757,6 @@ export default function WarehousesPage() {
         </div>
       )}
 
-      <ToastContainer toasts={toasts} onRemove={id => setToasts(prev => prev.filter(t => t.id !== id))} />
     </div>
   );
 }

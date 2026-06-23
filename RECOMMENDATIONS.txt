@@ -1,0 +1,42 @@
+Based on what I've seen of the codebase, here are the highest-value additions ranked by impact:
+
+---
+
+## High Impact (Core UX)
+
+**1. Toast Notifications**
+Replace `alert()`, `confirm()`, and the inline success/error banners with a proper toast system (bottom-right popups). Currently every action feels jarring because alerts block the page.
+
+**2. Loading Skeletons on All Pages**
+Several pages flash blank before data loads. Skeleton placeholders make the app feel fast and polished. Only the debtors page has them — the rest don't.
+
+**3. Confirm Modal Component**
+Every delete/clear uses `window.confirm()` (browser native popup). A custom modal with a red "Delete" button matches the app's design and feels more professional.
+
+---
+
+## Medium Impact (Features)
+
+**4. Export to CSV / PDF**
+Admins likely need to share reports with owners. A download button on the Sales Reports and Debtors pages would be very useful.
+
+**5. Low Stock Alerts**
+A banner or badge on the dashboard/sales page when branch stock for a product drops below a threshold. Right now there's no warning — staff find out when they try to sell.
+
+**6. Dashboard Charts**
+The dashboard likely just shows numbers. A simple bar/line chart for daily sales trends over the past 7–30 days would give admins much more visibility.
+
+**7. PWA / Installable App**
+Add a `manifest.json` and service worker so staff can install it on their phones like a native app. Given this seems to be used in-store, this is very practical.
+
+---
+
+## Low Impact but Nice
+
+**8. Dark Mode**
+**9. Keyboard shortcuts** (e.g. `N` for new sale)
+**10. Pagination** on long lists (sales history, debtors) instead of capping at 100 records
+
+---
+
+**My top 3 recommendation to start:** Toast notifications, low stock alerts, and export to CSV — they solve real daily pain points without being cosmetic. Want me to implement any of these?

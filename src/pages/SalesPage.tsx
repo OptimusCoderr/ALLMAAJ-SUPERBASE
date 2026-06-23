@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { find, insertOne, updateOne, Collections } from '../lib/api';
 import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer } from '../lib/types';
 import {
@@ -100,7 +102,9 @@ function pmButtonStyle(m: PaymentMethod, current: PaymentMethod) {
 
 export default function SalesPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const toast    = useToast();
+  const confirm  = useConfirm();
+  const isAdmin  = user?.role === 'admin';
 
   const [tab, setTab]                 = useState<Tab>('sale');
   const [products, setProducts]       = useState<Product[]>([]);
@@ -672,8 +676,8 @@ export default function SalesPage() {
   }
 
   async function handleDeleteSale(id: string) {
-    if (!window.confirm('Delete this sale? This cannot be undone.')) return;
-    setLoading(true); setError('');
+    if (!await confirm({ title: 'Delete Sale', message: 'Delete this sale? This cannot be undone.', confirmText: 'Delete', danger: true })) return;
+    setLoading(true);
     try {
       const res = await fetch(`${BASE}/api/sales/${id}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` },
@@ -682,11 +686,10 @@ export default function SalesPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
-      setSuccess('Sale deleted.');
+      toast.success('Sale deleted');
       fetchTodayData(selectedBranch);
-      setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to delete sale');
+      toast.error(err.message || 'Failed to delete sale');
     }
     setLoading(false);
   }
@@ -730,7 +733,7 @@ export default function SalesPage() {
   }
 
   async function handleDeleteExpense(e: Expense) {
-    if (!window.confirm(`Delete expense "${e.description}"?`)) return;
+    if (!await confirm({ title: 'Delete Expense', message: `Delete expense "${e.description}"?`, confirmText: 'Delete', danger: true })) return;
     try {
       const res = await fetch(`${BASE}/api/expenses/${(e as any)._id}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` },
@@ -739,11 +742,10 @@ export default function SalesPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
-      setSuccess('Expense deleted.');
+      toast.success('Expense deleted');
       fetchTodayData(selectedBranch);
-      setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to delete expense');
+      toast.error(err.message || 'Failed to delete expense');
     }
   }
 
@@ -783,7 +785,7 @@ export default function SalesPage() {
   }
 
   async function handleDeleteDebtor(d: Debtor) {
-    if (!window.confirm(`Delete debtor record for "${d.name}"?`)) return;
+    if (!await confirm({ title: 'Delete Debtor', message: `Delete debtor record for "${d.name}"?`, confirmText: 'Delete', danger: true })) return;
     try {
       const res = await fetch(`${BASE}/api/reports/debtors/${(d as any)._id}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` },
@@ -792,11 +794,10 @@ export default function SalesPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.message || `HTTP ${res.status}`);
       }
-      setSuccess('Debtor deleted.');
+      toast.success('Debtor deleted');
       fetchTodayData(selectedBranch);
-      setTimeout(() => setSuccess(''), 3000);
     } catch (err: any) {
-      setError(err.message || 'Failed to delete debtor');
+      toast.error(err.message || 'Failed to delete debtor');
     }
   }
 
