@@ -32,6 +32,7 @@ interface EditSaleState {
   pm: PaymentMethod;
   customerName: string; customerPhone: string;
   amountPaid: number;   notes: string;
+  partPaymentMethod: 'cash' | 'pos';
   addProduct: string;   addQty: number; addPrice: number;
   addService: string;   addServiceNotes: string; addServiceQty: number; addServicePrice: number;
   loading: boolean;     error: string;
@@ -119,6 +120,7 @@ export default function SalesPage() {
   // Sale form
   const [selectedBranch, setSelectedBranch]   = useState(user?.branchId || '');
   const [paymentMethod, setPaymentMethod]     = useState<PaymentMethod>('cash');
+  const [partPaymentMethod, setPartPaymentMethod] = useState<'cash' | 'pos'>('cash');
   const [customerName, setCustomerName]       = useState('');
   const [customerPhone, setCustomerPhone]     = useState('');
   const [amountPaid, setAmountPaid]           = useState(0);
@@ -412,7 +414,8 @@ export default function SalesPage() {
             .map(c => `${c.product.name} (${c.cutLengthInches} INCHES CUT)`)
             .join(', ');
           const base = notes.trim();
-          return base && cutSummary ? `${base} | ${cutSummary}` : cutSummary || base;
+          const partTag = paymentMethod === 'part' ? `[Part:${partPaymentMethod.toUpperCase()}]` : '';
+          return [base, cutSummary, partTag].filter(Boolean).join(' | ');
         })(),
         items: [
           ...cart.map(c => ({
@@ -450,7 +453,7 @@ export default function SalesPage() {
       setCart([]);
       setServiceCart([]);
       setCustomerName(''); setCustomerPhone(''); setNotes('');
-      setAmountPaid(0); setPaymentMethod('cash');
+      setAmountPaid(0); setPaymentMethod('cash'); setPartPaymentMethod('cash');
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
@@ -598,11 +601,15 @@ export default function SalesPage() {
         quantity: item.quantity,
         unitPrice: item.unit_price ?? item.unitPrice ?? 0,
       }));
+    const rawNotes = sale.notes || '';
+    const existingPartMethod: 'cash' | 'pos' = rawNotes.includes('[Part:POS]') ? 'pos' : 'cash';
+    const cleanNotes = rawNotes.replace(/\s*\[Part:(CASH|POS)\]/g, '').trim();
     setEditSale({
       sale, cart: rebuilt, serviceCart: rebuiltServices,
       pm: sale.paymentMethod as PaymentMethod,
       customerName: sale.customerName || '', customerPhone: sale.customerPhone || '',
-      amountPaid: sale.amountPaid ?? 0, notes: sale.notes || '',
+      amountPaid: sale.amountPaid ?? 0, notes: cleanNotes,
+      partPaymentMethod: existingPartMethod,
       addProduct: '', addQty: 1, addPrice: 0,
       addService: '', addServiceNotes: '', addServiceQty: 1, addServicePrice: 0,
       loading: false, error: '',
@@ -642,7 +649,11 @@ export default function SalesPage() {
         body: JSON.stringify({
           paymentMethod: editSale.pm,
           customerName: editSale.customerName.trim(), customerPhone: editSale.customerPhone.trim(),
-          amountPaid: ePaid, balanceDue: eBalance, notes: editSale.notes.trim(),
+          amountPaid: ePaid, balanceDue: eBalance, notes: (() => {
+            const base = editSale.notes.trim();
+            const partTag = editSale.pm === 'part' ? `[Part:${editSale.partPaymentMethod.toUpperCase()}]` : '';
+            return [base, partTag].filter(Boolean).join(' | ');
+          })(),
           items: [
             ...editSale.cart.map(c => ({
               productId: c.product._id, productName: c.product.name,
@@ -1299,6 +1310,29 @@ export default function SalesPage() {
                           onChange={e => setAmountPaid(Number(e.target.value))}
                           placeholder="Enter amount customer is paying now"
                           className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-orange-800 mb-1.5">Paid via *</label>
+                        <div className="flex gap-2">
+                          <button type="button"
+                            onClick={() => setPartPaymentMethod('cash')}
+                            className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                              partPaymentMethod === 'cash'
+                                ? 'bg-green-500 text-white border-green-500'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'
+                            }`}>
+                            Cash
+                          </button>
+                          <button type="button"
+                            onClick={() => setPartPaymentMethod('pos')}
+                            className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                              partPaymentMethod === 'pos'
+                                ? 'bg-blue-500 text-white border-blue-500'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'
+                            }`}>
+                            POS
+                          </button>
+                        </div>
                       </div>
                       <div className="grid grid-cols-3 gap-2 text-sm">
                         <div className="bg-white rounded-lg p-2 text-center">
@@ -2019,11 +2053,36 @@ export default function SalesPage() {
               </div>
 
               {editSale.pm === 'part' && (
-                <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl space-y-2">
-                  <label className="block text-sm font-semibold text-orange-800">Amount Paid by Customer (₦) *</label>
-                  <input type="number" min="0.01" step="0.01" value={editSale.amountPaid || ''}
-                    onChange={e => setEditSale({ ...editSale, amountPaid: Number(e.target.value) })}
-                    className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white text-sm" />
+                <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl space-y-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-orange-800">Amount Paid by Customer (₦) *</label>
+                    <input type="number" min="0.01" step="0.01" value={editSale.amountPaid || ''}
+                      onChange={e => setEditSale({ ...editSale, amountPaid: Number(e.target.value) })}
+                      className="w-full px-3 py-2.5 border border-orange-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white text-sm mt-1" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-orange-800 mb-1.5">Paid via *</label>
+                    <div className="flex gap-2">
+                      <button type="button"
+                        onClick={() => setEditSale({ ...editSale, partPaymentMethod: 'cash' })}
+                        className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                          editSale.partPaymentMethod === 'cash'
+                            ? 'bg-green-500 text-white border-green-500'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'
+                        }`}>
+                        Cash
+                      </button>
+                      <button type="button"
+                        onClick={() => setEditSale({ ...editSale, partPaymentMethod: 'pos' })}
+                        className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                          editSale.partPaymentMethod === 'pos'
+                            ? 'bg-blue-500 text-white border-blue-500'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'
+                        }`}>
+                        POS
+                      </button>
+                    </div>
+                  </div>
                   <div className="flex justify-between text-sm pt-1">
                     <span className="text-orange-700">Balance Owed:</span>
                     <span className="font-bold text-red-600">{fmt(Math.max(0, eTotal - editSale.amountPaid))}</span>
