@@ -6,8 +6,8 @@ import type { Warehouse, Product, WarehouseStock } from '../../lib/types';
 import {
   Plus, Edit2, Trash2, X, Check, Package,
   ChevronDown, ChevronUp, Search, Download,
-  RefreshCw, AlertTriangle, TrendingUp,XCircle, CheckCircle,
-  Warehouse as WIcon, MapPin,
+  RefreshCw, AlertTriangle, TrendingUp, XCircle, CheckCircle,
+  Warehouse as WIcon, MapPin, Filter, ArrowUpDown,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -81,6 +81,12 @@ export default function WarehousesPage() {
   const [stockForm, setStockForm]         = useState({ product_id: '', quantity: 0 });
   const [savingStock, setSavingStock]     = useState(false);
 
+  // Stock search enhancements
+  const [stockFilter, setStockFilter]           = useState<Record<string, string>>({});
+  const [stockSort, setStockSort]               = useState<Record<string, string>>({});
+  const [globalMaterialSearch, setGlobalMaterialSearch] = useState('');
+  const [fetchingAllStock, setFetchingAllStock] = useState(false);
+
   // ── Fetch ─────────────────────────────────────────────────────────────────────
   async function fetchAll(quiet = false) {
     if (!quiet) setLoading(true);
@@ -129,6 +135,17 @@ export default function WarehousesPage() {
       toast.error('Failed to load stock');
     } finally {
       setLoadingStock(null);
+    }
+  }
+
+  async function ensureAllStockFetched() {
+    const unfetched = warehouses.filter(w => !stock[w._id] && loadingStock !== w._id);
+    if (unfetched.length === 0) return;
+    setFetchingAllStock(true);
+    try {
+      await Promise.all(unfetched.map(w => fetchStock(w._id)));
+    } finally {
+      setFetchingAllStock(false);
     }
   }
 
@@ -254,21 +271,74 @@ export default function WarehousesPage() {
 
   // ── Filtered warehouses ───────────────────────────────────────────────────────
   const filteredWarehouses = useMemo(() => {
-    if (!search.trim()) return warehouses;
-    const q = search.toLowerCase();
-    return warehouses.filter(w =>
-      w.name.toLowerCase().includes(q) ||
-      (w.location ?? '').toLowerCase().includes(q) ||
-      (w.description ?? '').toLowerCase().includes(q)
-    );
-  }, [warehouses, search]);
+    let result = warehouses;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(w =>
+        w.name.toLowerCase().includes(q) ||
+        (w.location ?? '').toLowerCase().includes(q) ||
+        (w.description ?? '').toLowerCase().includes(q)
+      );
+    }
+    if (globalMaterialSearch.trim()) {
+      const q = globalMaterialSearch.toLowerCase();
+      result = result.filter(w => {
+        const items = stock[w._id] ?? [];
+        return items.some(s =>
+          s.product?.name.toLowerCase().includes(q) ||
+          (s.product?.sku ?? '').toLowerCase().includes(q) ||
+          (s.product?.unit ?? '').toLowerCase().includes(q)
+        );
+      });
+    }
+    return result;
+  }, [warehouses, search, globalMaterialSearch, stock]);
 
   // ── Filtered stock for a warehouse ───────────────────────────────────────────
   function filteredStock(warehouseId: string): StockItem[] {
     const items = stock[warehouseId] ?? [];
-    const q = (stockSearch[warehouseId] ?? '').toLowerCase().trim();
-    if (!q) return items;
-    return items.filter(s => s.product?.name.toLowerCase().includes(q));
+    // Global search takes priority over per-warehouse search
+    const searchTerm = globalMaterialSearch.trim() || (stockSearch[warehouseId] ?? '');
+    const q = searchTerm.toLowerCase().trim();
+    const filter = stockFilter[warehouseId] ?? 'all';
+    const sort   = stockSort[warehouseId]   ?? 'name';
+
+    let result = items;
+
+    if (q) {
+      result = result.filter(s =>
+        s.product?.name.toLowerCase().includes(q) ||
+        (s.product?.sku  ?? '').toLowerCase().includes(q) ||
+        (s.product?.unit ?? '').toLowerCase().includes(q)
+      );
+    }
+
+    if (filter !== 'all') {
+      result = result.filter(s => {
+        const qty = Number(s.quantity);
+        switch (filter) {
+          case 'out':      return qty <= 0;
+          case 'critical': return qty > 0  && qty <= 5;
+          case 'low':      return qty > 5  && qty <= 20;
+          case 'moderate': return qty > 20 && qty <= 50;
+          case 'good':     return qty > 50;
+          default:         return true;
+        }
+      });
+    }
+
+    return [...result].sort((a, b) => {
+      switch (sort) {
+        case 'qty-asc':   return Number(a.quantity) - Number(b.quantity);
+        case 'qty-desc':  return Number(b.quantity) - Number(a.quantity);
+        case 'value-desc': {
+          const av = Number(a.quantity) * (a.product?.unitPrice ?? 0);
+          const bv = Number(b.quantity) * (b.product?.unitPrice ?? 0);
+          return bv - av;
+        }
+        default: return (a.product?.name ?? '').localeCompare(b.product?.name ?? '');
+      }
+    });
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -348,19 +418,68 @@ export default function WarehousesPage() {
       </div>
 
       {/* ── Search ─────────────────────────────────────────────────────────── */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search warehouses by name, location…"
-          className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm"
-        />
-        {search && (
-          <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-            <X className="w-4 h-4" />
-          </button>
+      <div className="space-y-2">
+        {/* Warehouse search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search warehouses by name, location…"
+            className="w-full pl-9 pr-9 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-sm"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Global material search */}
+        <div className="relative">
+          <Package className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={globalMaterialSearch}
+            onChange={e => {
+              setGlobalMaterialSearch(e.target.value);
+              if (e.target.value.trim()) ensureAllStockFetched();
+            }}
+            placeholder="Find material across all warehouses (name, SKU, unit)…"
+            className={`w-full pl-9 pr-9 py-2.5 border rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 shadow-sm transition-colors ${
+              globalMaterialSearch
+                ? 'border-blue-300 bg-blue-50/40 focus:ring-blue-400'
+                : 'bg-white border-slate-200 focus:ring-blue-400'
+            }`}
+          />
+          {fetchingAllStock && !globalMaterialSearch && (
+            <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-400 animate-spin pointer-events-none" />
+          )}
+          {globalMaterialSearch ? (
+            <button onClick={() => setGlobalMaterialSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              <X className="w-4 h-4" />
+            </button>
+          ) : fetchingAllStock ? (
+            <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-400 animate-spin pointer-events-none" />
+          ) : null}
+        </div>
+
+        {/* Active global search badge */}
+        {globalMaterialSearch.trim() && (
+          <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5">
+            <Package className="w-3.5 h-3.5 shrink-0" />
+            {fetchingAllStock
+              ? 'Searching all warehouses…'
+              : `Found in ${filteredWarehouses.length} warehouse${filteredWarehouses.length !== 1 ? 's' : ''}`}
+            <span className="font-semibold">"{globalMaterialSearch}"</span>
+            <button
+              onClick={() => setGlobalMaterialSearch('')}
+              className="ml-auto text-blue-500 hover:text-blue-700 font-medium"
+            >
+              Clear
+            </button>
+          </div>
         )}
       </div>
 
@@ -381,9 +500,10 @@ export default function WarehousesPage() {
         <div className="space-y-4">
           {filteredWarehouses.map(w => {
             const ws      = warehouseStats(w._id);
-            const isOpen  = expanded === w._id;
             const isLoading = loadingStock === w._id;
             const items   = filteredStock(w._id);
+            // Auto-expand when global material search matches items in this warehouse
+            const isOpen  = expanded === w._id || (!!globalMaterialSearch.trim() && items.length > 0);
 
             return (
               <div key={w._id} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
@@ -458,18 +578,71 @@ export default function WarehousesPage() {
                     <div className="p-4 space-y-4">
 
                       {/* Stock panel toolbar */}
-                      <div className="flex flex-col sm:flex-row gap-2.5 items-start sm:items-center justify-between">
-                        <div className="relative flex-1 min-w-0 max-w-xs">
-                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-                          <input
-                            type="text"
-                            value={stockSearch[w._id] ?? ''}
-                            onChange={e => setStockSearch(prev => ({ ...prev, [w._id]: e.target.value }))}
-                            placeholder="Search stock…"
-                            className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                          />
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+                          {/* Per-warehouse search — hidden when global search is active */}
+                          {!globalMaterialSearch.trim() && (
+                            <div className="relative flex-1 min-w-0 max-w-xs">
+                              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                              <input
+                                type="text"
+                                value={stockSearch[w._id] ?? ''}
+                                onChange={e => setStockSearch(prev => ({ ...prev, [w._id]: e.target.value }))}
+                                placeholder="Search by name, SKU, unit…"
+                                className="w-full pl-8 pr-7 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                              />
+                              {stockSearch[w._id] && (
+                                <button
+                                  onClick={() => setStockSearch(prev => ({ ...prev, [w._id]: '' }))}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Filter by stock level */}
+                          <div className="flex items-center gap-1 text-xs text-slate-500 border border-slate-200 rounded-lg bg-white px-2 py-1.5">
+                            <Filter className="w-3 h-3 shrink-0" />
+                            <select
+                              value={stockFilter[w._id] ?? 'all'}
+                              onChange={e => setStockFilter(prev => ({ ...prev, [w._id]: e.target.value }))}
+                              className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer"
+                            >
+                              <option value="all">All levels</option>
+                              <option value="out">Out of Stock</option>
+                              <option value="critical">Critical (≤5)</option>
+                              <option value="low">Low (6-20)</option>
+                              <option value="moderate">Moderate (21-50)</option>
+                              <option value="good">Good (&gt;50)</option>
+                            </select>
+                          </div>
+
+                          {/* Sort */}
+                          <div className="flex items-center gap-1 text-xs text-slate-500 border border-slate-200 rounded-lg bg-white px-2 py-1.5">
+                            <ArrowUpDown className="w-3 h-3 shrink-0" />
+                            <select
+                              value={stockSort[w._id] ?? 'name'}
+                              onChange={e => setStockSort(prev => ({ ...prev, [w._id]: e.target.value }))}
+                              className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer"
+                            >
+                              <option value="name">Name A–Z</option>
+                              <option value="qty-asc">Qty ↑ Low first</option>
+                              <option value="qty-desc">Qty ↓ High first</option>
+                              <option value="value-desc">Value ↓ High first</option>
+                            </select>
+                          </div>
+
+                          {/* Result count */}
+                          {(stockSearch[w._id] || globalMaterialSearch || (stockFilter[w._id] && stockFilter[w._id] !== 'all')) && (
+                            <span className="text-xs text-slate-500 font-medium whitespace-nowrap">
+                              {items.length} / {(stock[w._id] ?? []).length} items
+                            </span>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
+
+                        <div className="flex items-center gap-2 self-end shrink-0">
                           {stock[w._id]?.length > 0 && (
                             <button
                               onClick={() => exportStockCSV(w.name, stock[w._id])}
