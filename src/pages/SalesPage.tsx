@@ -827,8 +827,11 @@ export default function SalesPage() {
   // ── Derived totals ────────────────────────────────────────────────────────
 
   const totalTodaySales    = todaySales.reduce((s, x) => s + Number(x.totalAmount), 0);
-  const totalTodayCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + Number(x.totalAmount), 0);
-  const totalTodayPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((s, x) => s + Number(x.totalAmount), 0);
+  const _tdPartSales       = todaySales.filter(s => s.paymentMethod === 'part');
+  const _tdPartCashPaid    = _tdPartSales.filter(s => (s.notes || '').includes('[Part:CASH]')).reduce((s, x) => s + Number(x.amountPaid), 0);
+  const _tdPartPosPaid     = _tdPartSales.filter(s => (s.notes || '').includes('[Part:POS]')).reduce((s, x) => s + Number(x.amountPaid), 0);
+  const totalTodayCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartCashPaid;
+  const totalTodayPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartPosPaid;
   const totalTodayExpenses = todayExpenses.reduce((s, e) => s + Number(e.amount), 0);
   const totalTodayDebt     = todayDebtors.reduce((s, d) => s + Number(d.amountOwed), 0);
 
