@@ -827,8 +827,11 @@ export default function SalesPage() {
   // ── Derived totals ────────────────────────────────────────────────────────
 
   const totalTodaySales    = todaySales.reduce((s, x) => s + Number(x.totalAmount), 0);
-  const totalTodayCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + Number(x.totalAmount), 0);
-  const totalTodayPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((s, x) => s + Number(x.totalAmount), 0);
+  const _tdPartSales       = todaySales.filter(s => s.paymentMethod === 'part');
+  const _tdPartCashPaid    = _tdPartSales.filter(s => (s.notes || '').includes('[Part:CASH]')).reduce((s, x) => s + Number(x.amountPaid), 0);
+  const _tdPartPosPaid     = _tdPartSales.filter(s => (s.notes || '').includes('[Part:POS]')).reduce((s, x) => s + Number(x.amountPaid), 0);
+  const totalTodayCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartCashPaid;
+  const totalTodayPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartPosPaid;
   const totalTodayExpenses = todayExpenses.reduce((s, e) => s + Number(e.amount), 0);
   const totalTodayDebt     = todayDebtors.reduce((s, d) => s + Number(d.amountOwed), 0);
 
@@ -1325,24 +1328,24 @@ export default function SalesPage() {
                       </div>
                       <div>
                         <label className="block text-sm font-semibold text-orange-800 mb-1.5">Paid via *</label>
-                        <div className="flex gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                           <button type="button"
                             onClick={() => setPartPaymentMethod('cash')}
-                            className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                            className={`py-3 rounded-xl text-sm font-bold border transition-colors active:scale-95 ${
                               partPaymentMethod === 'cash'
-                                ? 'bg-green-500 text-white border-green-500'
-                                : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'
+                                ? 'bg-green-500 text-white border-green-500 shadow-sm'
+                                : 'bg-white text-slate-600 border-slate-200'
                             }`}>
-                            Cash
+                            💵 Cash
                           </button>
                           <button type="button"
                             onClick={() => setPartPaymentMethod('pos')}
-                            className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                            className={`py-3 rounded-xl text-sm font-bold border transition-colors active:scale-95 ${
                               partPaymentMethod === 'pos'
-                                ? 'bg-blue-500 text-white border-blue-500'
-                                : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'
+                                ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
+                                : 'bg-white text-slate-600 border-slate-200'
                             }`}>
-                            POS
+                            💳 POS
                           </button>
                         </div>
                       </div>
@@ -2074,24 +2077,24 @@ export default function SalesPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-orange-800 mb-1.5">Paid via *</label>
-                    <div className="flex gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       <button type="button"
                         onClick={() => setEditSale({ ...editSale, partPaymentMethod: 'cash' })}
-                        className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                        className={`py-3 rounded-xl text-sm font-bold border transition-colors active:scale-95 ${
                           editSale.partPaymentMethod === 'cash'
-                            ? 'bg-green-500 text-white border-green-500'
-                            : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'
+                            ? 'bg-green-500 text-white border-green-500 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200'
                         }`}>
-                        Cash
+                        💵 Cash
                       </button>
                       <button type="button"
                         onClick={() => setEditSale({ ...editSale, partPaymentMethod: 'pos' })}
-                        className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                        className={`py-3 rounded-xl text-sm font-bold border transition-colors active:scale-95 ${
                           editSale.partPaymentMethod === 'pos'
-                            ? 'bg-blue-500 text-white border-blue-500'
-                            : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'
+                            ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200'
                         }`}>
-                        POS
+                        💳 POS
                       </button>
                     </div>
                   </div>
