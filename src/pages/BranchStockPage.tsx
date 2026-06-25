@@ -265,7 +265,6 @@ export default function BranchStockPage() {
   // Add Stock modal (admin)
   const [showAddModal, setShowAddModal]   = useState(false);
   const [addProductId, setAddProductId]   = useState('');
-  const [addSelectedProduct, setAddSelectedProduct] = useState<Product | null>(null);
   const [addQty, setAddQty]               = useState(1);
   const [addInputMode, setAddInputMode]   = useState<'pieces' | 'inches'>('pieces');
   const [addInches, setAddInches]         = useState(0);
@@ -293,6 +292,11 @@ export default function BranchStockPage() {
   const [approveError, setApproveError]   = useState('');
 
   // ── Derived / memoised ───────────────────────────────────────────────────────
+
+  const addSelectedProduct = useMemo(
+    () => (addProductId ? products.find(p => p._id === addProductId) ?? null : null),
+    [products, addProductId]
+  );
 
   const stockMap = useMemo<Map<string, number>>(
     () => new Map(stock.map(s => [s.productId, s.quantity])),
@@ -399,12 +403,12 @@ export default function BranchStockPage() {
     setAddSuggestions([]); setShowAddDropdown(false);
   }
   function selectAddProduct(p: Product) {
-    setAddProductId(p._id); setAddSearch(p.name); setAddSelectedProduct(p);
+    setAddProductId(p._id); setAddSearch(p.name);
     setAddInputMode('pieces'); setAddInches(0);
     setAddSuggestions([]); setShowAddDropdown(false);
   }
   function resetAddSearch() {
-    setAddSearch(''); setAddCategory('all'); setAddProductId(''); setAddSelectedProduct(null);
+    setAddSearch(''); setAddCategory('all'); setAddProductId('');
     setAddInputMode('pieces'); setAddInches(0);
     setAddSuggestions([]); setShowAddDropdown(false);
   }
@@ -1032,7 +1036,7 @@ export default function BranchStockPage() {
                 onSearchChange={handleAddSearchChange}
                 onCategoryChange={handleAddCategoryChange}
                 onSelect={selectAddProduct}
-                onClearSearch={() => { setAddSearch(''); setAddProductId(''); setAddSelectedProduct(null); setAddInputMode('pieces'); setAddInches(0); setAddSuggestions([]); setShowAddDropdown(false); }}
+                onClearSearch={() => { setAddSearch(''); setAddProductId(''); setAddInputMode('pieces'); setAddInches(0); setAddSuggestions([]); setShowAddDropdown(false); }}
                 onDropdownShow={setShowAddDropdown}
               />
             </div>

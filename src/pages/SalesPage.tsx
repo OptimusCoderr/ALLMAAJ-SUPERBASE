@@ -21,7 +21,7 @@ interface CartItem {
 }
 interface ServiceCartItem { serviceName: string; serviceNotes: string; quantity: number; unitPrice: number }
 type Tab           = 'sale' | 'debtor' | 'expense';
-type PaymentMethod = 'cash' | 'pos' | 'part' | 'unpaid';
+type PaymentMethod = 'cash' | 'pos' | 'part' | 'unpaid' | 'split';
 
 const SERVICE_SUGGESTIONS = ['Monogramming', 'Large Format Printing', 'Sublimation', 'Graphics Design'];
 
@@ -33,6 +33,7 @@ interface EditSaleState {
   customerName: string; customerPhone: string;
   amountPaid: number;   notes: string;
   partPaymentMethod: 'cash' | 'pos';
+  splitCashAmount: number; splitPosAmount: number;
   addProduct: string;   addQty: number; addPrice: number;
   addService: string;   addServiceNotes: string; addServiceQty: number; addServicePrice: number;
   loading: boolean;     error: string;
@@ -55,9 +56,10 @@ const PM_COLORS: Record<string, string> = {
   pos:    'bg-blue-100 text-blue-700',
   part:   'bg-orange-100 text-orange-700',
   unpaid: 'bg-red-100 text-red-700',
+  split:  'bg-purple-100 text-purple-700',
 };
 const PM_LABELS: Record<string, string> = {
-  cash: 'Cash', pos: 'POS', part: 'Part Payment', unpaid: 'Unpaid',
+  cash: 'Cash', pos: 'POS', part: 'Part Payment', unpaid: 'Unpaid', split: 'Cash + POS',
 };
 const EXPENSE_CATS = ['transport', 'utilities', 'supplies', 'maintenance', 'other'] as const;
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -91,10 +93,11 @@ function safeItems(raw: any): any[] {
 function pmButtonStyle(m: PaymentMethod, current: PaymentMethod) {
   const on = current === m;
   const c: Record<PaymentMethod, string> = {
-    cash:   on ? 'bg-green-500 text-white border-green-500'   : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-    pos:    on ? 'bg-blue-500 text-white border-blue-500'     : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-    part:   on ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-    unpaid: on ? 'bg-red-500 text-white border-red-500'       : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    cash:   on ? 'bg-green-500 text-white border-green-500'    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    pos:    on ? 'bg-blue-500 text-white border-blue-500'      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    part:   on ? 'bg-orange-500 text-white border-orange-500'  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    unpaid: on ? 'bg-red-500 text-white border-red-500'        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    split:  on ? 'bg-purple-500 text-white border-purple-500'  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
   };
   return `flex-1 py-2 rounded-lg text-sm font-medium transition-colors border ${c[m]}`;
 }
@@ -121,6 +124,8 @@ export default function SalesPage() {
   const [selectedBranch, setSelectedBranch]   = useState(user?.branchId || '');
   const [paymentMethod, setPaymentMethod]     = useState<PaymentMethod>('cash');
   const [partPaymentMethod, setPartPaymentMethod] = useState<'cash' | 'pos'>('cash');
+  const [splitCashAmount, setSplitCashAmount] = useState(0);
+  const [splitPosAmount, setSplitPosAmount]   = useState(0);
   const [customerName, setCustomerName]       = useState('');
   const [customerPhone, setCustomerPhone]     = useState('');
   const [amountPaid, setAmountPaid]           = useState(0);
@@ -385,8 +390,12 @@ export default function SalesPage() {
   const productTotal = cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
   const serviceTotal = serviceCart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
   const total        = productTotal + serviceTotal;
-  const hasDebt = paymentMethod === 'unpaid' || paymentMethod === 'part';
-  const paid    = paymentMethod === 'unpaid' ? 0 : paymentMethod === 'part' ? amountPaid : total;
+  const hasDebt    = paymentMethod === 'unpaid' || paymentMethod === 'part';
+  const splitTotal = splitCashAmount + splitPosAmount;
+  const paid    = paymentMethod === 'unpaid' ? 0
+                : paymentMethod === 'part'   ? amountPaid
+                : paymentMethod === 'split'  ? splitTotal
+                : total;
   const balance = total - paid;
 
   // ── Sale submit ────────────────────────────────────────────────────────────
@@ -402,12 +411,17 @@ export default function SalesPage() {
     if (paymentMethod === 'part' && (amountPaid <= 0 || amountPaid >= total)) {
       setError('Amount paid must be greater than 0 and less than the total'); return;
     }
+    if (paymentMethod === 'split') {
+      if (splitCashAmount <= 0 && splitPosAmount <= 0) { setError('Enter the cash and POS amounts for the split payment'); return; }
+      if (Math.abs(splitTotal - total) > 0.01) { setError(`Split amounts (${fmt(splitTotal)}) must add up to the total (${fmt(total)})`); return; }
+    }
     setLoading(true); setError('');
     try {
       const newSaleId = await insertOne(Collections.SALES, {
         branchId: selectedBranch, staffId: user!.id, staffName: user!.fullName,
         customerName: customerName.trim(), customerPhone: customerPhone.trim(),
         paymentMethod, totalAmount: total, amountPaid: paid, balanceDue: balance,
+        ...(paymentMethod === 'split' ? { cashAmount: splitCashAmount, posAmount: splitPosAmount } : {}),
         notes: (() => {
           const cutSummary = cart
             .filter(c => c.isCut && c.cutLengthInches)
@@ -454,6 +468,7 @@ export default function SalesPage() {
       setServiceCart([]);
       setCustomerName(''); setCustomerPhone(''); setNotes('');
       setAmountPaid(0); setPaymentMethod('cash'); setPartPaymentMethod('cash');
+      setSplitCashAmount(0); setSplitPosAmount(0);
       fetchTodayData(selectedBranch);
       setTimeout(() => setSuccess(''), 5000);
     } catch (err: any) {
@@ -622,6 +637,7 @@ export default function SalesPage() {
       customerName: sale.customerName || '', customerPhone: sale.customerPhone || '',
       amountPaid: sale.amountPaid ?? 0, notes: cleanNotes,
       partPaymentMethod: existingPartMethod,
+      splitCashAmount: sale.cashAmount ?? 0, splitPosAmount: sale.posAmount ?? 0,
       addProduct: '', addQty: 1, addPrice: 0,
       addService: '', addServiceNotes: '', addServiceQty: 1, addServicePrice: 0,
       loading: false, error: '',
@@ -647,10 +663,17 @@ export default function SalesPage() {
     if (eHasDebt && !editSale.customerPhone.trim()) { setEditSale({ ...editSale, error: 'Customer phone required' }); return; }
     const eTotal   = editSale.cart.reduce((s, c) => s + c.quantity * c.unitPrice, 0)
                    + editSale.serviceCart.reduce((s, c) => s + c.quantity * c.unitPrice, 0);
-    const ePaid    = editSale.pm === 'unpaid' ? 0 : editSale.pm === 'part' ? editSale.amountPaid : eTotal;
+    const eSplitTotal = editSale.splitCashAmount + editSale.splitPosAmount;
+    const ePaid    = editSale.pm === 'unpaid' ? 0
+                   : editSale.pm === 'part'   ? editSale.amountPaid
+                   : editSale.pm === 'split'  ? eSplitTotal
+                   : eTotal;
     const eBalance = eTotal - ePaid;
     if (editSale.pm === 'part' && (editSale.amountPaid <= 0 || editSale.amountPaid >= eTotal)) {
       setEditSale({ ...editSale, error: 'Amount paid must be > 0 and < total' }); return;
+    }
+    if (editSale.pm === 'split' && Math.abs(eSplitTotal - eTotal) > 0.01) {
+      setEditSale({ ...editSale, error: `Split amounts (${fmt(eSplitTotal)}) must add up to the total (${fmt(eTotal)})` }); return;
     }
     setEditSale({ ...editSale, loading: true, error: '' });
     try {
@@ -666,6 +689,7 @@ export default function SalesPage() {
             const partTag = editSale.pm === 'part' ? `[Part:${editSale.partPaymentMethod.toUpperCase()}]` : '';
             return [base, partTag].filter(Boolean).join(' | ');
           })(),
+          ...(editSale.pm === 'split' ? { cashAmount: editSale.splitCashAmount, posAmount: editSale.splitPosAmount } : {}),
           items: [
             ...editSale.cart.map(c => ({
               productId: c.product._id, productName: c.product.name,
@@ -929,9 +953,9 @@ export default function SalesPage() {
                 {/* Payment method */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Payment Method</label>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
-                      <button key={m} type="button" onClick={() => { setPaymentMethod(m); setAmountPaid(0); }}
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {(['cash', 'pos', 'split', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
+                      <button key={m} type="button" onClick={() => { setPaymentMethod(m); setAmountPaid(0); setSplitCashAmount(0); setSplitPosAmount(0); }}
                         className={pmButtonStyle(m, paymentMethod)}>
                         {PM_LABELS[m]}
                       </button>
@@ -1364,6 +1388,47 @@ export default function SalesPage() {
                         </div>
                       </div>
                       <p className="text-xs text-orange-600">Balance will be auto-added to Debtors.</p>
+                    </div>
+                  )}
+
+                  {paymentMethod === 'split' && (
+                    <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl space-y-3">
+                      <p className="text-sm font-semibold text-purple-800">Split Payment — Cash + POS</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-purple-700 mb-1">💵 Cash Amount (₦) *</label>
+                          <input type="number" min="0" step="0.01" value={splitCashAmount || ''}
+                            onChange={e => setSplitCashAmount(Number(e.target.value))}
+                            placeholder="0.00"
+                            className="w-full px-3 py-2.5 border border-purple-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-purple-700 mb-1">💳 POS Amount (₦) *</label>
+                          <input type="number" min="0" step="0.01" value={splitPosAmount || ''}
+                            onChange={e => setSplitPosAmount(Number(e.target.value))}
+                            placeholder="0.00"
+                            className="w-full px-3 py-2.5 border border-purple-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white text-sm" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div className="bg-green-50 rounded-lg p-2 text-center">
+                          <p className="text-xs text-slate-400">Cash</p>
+                          <p className="font-bold text-green-700">{fmt(splitCashAmount)}</p>
+                        </div>
+                        <div className="bg-blue-50 rounded-lg p-2 text-center">
+                          <p className="text-xs text-slate-400">POS</p>
+                          <p className="font-bold text-blue-700">{fmt(splitPosAmount)}</p>
+                        </div>
+                        <div className={`rounded-lg p-2 text-center ${Math.abs(splitTotal - total) < 0.01 ? 'bg-green-50' : 'bg-red-50'}`}>
+                          <p className="text-xs text-slate-400">Remaining</p>
+                          <p className={`font-bold text-sm ${Math.abs(splitTotal - total) < 0.01 ? 'text-green-700' : 'text-red-600'}`}>
+                            {fmt(Math.max(0, total - splitTotal))}
+                          </p>
+                        </div>
+                      </div>
+                      {Math.abs(splitTotal - total) < 0.01 && splitTotal > 0 && (
+                        <p className="text-xs text-purple-600 font-medium">Total covered — fully paid via Cash + POS.</p>
+                      )}
                     </div>
                   )}
 
@@ -1861,10 +1926,10 @@ export default function SalesPage() {
               )}
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">Payment Method</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['cash', 'pos', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                  {(['cash', 'pos', 'split', 'part', 'unpaid'] as PaymentMethod[]).map(m => (
                     <button key={m} type="button"
-                      onClick={() => setEditSale({ ...editSale, pm: m, amountPaid: 0 })}
+                      onClick={() => setEditSale({ ...editSale, pm: m, amountPaid: 0, splitCashAmount: 0, splitPosAmount: 0 })}
                       className={pmButtonStyle(m, editSale.pm)}>
                       {PM_LABELS[m]}
                     </button>
@@ -2101,6 +2166,33 @@ export default function SalesPage() {
                   <div className="flex justify-between text-sm pt-1">
                     <span className="text-orange-700">Balance Owed:</span>
                     <span className="font-bold text-red-600">{fmt(Math.max(0, eTotal - editSale.amountPaid))}</span>
+                  </div>
+                </div>
+              )}
+              {editSale.pm === 'split' && (
+                <div className="p-4 bg-purple-50 border border-purple-200 rounded-xl space-y-3">
+                  <p className="text-sm font-semibold text-purple-800">Split Payment — Cash + POS</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-purple-700 mb-1">💵 Cash Amount (₦) *</label>
+                      <input type="number" min="0" step="0.01" value={editSale.splitCashAmount || ''}
+                        onChange={e => setEditSale({ ...editSale, splitCashAmount: Number(e.target.value) })}
+                        placeholder="0.00"
+                        className="w-full px-3 py-2.5 border border-purple-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-purple-700 mb-1">💳 POS Amount (₦) *</label>
+                      <input type="number" min="0" step="0.01" value={editSale.splitPosAmount || ''}
+                        onChange={e => setEditSale({ ...editSale, splitPosAmount: Number(e.target.value) })}
+                        placeholder="0.00"
+                        className="w-full px-3 py-2.5 border border-purple-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white text-sm" />
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-sm pt-1">
+                    <span className="text-purple-700">Remaining to allocate:</span>
+                    <span className={`font-bold ${Math.abs(editSale.splitCashAmount + editSale.splitPosAmount - eTotal) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
+                      {fmt(Math.max(0, eTotal - editSale.splitCashAmount - editSale.splitPosAmount))}
+                    </span>
                   </div>
                 </div>
               )}
