@@ -229,6 +229,132 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
+// ── PUT /api/warehouse-sales/:id ─────────────────────────────────────────────
+
+router.put('/:id', async (req: Request, res: Response) => {
+  try {
+    const {
+      warehouseId, customerName, customerPhone, customerAddress,
+      paymentMethod = 'cash', amountPaid = 0,
+      docType = 'invoice', notes, saleDate, items,
+    } = req.body;
+
+    if (!customerName?.trim())
+      return sendError(res, 400, 'customerName is required');
+    if (!Array.isArray(items) || items.length === 0)
+      return sendError(res, 400, 'At least one item is required');
+    if (!['cash','pos','transfer','credit'].includes(paymentMethod))
+      return sendError(res, 400, 'Invalid payment method');
+    if (!['invoice','waybill'].includes(docType))
+      return sendError(res, 400, 'Invalid doc type');
+
+    const total = items.reduce((s: number, i: any) => s + Number(i.subtotal ?? 0), 0);
+    if (total <= 0) return sendError(res, 400, 'Total must be positive');
+
+    await sql.begin(async tx => {
+      // Restore stock from existing items before replacing them
+      const oldItems = await tx<WarehouseSaleItemRow[]>`
+        SELECT * FROM warehouse_sale_items WHERE sale_id = ${req.params.id}
+      `;
+      for (const item of oldItems) {
+        if (!item.is_external && item.product_id && item.source_warehouse_id) {
+          await tx`
+            UPDATE warehouse_stock
+            SET quantity   = quantity + ${num(item.quantity)},
+                updated_at = now()
+            WHERE warehouse_id = ${item.source_warehouse_id}
+              AND product_id   = ${item.product_id}
+          `;
+        }
+      }
+
+      await tx`DELETE FROM warehouse_sale_items WHERE sale_id = ${req.params.id}`;
+
+      // Validate new stock
+      for (const item of items) {
+        if (item.isExternal || !item.productId) continue;
+        const srcWh = item.sourceWarehouseId ?? warehouseId;
+        if (!srcWh) throw new Error(`Item "${item.productName}" has no source warehouse`);
+        const [stock] = await tx<{ quantity: string }[]>`
+          SELECT quantity FROM warehouse_stock
+          WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
+        `;
+        if (!stock)
+          throw new Error(`"${item.productName}" not found in the selected warehouse`);
+        if (num(stock.quantity) < Number(item.quantity))
+          throw new Error(`Insufficient stock for "${item.productName}" (available: ${num(stock.quantity)}, requested: ${item.quantity})`);
+      }
+
+      // Update sale header
+      await tx`
+        UPDATE warehouse_sales SET
+          warehouse_id     = ${warehouseId ?? null},
+          customer_name    = ${customerName.trim()},
+          customer_phone   = ${customerPhone ?? null},
+          customer_address = ${customerAddress ?? null},
+          payment_method   = ${paymentMethod},
+          total_amount     = ${total},
+          amount_paid      = ${Number(amountPaid)},
+          doc_type         = ${docType},
+          notes            = ${notes ?? null},
+          sale_date        = ${saleDate ?? sql`CURRENT_DATE`},
+          updated_at       = now()
+        WHERE id = ${req.params.id}
+      `;
+
+      // Insert new items and deduct stock
+      for (const item of items) {
+        const srcWh = item.sourceWarehouseId ?? warehouseId ?? null;
+        await tx`
+          INSERT INTO warehouse_sale_items
+            (sale_id, product_id, product_name, quantity, unit_price, subtotal, unit,
+             source_warehouse_id, is_external, external_source)
+          VALUES (
+            ${req.params.id},
+            ${item.productId ?? null},
+            ${item.productName},
+            ${Number(item.quantity)},
+            ${Number(item.unitPrice)},
+            ${Number(item.subtotal)},
+            ${item.unit ?? 'pcs'},
+            ${!item.isExternal ? srcWh : null},
+            ${item.isExternal ?? false},
+            ${item.externalSource ?? null}
+          )
+        `;
+        if (!item.isExternal && item.productId && srcWh) {
+          await tx`
+            UPDATE warehouse_stock
+            SET quantity   = quantity - ${Number(item.quantity)},
+                updated_at = now()
+            WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
+          `;
+        }
+      }
+    });
+
+    const [full] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string })[]>`
+      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name
+      FROM   warehouse_sales ws
+      LEFT JOIN warehouses w ON w.id = ws.warehouse_id
+      JOIN  users u           ON u.id = ws.created_by
+      WHERE  ws.id = ${req.params.id}
+    `;
+    if (!full) return sendError(res, 404, 'Sale not found');
+
+    const itemRows = await sql<WarehouseSaleItemRow[]>`
+      SELECT * FROM warehouse_sale_items WHERE sale_id = ${req.params.id} ORDER BY id
+    `;
+
+    return sendResponse(res, 200, 'Sale updated', toSale({ ...full, items: itemRows }));
+  } catch (err: any) {
+    console.error('[PUT /warehouse-sales/:id]', err);
+    if (err.message?.includes('Insufficient stock') || err.message?.includes('not found in'))
+      return sendError(res, 409, err.message);
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
 // ── DELETE /api/warehouse-sales/:id ──────────────────────────────────────────
 
 router.delete('/:id', async (req: Request, res: Response) => {

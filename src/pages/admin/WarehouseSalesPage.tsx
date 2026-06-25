@@ -349,6 +349,26 @@ export default function WarehouseSalesPage() {
   const [viewSale, setViewSale] = useState<WarehouseSale | null>(null);
   const invoiceRef = useRef<HTMLDivElement>(null);
 
+  // ── Edit modal
+  const [editSale, setEditSale]           = useState<WarehouseSale | null>(null);
+  const [editCart, setEditCart]           = useState<CartItem[]>([]);
+  const [editCustomerName, setEditCustomerName]     = useState('');
+  const [editCustomerPhone, setEditCustomerPhone]   = useState('');
+  const [editCustomerAddress, setEditCustomerAddress] = useState('');
+  const [editPayMethod, setEditPayMethod]           = useState<PayMethod>('cash');
+  const [editAmountPaid, setEditAmountPaid]         = useState(0);
+  const [editDocType, setEditDocType]               = useState<DocType>('invoice');
+  const [editNotes, setEditNotes]                   = useState('');
+  const [editSaleDate, setEditSaleDate]             = useState('');
+  const [editError, setEditError]                   = useState('');
+  const [editSubmitting, setEditSubmitting]         = useState(false);
+  const [editShowExtForm, setEditShowExtForm]       = useState(false);
+  const [editExtName, setEditExtName]               = useState('');
+  const [editExtSource, setEditExtSource]           = useState('');
+  const [editExtQty, setEditExtQty]                 = useState(1);
+  const [editExtPrice, setEditExtPrice]             = useState(0);
+  const [editExtUnit, setEditExtUnit]               = useState('pcs');
+
   const total   = cart.reduce((s, i) => s + i.subtotal, 0);
   const balance = payMethod === 'credit' ? Math.max(0, total - amountPaid) : 0;
 
@@ -548,6 +568,111 @@ export default function WarehouseSalesPage() {
       const json = await res.json();
       setViewSale(json.data);
     } catch { toast.error('Failed to load sale'); }
+  }
+
+  // ── Edit ────────────────────────────────────────────────────────────────────
+
+  function openEdit(sale: WarehouseSale) {
+    setEditSale(sale);
+    setEditCart(sale.items.map(item => ({
+      key: item.id ?? `${item.productId}::${item.sourceWarehouseId}::${Math.random()}`,
+      productId: item.productId ?? null,
+      productName: item.productName,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      subtotal: item.subtotal,
+      unit: item.unit,
+      availableQty: Infinity,
+      sourceWarehouseId: item.sourceWarehouseId ?? null,
+      sourceWarehouseName: (item as any).sourceWarehouseName ?? null,
+      isExternal: item.isExternal ?? false,
+      externalSource: item.externalSource ?? '',
+    })));
+    setEditCustomerName(sale.customerName);
+    setEditCustomerPhone(sale.customerPhone ?? '');
+    setEditCustomerAddress(sale.customerAddress ?? '');
+    setEditPayMethod(sale.paymentMethod);
+    setEditAmountPaid(sale.amountPaid);
+    setEditDocType(sale.docType);
+    setEditNotes(sale.notes ?? '');
+    setEditSaleDate((sale.saleDate ?? '').split('T')[0]);
+    setEditError('');
+    setEditShowExtForm(false);
+  }
+
+  function updateEditQty(key: string, qty: number) {
+    if (qty <= 0) { setEditCart(p => p.filter(c => c.key !== key)); return; }
+    setEditCart(p => p.map(c => c.key === key
+      ? { ...c, quantity: qty, subtotal: Math.round(qty * c.unitPrice * 100) / 100 }
+      : c));
+  }
+
+  function updateEditPrice(key: string, price: number) {
+    setEditCart(p => p.map(c => c.key === key
+      ? { ...c, unitPrice: price, subtotal: Math.round(c.quantity * price * 100) / 100 }
+      : c));
+  }
+
+  function addEditExternalItem() {
+    if (!editExtName.trim() || editExtQty <= 0 || editExtPrice <= 0) {
+      setEditError('Fill in name, quantity and price for the external item'); return;
+    }
+    setEditCart(p => [...p, {
+      key: `ext::${Date.now()}`,
+      productId: null, productName: editExtName.trim(),
+      quantity: editExtQty, unitPrice: editExtPrice,
+      subtotal: Math.round(editExtQty * editExtPrice * 100) / 100,
+      unit: editExtUnit, availableQty: Infinity,
+      sourceWarehouseId: null, sourceWarehouseName: null,
+      isExternal: true, externalSource: editExtSource.trim(),
+    }]);
+    setEditExtName(''); setEditExtSource(''); setEditExtQty(1); setEditExtPrice(0); setEditExtUnit('pcs');
+    setEditShowExtForm(false);
+  }
+
+  async function handleUpdate() {
+    setEditError('');
+    if (!editCustomerName.trim()) { setEditError('Customer name is required'); return; }
+    if (editCart.length === 0)   { setEditError('At least one item is required'); return; }
+    const editTotal = editCart.reduce((s, i) => s + i.subtotal, 0);
+    if (editTotal <= 0)          { setEditError('Total must be greater than zero'); return; }
+
+    setEditSubmitting(true);
+    try {
+      const res = await fetch(`${BASE}/api/warehouse-sales/${editSale!._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({
+          warehouseId: editSale!.warehouseId || null,
+          customerName: editCustomerName.trim(),
+          customerPhone: editCustomerPhone.trim() || null,
+          customerAddress: editCustomerAddress.trim() || null,
+          paymentMethod: editPayMethod,
+          amountPaid: editPayMethod === 'credit' ? editAmountPaid : editTotal,
+          docType: editDocType,
+          notes: editNotes.trim() || null,
+          saleDate: editSaleDate,
+          items: editCart.map(c => ({
+            productId: c.productId, productName: c.productName,
+            quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.subtotal,
+            unit: c.unit, sourceWarehouseId: c.sourceWarehouseId,
+            isExternal: c.isExternal, externalSource: c.externalSource || null,
+          })),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
+
+      const updated: WarehouseSale = json.data;
+      toast.success(`${updated.docType === 'waybill' ? 'Waybill' : 'Invoice'} #${updated.invoiceNumber} updated`);
+      setEditSale(null);
+      setViewSale(updated);
+      setHistory(prev => prev.map(s => s._id === updated._id ? updated : s));
+      loadAllStock();
+    } catch (err: any) {
+      setEditError(err.message || 'Failed to update sale');
+    }
+    setEditSubmitting(false);
   }
 
   // ── Print ───────────────────────────────────────────────────────────────────
@@ -1001,6 +1126,10 @@ export default function WarehouseSalesPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button onClick={() => openEdit(viewSale)}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-bold transition-colors">
+                  <Edit2 className="w-4 h-4" />Edit
+                </button>
                 <button onClick={handlePrint}
                   className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm">
                   <Printer className="w-4 h-4" />Print
@@ -1017,6 +1146,219 @@ export default function WarehouseSalesPage() {
                   <InvoiceDocument sale={viewSale} settings={settings} />
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Edit Modal ══ */}
+      {editSale && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 flex-shrink-0">
+              <div>
+                <p className="font-bold text-slate-800">Edit {editDocType === 'waybill' ? 'Waybill' : 'Invoice'} #{editSale.invoiceNumber}</p>
+                <p className="text-xs text-slate-400">Changes will restore and re-deduct stock automatically</p>
+              </div>
+              <button onClick={() => setEditSale(null)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-4 space-y-4">
+              {/* Customer */}
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Customer Details</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Name *</label>
+                    <input type="text" value={editCustomerName} onChange={e => setEditCustomerName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Phone</label>
+                    <input type="tel" value={editCustomerPhone} onChange={e => setEditCustomerPhone(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs text-slate-500 mb-1">Address</label>
+                    <input type="text" value={editCustomerAddress} onChange={e => setEditCustomerAddress(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment + doc type + date */}
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Payment & Document</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(['cash','pos','transfer','credit'] as PayMethod[]).map(m => (
+                    <button key={m} onClick={() => setEditPayMethod(m)}
+                      className={`py-2 rounded-xl text-xs font-semibold border transition-colors ${
+                        editPayMethod === m ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}>
+                      {PM_LABELS[m]}
+                    </button>
+                  ))}
+                </div>
+                {editPayMethod === 'credit' && (
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Amount Paid (₦)</label>
+                    <input type="number" min="0" step="0.01" value={editAmountPaid || ''}
+                      onChange={e => setEditAmountPaid(parseFloat(e.target.value) || 0)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Document Type</label>
+                    <div className="flex gap-2">
+                      {(['invoice','waybill'] as DocType[]).map(d => (
+                        <button key={d} onClick={() => setEditDocType(d)}
+                          className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-colors capitalize ${
+                            editDocType === d
+                              ? d === 'invoice' ? 'bg-blue-500 text-white border-blue-500' : 'bg-green-600 text-white border-green-600'
+                              : 'bg-white text-slate-600 border-slate-200'
+                          }`}>
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Sale Date</label>
+                    <input type="date" value={editSaleDate} onChange={e => setEditSaleDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Notes</label>
+                  <input type="text" value={editNotes} onChange={e => setEditNotes(e.target.value)}
+                    placeholder="Additional notes…"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                </div>
+              </div>
+
+              {/* Items */}
+              <div className="bg-slate-50 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Items ({editCart.length})</p>
+                  <button onClick={() => setEditShowExtForm(v => !v)}
+                    className="flex items-center gap-1 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg font-semibold">
+                    <Plus className="w-3.5 h-3.5" />Add External Item
+                  </button>
+                </div>
+
+                {editShowExtForm && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+                    <p className="text-xs font-semibold text-amber-800">New External / Custom Item</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="col-span-2">
+                        <input type="text" value={editExtName} onChange={e => setEditExtName(e.target.value)}
+                          placeholder="Item name *"
+                          className="w-full px-3 py-2 border border-amber-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                      </div>
+                      <input type="text" value={editExtSource} onChange={e => setEditExtSource(e.target.value)}
+                        placeholder="Source (optional)"
+                        className="px-3 py-2 border border-amber-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                      <input type="text" value={editExtUnit} onChange={e => setEditExtUnit(e.target.value)}
+                        placeholder="Unit (pcs, kg…)"
+                        className="px-3 py-2 border border-amber-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                      <input type="number" min="0.01" step="0.01" value={editExtQty || ''} onChange={e => setEditExtQty(parseFloat(e.target.value) || 0)}
+                        placeholder="Qty *"
+                        className="px-3 py-2 border border-amber-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                      <input type="number" min="0" step="0.01" value={editExtPrice || ''} onChange={e => setEditExtPrice(parseFloat(e.target.value) || 0)}
+                        placeholder="Unit price ₦ *"
+                        className="px-3 py-2 border border-amber-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={addEditExternalItem}
+                        className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold">Add to Cart</button>
+                      <button onClick={() => setEditShowExtForm(false)}
+                        className="px-4 py-2 bg-white border border-amber-200 text-amber-700 rounded-lg text-xs font-medium">Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  {editCart.map(item => (
+                    <div key={item.key} className="p-3 bg-white rounded-xl border border-slate-200">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-800 truncate">{item.productName}</p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {item.isExternal ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">
+                                EXT{item.externalSource ? ` · ${item.externalSource}` : ''}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+                                {item.sourceWarehouseName ?? 'Warehouse'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button onClick={() => setEditCart(p => p.filter(c => c.key !== item.key))}
+                          className="text-slate-300 hover:text-red-500 flex-shrink-0">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
+                          <button onClick={() => updateEditQty(item.key, item.quantity - 1)}
+                            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600">
+                            <Minus className="w-3 h-3" />
+                          </button>
+                          <input type="number" min="0.01" step="0.01" value={item.quantity}
+                            onChange={e => updateEditQty(item.key, parseFloat(e.target.value) || 0)}
+                            className="w-14 text-center text-sm py-1.5 focus:outline-none bg-slate-50 font-medium" />
+                          <button onClick={() => updateEditQty(item.key, item.quantity + 1)}
+                            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600">
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="flex-1 relative">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">₦</span>
+                          <input type="number" min="0" step="0.01" value={item.unitPrice}
+                            onChange={e => updateEditPrice(item.key, parseFloat(e.target.value) || 0)}
+                            className="w-full pl-5 pr-2 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-amber-400 bg-white font-medium" />
+                        </div>
+                        <span className="text-xs font-bold text-amber-700 min-w-[72px] text-right flex-shrink-0">{fmt(item.subtotal)}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {editCart.length === 0 && (
+                    <p className="text-center text-sm text-slate-400 py-4">No items — all removed</p>
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                  <span className="text-sm font-semibold text-slate-600">Total</span>
+                  <span className="text-lg font-extrabold text-amber-600">
+                    {fmt(editCart.reduce((s, i) => s + i.subtotal, 0))}
+                  </span>
+                </div>
+              </div>
+
+              {editError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">{editError}</p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex gap-3 p-4 border-t border-slate-100 flex-shrink-0">
+              <button onClick={() => setEditSale(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={handleUpdate} disabled={editSubmitting}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white font-bold text-sm shadow-sm flex items-center justify-center gap-2">
+                {editSubmitting
+                  ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : null}
+                {editSubmitting ? 'Saving…' : 'Save Changes'}
+              </button>
             </div>
           </div>
         </div>
