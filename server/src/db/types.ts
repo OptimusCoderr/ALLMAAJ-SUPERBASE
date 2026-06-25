@@ -204,6 +204,9 @@ export interface WarehouseSaleItemRow {
   unit_price: string;
   subtotal: string;
   unit: string;
+  source_warehouse_id: string | null;
+  is_external: boolean;
+  external_source: string | null;
 }
 
 /** Convert NUMERIC string → number (postgres.js returns NUMERIC as string) */
