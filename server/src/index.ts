@@ -12,7 +12,8 @@ import branchRoutes    from './routes/branches.js';
 import saleRoutes      from './routes/sales.js';
 import reportRoutes    from './routes/reports.js';
 import userRoutes      from './routes/users.js';
-import warehouseRoutes from './routes/warehouses.js';
+import warehouseRoutes      from './routes/warehouses.js';
+import warehouseSaleRoutes  from './routes/warehouseSales.js';
 import specialCustomerRoutes from './routes/specialCustomers.js';
 
 import sql from './db/client.js';
@@ -135,7 +136,8 @@ app.use('/api/branches',   branchRoutes);
 app.use('/api/sales',      saleRoutes);
 app.use('/api/reports',    reportRoutes);
 app.use('/api/users',      userRoutes);
-app.use('/api/warehouses', warehouseRoutes);
+app.use('/api/warehouses',      warehouseRoutes);
+app.use('/api/warehouse-sales', warehouseSaleRoutes);
 app.use('/api/special-customers', specialCustomerRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────────

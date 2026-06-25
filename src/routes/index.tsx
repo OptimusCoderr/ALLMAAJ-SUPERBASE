@@ -9,6 +9,7 @@ import BranchStockPage from '../pages/BranchStockPage';
 import StaffManagementPage from '../pages/admin/StaffManagementPage';
 import BranchesPage from '../pages/admin/BranchesPage';
 import WarehousesPage from '../pages/admin/WarehousesPage';
+import WarehouseSalesPage from '../pages/admin/WarehouseSalesPage';
 import ProductsPage from '../pages/admin/ProductsPage';
 import SalesReportsPage from '../pages/admin/SalesReportsPage';
 import DebtorsPage from '../pages/admin/DebtorsPage';
@@ -63,6 +64,14 @@ const router = createBrowserRouter([
         element: (
           <ProtectedRoute requiredRole="admin">
             <WarehousesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: 'admin/warehouse-sales',
+        element: (
+          <ProtectedRoute requiredRole="admin">
+            <WarehouseSalesPage />
           </ProtectedRoute>
         ),
       },

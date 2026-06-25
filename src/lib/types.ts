@@ -144,6 +144,40 @@ export interface DebtorPayment extends MongoDoc {
   createdAt: string;
 }
 
+// ─── Warehouse Sales ──────────────────────────────────────────────────────────
+
+export interface WarehouseSaleItem {
+  id?: string;
+  saleId?: string;
+  productId: string | null;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  unit: string;
+}
+
+export interface WarehouseSale extends MongoDoc {
+  invoiceNumber: string;
+  warehouseId: string;
+  warehouseName?: string | null;
+  createdBy: string;
+  createdByName?: string | null;
+  customerName: string;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
+  paymentMethod: 'cash' | 'pos' | 'transfer' | 'credit';
+  totalAmount: number;
+  amountPaid: number;
+  balanceDue: number;
+  docType: 'invoice' | 'waybill';
+  notes?: string | null;
+  saleDate: string;
+  items: WarehouseSaleItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ─── Expenses ──────────────────────────────────────────────────────────────────
 
 export interface Expense extends MongoDoc {

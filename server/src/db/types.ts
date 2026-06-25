@@ -176,6 +176,36 @@ export interface SpecialCustomerRow {
   updated_at: string;
 }
 
+export interface WarehouseSaleRow {
+  id: string;
+  invoice_number: string;
+  warehouse_id: string;
+  created_by: string;
+  customer_name: string;
+  customer_phone: string | null;
+  customer_address: string | null;
+  payment_method: 'cash' | 'pos' | 'transfer' | 'credit';
+  total_amount: string;
+  amount_paid: string;
+  balance_due: string;
+  doc_type: 'invoice' | 'waybill';
+  notes: string | null;
+  sale_date: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WarehouseSaleItemRow {
+  id: string;
+  sale_id: string;
+  product_id: string | null;
+  product_name: string;
+  quantity: string;
+  unit_price: string;
+  subtotal: string;
+  unit: string;
+}
+
 /** Convert NUMERIC string → number (postgres.js returns NUMERIC as string) */
 export const num = (v: string | null | undefined): number =>
   v == null ? 0 : parseFloat(v);
