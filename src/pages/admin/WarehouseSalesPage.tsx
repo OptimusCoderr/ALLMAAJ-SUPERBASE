@@ -1,13 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import { getAuthToken } from '../../lib/api';
 import type { Warehouse, WarehouseSale, WarehouseSaleItem } from '../../lib/types';
 import {
   ShoppingCart, Printer, FileText, Truck, Trash2, Plus, Minus,
   Search, X, Package, Building2, User, Phone, MapPin, CreditCard,
   DollarSign, ArrowLeftRight, Clock, CheckCircle, ChevronDown,
-  RefreshCw, Eye, Upload, Settings, ExternalLink, Download, Edit2,
+  RefreshCw, Eye, Upload, Settings, ExternalLink, Edit2,
 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 
@@ -348,8 +346,7 @@ export default function WarehouseSalesPage() {
   const [historyWarehouse, setHistoryWarehouse] = useState('');
 
   // ── Invoice viewer
-  const [viewSale, setViewSale]   = useState<WarehouseSale | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [viewSale, setViewSale] = useState<WarehouseSale | null>(null);
   const invoiceRef = useRef<HTMLDivElement>(null);
 
   const total   = cart.reduce((s, i) => s + i.subtotal, 0);
@@ -551,40 +548,6 @@ export default function WarehouseSalesPage() {
       const json = await res.json();
       setViewSale(json.data);
     } catch { toast.error('Failed to load sale'); }
-  }
-
-  // ── PDF export ──────────────────────────────────────────────────────────────
-
-  async function exportPDF() {
-    if (!invoiceRef.current || !viewSale) return;
-    setExporting(true);
-    try {
-      const canvas = await html2canvas(invoiceRef.current, {
-        scale: 2, useCORS: true, backgroundColor: '#ffffff',
-        logging: false,
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf  = new jsPDF('p', 'mm', 'a4');
-      const pw   = pdf.internal.pageSize.getWidth();
-      const ph   = pdf.internal.pageSize.getHeight();
-      const imgH = (canvas.height * pw) / canvas.width;
-
-      if (imgH <= ph) {
-        pdf.addImage(imgData, 'PNG', 0, 0, pw, imgH);
-      } else {
-        // Multi-page if content is long
-        let y = 0;
-        while (y < imgH) {
-          if (y > 0) pdf.addPage();
-          pdf.addImage(imgData, 'PNG', 0, -y, pw, imgH);
-          y += ph;
-        }
-      }
-      pdf.save(`${viewSale.invoiceNumber}.pdf`);
-    } catch (err) {
-      toast.error('PDF export failed');
-    }
-    setExporting(false);
   }
 
   // ── Print ───────────────────────────────────────────────────────────────────
@@ -1038,13 +1001,6 @@ export default function WarehouseSalesPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={exportPDF} disabled={exporting}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white rounded-xl text-sm font-bold transition-colors shadow-sm">
-                  {exporting
-                    ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    : <Download className="w-4 h-4" />}
-                  {exporting ? 'Exporting…' : 'Export PDF'}
-                </button>
                 <button onClick={handlePrint}
                   className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm">
                   <Printer className="w-4 h-4" />Print
