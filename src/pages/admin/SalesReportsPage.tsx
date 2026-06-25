@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { find, Collections } from '../../lib/api';
-import type { Sale, Branch, Debtor, Expense } from '../../lib/types';
-import { TrendingUp, Download, AlertCircle, CheckCircle2, Receipt } from 'lucide-react';
+import { find, Collections, getAuthToken } from '../../lib/api';
+import type { Sale, Branch, Debtor, Expense, WarehouseSale } from '../../lib/types';
+import { TrendingUp, Download, AlertCircle, CheckCircle2, Receipt, Truck } from 'lucide-react';
+
+const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -88,9 +90,10 @@ export default function SalesReportsPage() {
   const [sales, setSales]                   = useState<Sale[]>([]);
   const [expenses, setExpenses]             = useState<Expense[]>([]);
   const [debtors, setDebtors]               = useState<Debtor[]>([]);
-  const [clearedDebtors, setClearedDebtors] = useState<Debtor[]>([]);
-  const [branchMap, setBranchMap]           = useState<Record<string, string>>({});
-  const [loading, setLoading]               = useState(false);
+  const [clearedDebtors, setClearedDebtors]   = useState<Debtor[]>([]);
+  const [warehouseSales, setWarehouseSales]   = useState<WarehouseSale[]>([]);
+  const [branchMap, setBranchMap]             = useState<Record<string, string>>({});
+  const [loading, setLoading]                 = useState(false);
 
   useEffect(() => {
     find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }).then(data => {
@@ -117,15 +120,21 @@ export default function SalesReportsPage() {
     const dateRange = { $gte: `${start}T00:00:00.000Z`, $lte: `${end}T23:59:59.999Z` };
     const branchOpt = selectedBranch ? { branchId: selectedBranch } : {};
 
-    const [salesData, expenseData, activeDebtorData, clearedDebtorData] = await Promise.all([
+    const whParams = new URLSearchParams({ startDate: start, endDate: end, limit: '500' });
+
+    const [salesData, expenseData, activeDebtorData, clearedDebtorData, whRes] = await Promise.all([
       find(Collections.SALES,    { saleDate:    dateRange, ...branchOpt }, { sort: { saleDate: -1 } }),
       find(Collections.EXPENSES, { expenseDate: dateRange, ...branchOpt }, { sort: { expenseDate: -1 } }),
       find(Collections.DEBTORS,  { isCleared: false, ...branchOpt }),
       find(Collections.DEBTORS,  { isCleared: true,  ...branchOpt }),
+      fetch(`${BASE}/api/warehouse-sales?${whParams}`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      }).then(r => r.json()).catch(() => ({ data: [] })),
     ]);
 
     setSales(salesData as Sale[]);
     setExpenses(expenseData as Expense[]);
+    setWarehouseSales((whRes?.data ?? []) as WarehouseSale[]);
 
     const periodSaleIds = new Set((salesData as Sale[]).map(s => s._id));
     setDebtors((activeDebtorData as Debtor[]).filter(d => !d.saleId || !periodSaleIds.has(d.saleId)));
@@ -145,6 +154,18 @@ export default function SalesReportsPage() {
   const totalOwed     = debtors.reduce((a, d) => a + Number(d.amountOwed), 0);
   const totalCleared  = clearedDebtors.reduce((a, d) => a + Number(d.amountOwed), 0);
 
+  // Warehouse sales aggregates
+  const whTotal    = warehouseSales.reduce((a, s) => a + s.totalAmount, 0);
+  const whCash     = warehouseSales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + s.totalAmount, 0);
+  const whPos      = warehouseSales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + s.totalAmount, 0);
+  const whTransfer = warehouseSales.filter(s => s.paymentMethod === 'transfer').reduce((a, s) => a + s.totalAmount, 0);
+  const whCredit   = warehouseSales.filter(s => s.paymentMethod === 'credit').reduce((a, s) => a + s.totalAmount, 0);
+  const whPaid     = warehouseSales.reduce((a, s) => a + s.amountPaid, 0);
+  const whBalance  = warehouseSales.reduce((a, s) => a + s.balanceDue, 0);
+
+  const combinedTotal  = grandTotal + whTotal;
+  const combinedIncome = combinedTotal - totalExpenses;
+
   const clearedSaleIds    = new Set(clearedDebtors.map(d => d.saleId).filter(Boolean));
   const expenseByCategory = expenses.reduce<Record<string, number>>((acc, e) => {
     const cat = e.category || 'other';
@@ -159,7 +180,7 @@ export default function SalesReportsPage() {
   }, {});
 
   const { start, end } = getRange();
-  const hasData = sales.length > 0 || expenses.length > 0 || debtors.length > 0 || clearedDebtors.length > 0;
+  const hasData = sales.length > 0 || expenses.length > 0 || debtors.length > 0 || clearedDebtors.length > 0 || warehouseSales.length > 0;
 
   // ── CSV downloads ───────────────────────────────────────────────────────────
 
@@ -279,6 +300,43 @@ export default function SalesReportsPage() {
     ]);
   }
 
+  function downloadWarehouseSalesCSV() {
+    const headers = [
+      'Invoice #', 'Date', 'Type', 'Customer', 'Phone', 'Warehouse',
+      'Payment', 'Item', 'Qty', 'Unit', 'Unit Price (₦)', 'Subtotal (₦)',
+      'Sale Total (₦)', 'Paid (₦)', 'Balance (₦)',
+    ];
+    const rows = warehouseSales.flatMap(s =>
+      s.items.length === 0
+        ? [[s.invoiceNumber, (s.saleDate ?? '').split('T')[0], s.docType, s.customerName,
+            s.customerPhone ?? '', s.warehouseName ?? '', s.paymentMethod,
+            '', '', '', '', '',
+            s.totalAmount.toFixed(2), s.amountPaid.toFixed(2), s.balanceDue.toFixed(2)]]
+        : s.items.map((item, idx) => [
+            idx === 0 ? s.invoiceNumber : '',
+            idx === 0 ? (s.saleDate ?? '').split('T')[0] : '',
+            idx === 0 ? s.docType : '',
+            idx === 0 ? s.customerName : '',
+            idx === 0 ? (s.customerPhone ?? '') : '',
+            idx === 0 ? (s.warehouseName ?? '') : '',
+            idx === 0 ? s.paymentMethod : '',
+            item.productName, String(item.quantity), item.unit,
+            item.unitPrice.toFixed(2), item.subtotal.toFixed(2),
+            idx === 0 ? s.totalAmount.toFixed(2) : '',
+            idx === 0 ? s.amountPaid.toFixed(2) : '',
+            idx === 0 ? s.balanceDue.toFixed(2) : '',
+          ])
+    );
+    downloadCSVFile(`warehouse-sales-${start}-to-${end}.csv`, [
+      `WAREHOUSE SALES REPORT: ${start} to ${end}`,
+      '',
+      toCSVLine(headers),
+      ...rows.map(r => toCSVLine(r)),
+      '',
+      toCSVLine(['', '', '', '', '', '', '', '', '', '', '', '', whTotal.toFixed(2), whPaid.toFixed(2), whBalance.toFixed(2)]),
+    ]);
+  }
+
   function downloadAllCSV() {
     const sH = [
       'Date', 'Branch', 'Staff', 'Customer', 'Phone', 'Payment', 'Status',
@@ -331,11 +389,22 @@ export default function SalesReportsPage() {
       d.totalSaleAmount != null ? Number(d.totalSaleAmount).toFixed(2) : '',
       Number(d.amountOwed).toFixed(2), d.createdByName || '', d.clearedByName || '',
     ]);
+    const wH = ['Invoice #', 'Date', 'Type', 'Customer', 'Warehouse', 'Payment', 'Items', 'Total (₦)', 'Paid (₦)', 'Balance (₦)'];
+    const wRows = warehouseSales.map(s => [
+      s.invoiceNumber, (s.saleDate ?? '').split('T')[0], s.docType,
+      s.customerName, s.warehouseName ?? '', s.paymentMethod,
+      s.items.map(i => `${i.productName} ×${i.quantity}`).join('; '),
+      s.totalAmount.toFixed(2), s.amountPaid.toFixed(2), s.balanceDue.toFixed(2),
+    ]);
+
     downloadCSVFile(`full-report-${start}-to-${end}.csv`, [
       `FULL SALES REPORT: ${start} to ${end}`,
       '',
-      'SALES',
+      'BRANCH SALES',
       toCSVLine(sH), ...sRows.map(r => toCSVLine(r)),
+      '',
+      'WAREHOUSE SALES',
+      toCSVLine(wH), ...wRows.map(r => toCSVLine(r)),
       '',
       'EXPENSES',
       toCSVLine(eH), ...eRows.map(r => toCSVLine(r)),
@@ -390,21 +459,47 @@ export default function SalesReportsPage() {
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-        {[
-          { label: 'Grand Total',     value: fmt(grandTotal) },
-          { label: 'Cash',            value: fmt(totalCash)  },
-          { label: 'POS',             value: fmt(totalPos)   },
-          { label: 'Total Collected', value: fmt(totalPaid), sub: `${fmt(totalBalance)} outstanding` },
-        ].map(c => (
-          <div key={c.label} className="bg-white rounded-xl p-3 sm:p-5 shadow-sm border border-slate-100">
-            <p className="text-slate-500 text-xs sm:text-sm">{c.label}</p>
-            <p className="font-bold text-slate-800 text-base sm:text-xl mt-1">{c.value}</p>
-            {c.sub && <p className="text-xs mt-0.5 text-red-500">{c.sub}</p>}
-          </div>
-        ))}
+      {/* Summary cards — Branch Sales */}
+      <div>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Branch Sales</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: 'Branch Total',    value: fmt(grandTotal) },
+            { label: 'Cash',            value: fmt(totalCash)  },
+            { label: 'POS',             value: fmt(totalPos)   },
+            { label: 'Total Collected', value: fmt(totalPaid), sub: totalBalance > 0.01 ? `${fmt(totalBalance)} outstanding` : undefined },
+          ].map(c => (
+            <div key={c.label} className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-slate-100">
+              <p className="text-slate-500 text-xs">{c.label}</p>
+              <p className="font-bold text-slate-800 text-base sm:text-lg mt-1">{c.value}</p>
+              {c.sub && <p className="text-xs mt-0.5 text-red-500">{c.sub}</p>}
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* Summary cards — Warehouse Sales */}
+      {warehouseSales.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+            <Truck className="w-3.5 h-3.5" />Warehouse Sales
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: 'Warehouse Total', value: fmt(whTotal) },
+              { label: 'Cash',            value: fmt(whCash) },
+              { label: 'POS / Transfer',  value: fmt(whPos + whTransfer) },
+              { label: 'Credit',          value: fmt(whCredit), sub: whBalance > 0.01 ? `${fmt(whBalance)} outstanding` : undefined },
+            ].map(c => (
+              <div key={c.label} className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-amber-100">
+                <p className="text-slate-500 text-xs">{c.label}</p>
+                <p className="font-bold text-amber-700 text-base sm:text-lg mt-1">{c.value}</p>
+                {c.sub && <p className="text-xs mt-0.5 text-red-500">{c.sub}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Expenses + Net Income */}
       <div className="grid grid-cols-2 gap-4">
@@ -416,10 +511,10 @@ export default function SalesReportsPage() {
           <p className="font-bold text-slate-800 text-xl">{fmt(totalExpenses)}</p>
           <p className="text-xs text-orange-600 mt-1">{expenses.length} expense{expenses.length !== 1 ? 's' : ''} recorded</p>
         </div>
-        <div className={`bg-white rounded-xl p-5 shadow-sm border ${netIncome >= 0 ? 'border-green-100' : 'border-red-100'}`}>
-          <p className="text-slate-500 text-sm">Net Income</p>
-          <p className={`font-bold text-xl mt-1 ${netIncome >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(netIncome)}</p>
-          <p className="text-xs text-slate-400 mt-1">Sales − Expenses</p>
+        <div className={`bg-white rounded-xl p-5 shadow-sm border ${combinedIncome >= 0 ? 'border-green-100' : 'border-red-100'}`}>
+          <p className="text-slate-500 text-sm">Net Income (All Sources)</p>
+          <p className={`font-bold text-xl mt-1 ${combinedIncome >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(combinedIncome)}</p>
+          <p className="text-xs text-slate-400 mt-1">{fmt(combinedTotal)} total − {fmt(totalExpenses)} expenses</p>
         </div>
       </div>
 
@@ -553,6 +648,83 @@ export default function SalesReportsPage() {
                   <td className="px-4 py-3 text-right font-bold text-amber-600 text-base">{fmt(grandTotal)}</td>
                   <td className="px-4 py-3 text-right font-bold text-green-700">{fmt(totalPaid)}</td>
                   <td className="px-4 py-3 text-right font-bold text-red-600">{totalBalance > 0 ? fmt(totalBalance) : '—'}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Warehouse Sales ─────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl shadow-sm border border-amber-100">
+        <div className="p-5 border-b border-amber-100 flex items-center gap-3">
+          <Truck className="w-5 h-5 text-amber-500" />
+          <h3 className="font-semibold text-slate-800">Warehouse Sales ({warehouseSales.length})</h3>
+          {warehouseSales.length > 0 && <span className="text-sm font-bold text-amber-600">{fmt(whTotal)}</span>}
+          <CsvButton onClick={downloadWarehouseSalesCSV} disabled={warehouseSales.length === 0} />
+        </div>
+
+        {loading ? <Skeleton /> : warehouseSales.length === 0 ? (
+          <div className="text-center py-10 text-slate-400 text-sm">No warehouse sales in this period</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left border-b border-amber-100 bg-amber-50/40">
+                  <th className="px-4 py-3 font-medium text-slate-600 whitespace-nowrap">Invoice #</th>
+                  <th className="px-4 py-3 font-medium text-slate-600 whitespace-nowrap">Date</th>
+                  <th className="px-4 py-3 font-medium text-slate-600">Type</th>
+                  <th className="px-4 py-3 font-medium text-slate-600">Customer</th>
+                  <th className="px-4 py-3 font-medium text-slate-600">Warehouse</th>
+                  <th className="px-4 py-3 font-medium text-slate-600">Payment</th>
+                  <th className="px-4 py-3 font-medium text-slate-600">Items</th>
+                  <th className="px-4 py-3 font-medium text-slate-600 text-right whitespace-nowrap">Total</th>
+                  <th className="px-4 py-3 font-medium text-slate-600 text-right whitespace-nowrap">Paid</th>
+                  <th className="px-4 py-3 font-medium text-slate-600 text-right whitespace-nowrap">Balance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-amber-50">
+                {warehouseSales.map(s => (
+                  <tr key={s._id} className={`hover:bg-amber-50/30 transition-colors ${s.balanceDue > 0.01 ? 'bg-red-50/20' : ''}`}>
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-slate-700">#{s.invoiceNumber}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{(s.saleDate ?? '').split('T')[0]}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.docType === 'waybill' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {s.docType === 'waybill' ? 'Waybill' : 'Invoice'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-medium text-slate-800">
+                      {s.customerName}
+                      {s.customerPhone && <span className="block text-xs text-slate-400">{s.customerPhone}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{s.warehouseName || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600 capitalize">{s.paymentMethod}</span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-500">
+                      {s.items.length} item{s.items.length !== 1 ? 's' : ''}
+                      <span className="block text-[10px] text-slate-400 truncate max-w-[140px]">
+                        {s.items.slice(0, 2).map(i => i.productName).join(', ')}{s.items.length > 2 ? '…' : ''}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">{fmt(s.totalAmount)}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <span className="font-medium text-green-700">{fmt(s.amountPaid)}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {s.balanceDue > 0.01
+                        ? <span className="font-bold text-red-600">{fmt(s.balanceDue)}</span>
+                        : <span className="text-slate-400 text-xs">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-amber-50 border-t-2 border-amber-200">
+                  <td colSpan={7} className="px-4 py-3 font-bold text-slate-800">Total</td>
+                  <td className="px-4 py-3 text-right font-bold text-amber-600 text-base">{fmt(whTotal)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-green-700">{fmt(whPaid)}</td>
+                  <td className="px-4 py-3 text-right font-bold text-red-600">{whBalance > 0.01 ? fmt(whBalance) : '—'}</td>
                 </tr>
               </tfoot>
             </table>
