@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   ShoppingBag, LayoutDashboard, Package, Warehouse, GitBranch,
   TrendingUp, FileText, Users, Menu, LogOut,
-  Store, UserCheck, Star,
+  Store, UserCheck, Star, Truck,
 } from 'lucide-react';
 
 interface NavItem {
@@ -23,6 +23,7 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/admin/debtors', label: 'Debtors',       icon: <UserCheck className="w-5 h-5" />,       roles: ['admin'] },
   { path: '/admin/report-approvals', label: 'Report Approvals', icon: <FileText className="w-5 h-5" />, roles: ['admin'] },
   { path: '/admin/warehouses', label: 'Warehouses', icon: <Warehouse className="w-5 h-5" />,      roles: ['admin'] },
+  { path: '/admin/warehouse-sales', label: 'Warehouse Sales', icon: <Truck className="w-5 h-5" />, roles: ['admin'] },
   { path: '/admin/products', label: 'Products',    icon: <Package className="w-5 h-5" />,        roles: ['admin'] },
   { path: '/admin/branches', label: 'Branches',     icon: <GitBranch className="w-5 h-5" />,       roles: ['admin'] },
   { path: '/admin/special-customers', label: 'Special Customers', icon: <Star className="w-5 h-5" />, roles: ['admin'] },
