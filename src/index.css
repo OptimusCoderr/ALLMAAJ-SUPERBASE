@@ -12,4 +12,20 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+
+  /* Prevent iOS Safari from zooming in on inputs with small font sizes,
+     which causes the page to stay zoomed after the keyboard dismisses. */
+  @supports (-webkit-touch-callout: none) {
+    input[type='text'],
+    input[type='number'],
+    input[type='email'],
+    input[type='password'],
+    input[type='search'],
+    input[type='tel'],
+    input[type='url'],
+    select,
+    textarea {
+      font-size: max(16px, 1em);
+    }
+  }
 }

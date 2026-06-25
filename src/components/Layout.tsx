@@ -101,7 +101,7 @@ export default function Layout() {
   );
 
   return (
-    <div className="flex h-screen bg-slate-100 overflow-hidden">
+    <div className="flex h-dvh bg-slate-100 overflow-hidden">
       <div className="hidden lg:flex w-64 flex-shrink-0 flex-col">
         <Sidebar />
       </div>
