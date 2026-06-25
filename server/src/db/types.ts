@@ -46,6 +46,8 @@ export interface ProductRow {
   unit: string;
   category: string | null;
   is_active: boolean;
+  is_cuttable: boolean;
+  inches_per_piece: string | null;
   created_at: string;
   updated_at: string;
 }

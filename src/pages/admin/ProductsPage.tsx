@@ -3,8 +3,8 @@ import { find, insertOne, updateOne, Collections } from '../../lib/api';
 import type { Product, Branch } from '../../lib/types';
 import { Plus, Edit2, Trash2, Package, X, Check, Search } from 'lucide-react';
 
-type Form = { name: string; sku: string; description: string; unitPrice: string; unit: string; category: string };
-const BLANK: Form = { name: '', sku: '', description: '', unitPrice: '', unit: 'piece', category: '' };
+type Form = { name: string; sku: string; description: string; unitPrice: string; unit: string; category: string; isCuttable: boolean; inchesPerPiece: string };
+const BLANK: Form = { name: '', sku: '', description: '', unitPrice: '', unit: 'piece', category: '', isCuttable: false, inchesPerPiece: '' };
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -44,6 +44,8 @@ export default function ProductsPage() {
     setForm({
       name: p.name, sku: p.sku || '', description: p.description || '',
       unitPrice: String(p.unitPrice), unit: p.unit, category: p.category || '',
+      isCuttable: p.isCuttable ?? false,
+      inchesPerPiece: p.inchesPerPiece != null ? String(p.inchesPerPiece) : '',
     });
     setShowForm(true); setError('');
   }
@@ -53,9 +55,12 @@ export default function ProductsPage() {
     if (!form.name.trim()) { setError('Product name required'); return; }
     setSaving(true); setError('');
     const unitPrice = parseFloat(form.unitPrice) || 0;
+    const inchesPerPiece = form.isCuttable && form.inchesPerPiece ? parseFloat(form.inchesPerPiece) : null;
     const payload = {
       name: form.name.trim(), sku: form.sku.trim(), description: form.description.trim(),
-      unitPrice, unit: form.unit, category: form.category.trim(), updatedAt: new Date().toISOString(),
+      unitPrice, unit: form.unit, category: form.category.trim(),
+      isCuttable: form.isCuttable, inchesPerPiece,
+      updatedAt: new Date().toISOString(),
     };
     try {
       if (editing) {
@@ -184,6 +189,23 @@ export default function ProductsPage() {
                   </select>
                 </div>
                 <div className="col-span-2">
+                  <label className="flex items-center gap-3 cursor-pointer select-none">
+                    <input type="checkbox" checked={form.isCuttable}
+                      onChange={e => setForm(prev => ({ ...prev, isCuttable: e.target.checked, inchesPerPiece: e.target.checked ? prev.inchesPerPiece : '' }))}
+                      className="w-4 h-4 rounded accent-amber-500" />
+                    <span className="text-sm font-medium text-slate-700">Cuttable material (can be sold by inches or pieces)</span>
+                  </label>
+                </div>
+                {form.isCuttable && (
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Inches per piece *</label>
+                    <input type="number" min="0.0001" step="0.0001" value={form.inchesPerPiece} onChange={f('inchesPerPiece')} required={form.isCuttable}
+                      placeholder="e.g. 12 (12 inches = 1 piece)"
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                    <p className="text-xs text-slate-400 mt-1">Stock entered in inches will be divided by this value to get pieces</p>
+                  </div>
+                )}
+                <div className="col-span-2">
                   <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
                   <textarea value={form.description} onChange={f('description')} rows={2}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
@@ -225,6 +247,7 @@ export default function ProductsPage() {
                   <th className="px-4 py-3 font-medium text-slate-600">Category</th>
                   <th className="px-4 py-3 font-medium text-slate-600 text-right">Price</th>
                   <th className="px-4 py-3 font-medium text-slate-600">Unit</th>
+                  <th className="px-4 py-3 font-medium text-slate-600">Cuttable</th>
                   <th className="px-4 py-3 font-medium text-slate-600">Status</th>
                   <th className="px-4 py-3 font-medium text-slate-600">Actions</th>
                 </tr>
@@ -237,6 +260,13 @@ export default function ProductsPage() {
                     <td className="px-4 py-3 text-slate-500">{p.category || '-'}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-800">{fmt(p.unitPrice)}</td>
                     <td className="px-4 py-3 text-slate-500">{p.unit}</td>
+                    <td className="px-4 py-3">
+                      {p.isCuttable ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
+                          ✂ {p.inchesPerPiece}"
+                        </span>
+                      ) : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${p.isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
                         {p.isActive ? 'Active' : 'Inactive'}

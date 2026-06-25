@@ -49,6 +49,8 @@ export interface Product extends MongoDoc {
   unit: string;
   category?: string;
   isActive: boolean;
+  isCuttable?: boolean;
+  inchesPerPiece?: number | null;
   createdAt: string;
   updatedAt: string;
 }

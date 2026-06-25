@@ -70,13 +70,13 @@ export default function BranchStockPage() {
 
   // Staff request form
   const [showReqForm, setShowReqForm]       = useState(false);
-  const [reqForm, setReqForm]               = useState({ productId: '', quantity: 1, notes: '' });
+  const [reqForm, setReqForm]               = useState({ productId: '', quantity: 1, inputUnit: 'pieces' as 'pieces' | 'inches', notes: '' });
   const [reqSaving, setReqSaving]           = useState(false);
   const [reqError, setReqError]             = useState('');
 
   // Admin direct add form
   const [showAddForm, setShowAddForm]       = useState(false);
-  const [addForm, setAddForm]               = useState({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
+  const [addForm, setAddForm]               = useState({ productId: '', quantity: 1, inputUnit: 'pieces' as 'pieces' | 'inches', sourceType: 'warehouse', warehouseId: '' });
   const [addSaving, setAddSaving]           = useState(false);
   const [addError, setAddError]             = useState('');
 
@@ -152,12 +152,17 @@ export default function BranchStockPage() {
     if (!reqForm.productId) { setReqError('Select a product'); return; }
     setReqSaving(true); setReqError('');
     try {
+      const selectedProduct = products.find(p => p._id === reqForm.productId);
+      let quantity = reqForm.quantity;
+      if (reqForm.inputUnit === 'inches' && selectedProduct?.isCuttable && selectedProduct.inchesPerPiece) {
+        quantity = reqForm.quantity / selectedProduct.inchesPerPiece;
+      }
       await authFetch('/api/branches/stock-requests', token, {
         method: 'POST',
-        body: JSON.stringify({ branchId: selectedBranch, productId: reqForm.productId, quantity: reqForm.quantity, notes: reqForm.notes }),
+        body: JSON.stringify({ branchId: selectedBranch, productId: reqForm.productId, quantity, notes: reqForm.notes }),
       });
       setShowReqForm(false);
-      setReqForm({ productId: '', quantity: 1, notes: '' });
+      setReqForm({ productId: '', quantity: 1, inputUnit: 'pieces', notes: '' });
       // Refresh my requests so staff can see the new pending entry
       fetchMyRequests();
       // Switch to the my-requests tab so they see the status immediately
@@ -172,12 +177,17 @@ export default function BranchStockPage() {
     if (addForm.sourceType === 'warehouse' && !addForm.warehouseId) { setAddError('Select a warehouse'); return; }
     setAddSaving(true); setAddError('');
     try {
+      const selectedProduct = products.find(p => p._id === addForm.productId);
+      let quantity = addForm.quantity;
+      if (addForm.inputUnit === 'inches' && selectedProduct?.isCuttable && selectedProduct.inchesPerPiece) {
+        quantity = addForm.quantity / selectedProduct.inchesPerPiece;
+      }
       await authFetch(`/api/branches/${selectedBranch}/stock/add`, token, {
         method: 'POST',
-        body: JSON.stringify(addForm),
+        body: JSON.stringify({ ...addForm, quantity }),
       });
       setShowAddForm(false);
-      setAddForm({ productId: '', quantity: 1, sourceType: 'warehouse', warehouseId: '' });
+      setAddForm({ productId: '', quantity: 1, inputUnit: 'pieces', sourceType: 'warehouse', warehouseId: '' });
       fetchStock();
     } catch (err: any) { setAddError(err.message || 'Failed to add stock'); }
     setAddSaving(false);
@@ -444,17 +454,47 @@ export default function BranchStockPage() {
               )}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
-                <select value={reqForm.productId} onChange={e => setReqForm(f => ({ ...f, productId: e.target.value }))} required
+                <select value={reqForm.productId}
+                  onChange={e => setReqForm(f => ({ ...f, productId: e.target.value, inputUnit: 'pieces' }))} required
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
                   <option value="">Select product...</option>
-                  {products.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
+                  {products.map(p => <option key={p._id} value={p._id}>{p.name}{p.isCuttable ? ' ✂' : ''}</option>)}
                 </select>
               </div>
+              {(() => {
+                const sel = products.find(p => p._id === reqForm.productId);
+                return sel?.isCuttable ? (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Enter quantity in</label>
+                    <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+                      {(['pieces', 'inches'] as const).map(u => (
+                        <button key={u} type="button"
+                          onClick={() => setReqForm(f => ({ ...f, inputUnit: u, quantity: 1 }))}
+                          className={`flex-1 py-2 text-sm font-medium transition-colors ${reqForm.inputUnit === u ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                          {u.charAt(0).toUpperCase() + u.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Quantity * {reqForm.inputUnit === 'inches' ? '(in inches)' : ''}
+                </label>
                 <input type="number" min="0.01" step="0.01" value={reqForm.quantity}
                   onChange={e => setReqForm(f => ({ ...f, quantity: Number(e.target.value) }))} required
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                {(() => {
+                  const sel = products.find(p => p._id === reqForm.productId);
+                  if (!sel?.isCuttable || reqForm.inputUnit !== 'inches' || !reqForm.quantity || !sel.inchesPerPiece) return null;
+                  const pieces = reqForm.quantity / sel.inchesPerPiece;
+                  return (
+                    <p className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-1.5 mt-1.5">
+                      {reqForm.quantity}" ÷ {sel.inchesPerPiece}" per piece = <strong>{pieces.toFixed(3)} pieces</strong>
+                    </p>
+                  );
+                })()}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
@@ -495,17 +535,47 @@ export default function BranchStockPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
-                <select value={addForm.productId} onChange={e => setAddForm(f => ({ ...f, productId: e.target.value }))} required
+                <select value={addForm.productId}
+                  onChange={e => setAddForm(f => ({ ...f, productId: e.target.value, inputUnit: 'pieces' }))} required
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500">
                   <option value="">Select product...</option>
-                  {products.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
+                  {products.map(p => <option key={p._id} value={p._id}>{p.name}{p.isCuttable ? ' ✂' : ''}</option>)}
                 </select>
               </div>
+              {(() => {
+                const sel = products.find(p => p._id === addForm.productId);
+                return sel?.isCuttable ? (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Enter quantity in</label>
+                    <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+                      {(['pieces', 'inches'] as const).map(u => (
+                        <button key={u} type="button"
+                          onClick={() => setAddForm(f => ({ ...f, inputUnit: u, quantity: 1 }))}
+                          className={`flex-1 py-2 text-sm font-medium transition-colors ${addForm.inputUnit === u ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                          {u.charAt(0).toUpperCase() + u.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Quantity * {addForm.inputUnit === 'inches' ? '(in inches)' : ''}
+                </label>
                 <input type="number" min="0.01" step="0.01" value={addForm.quantity}
                   onChange={e => setAddForm(f => ({ ...f, quantity: Number(e.target.value) }))} required
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                {(() => {
+                  const sel = products.find(p => p._id === addForm.productId);
+                  if (!sel?.isCuttable || addForm.inputUnit !== 'inches' || !addForm.quantity || !sel.inchesPerPiece) return null;
+                  const pieces = addForm.quantity / sel.inchesPerPiece;
+                  return (
+                    <p className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-1.5 mt-1.5">
+                      {addForm.quantity}" ÷ {sel.inchesPerPiece}" per piece = <strong>{pieces.toFixed(3)} pieces</strong>
+                    </p>
+                  );
+                })()}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Source *</label>

@@ -20,7 +20,7 @@ export default function WarehousesPage() {
   const [expanded, setExpanded]     = useState<string | null>(null);
   const [stock, setStock]           = useState<Record<string, StockWithProduct[]>>({});
   const [showStockForm, setShowStockForm] = useState<string | null>(null);
-  const [stockForm, setStockForm]   = useState({ product_id: '', quantity: 0 });
+  const [stockForm, setStockForm]   = useState({ product_id: '', quantity: 0, inputUnit: 'pieces' as 'pieces' | 'inches' });
   const [savingStock, setSavingStock] = useState(false);
 
   useEffect(() => { fetchAll(); }, []);
@@ -94,15 +94,20 @@ export default function WarehousesPage() {
     e.preventDefault();
     if (!stockForm.product_id) return;
     setSavingStock(true);
+    const selectedProduct = products.find(p => p._id === stockForm.product_id);
+    let quantity = stockForm.quantity;
+    if (stockForm.inputUnit === 'inches' && selectedProduct?.isCuttable && selectedProduct.inchesPerPiece) {
+      quantity = stockForm.quantity / selectedProduct.inchesPerPiece;
+    }
     await updateOne(
       Collections.WAREHOUSE_STOCK,
       { warehouseId, productId: stockForm.product_id },
-      { $set: { warehouseId, productId: stockForm.product_id, quantity: stockForm.quantity, updatedAt: new Date().toISOString() } },
+      { $set: { warehouseId, productId: stockForm.product_id, quantity, updatedAt: new Date().toISOString() } },
       true
     );
     await fetchStock(warehouseId);
     setShowStockForm(null);
-    setStockForm({ product_id: '', quantity: 0 });
+    setStockForm({ product_id: '', quantity: 0, inputUnit: 'pieces' });
     setSavingStock(false);
   }
 
@@ -210,17 +215,43 @@ export default function WarehousesPage() {
                   </div>
 
                   {showStockForm === w._id && (
-                    <form onSubmit={e => handleSaveStock(e, w._id)} className="flex gap-3 mb-4 p-4 bg-amber-50 rounded-lg flex-wrap">
-                      <select value={stockForm.product_id} onChange={e => setStockForm(f => ({ ...f, product_id: e.target.value }))} required
-                        className="flex-1 min-w-40 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
-                        <option value="">Select product...</option>
-                        {products.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
-                      </select>
-                      <input type="number" min="0" step="0.01" value={stockForm.quantity} onChange={e => setStockForm(f => ({ ...f, quantity: Number(e.target.value) }))}
-                        className="w-32 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" placeholder="Quantity" />
-                      <button type="submit" disabled={savingStock} className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm transition-colors">
-                        {savingStock ? <span className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-3.5 h-3.5" />}Save
-                      </button>
+                    <form onSubmit={e => handleSaveStock(e, w._id)} className="mb-4 p-4 bg-amber-50 rounded-lg space-y-3">
+                      <div className="flex gap-3 flex-wrap">
+                        <select value={stockForm.product_id}
+                          onChange={e => setStockForm(f => ({ ...f, product_id: e.target.value, inputUnit: 'pieces' }))} required
+                          className="flex-1 min-w-40 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                          <option value="">Select product...</option>
+                          {products.map(p => <option key={p._id} value={p._id}>{p.name}{p.isCuttable ? ' ✂' : ''}</option>)}
+                        </select>
+                        {(() => {
+                          const sel = products.find(p => p._id === stockForm.product_id);
+                          return sel?.isCuttable ? (
+                            <select value={stockForm.inputUnit}
+                              onChange={e => setStockForm(f => ({ ...f, inputUnit: e.target.value as 'pieces' | 'inches', quantity: 0 }))}
+                              className="w-28 px-3 py-2 border border-amber-300 bg-white rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                              <option value="pieces">Pieces</option>
+                              <option value="inches">Inches</option>
+                            </select>
+                          ) : null;
+                        })()}
+                        <input type="number" min="0" step="0.01" value={stockForm.quantity}
+                          onChange={e => setStockForm(f => ({ ...f, quantity: Number(e.target.value) }))}
+                          className="w-32 px-3 py-2 border border-slate-200 rounded-lg text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                          placeholder={stockForm.inputUnit === 'inches' ? 'Inches' : 'Pieces'} />
+                        <button type="submit" disabled={savingStock} className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm transition-colors">
+                          {savingStock ? <span className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> : <Check className="w-3.5 h-3.5" />}Save
+                        </button>
+                      </div>
+                      {(() => {
+                        const sel = products.find(p => p._id === stockForm.product_id);
+                        if (!sel?.isCuttable || stockForm.inputUnit !== 'inches' || !stockForm.quantity || !sel.inchesPerPiece) return null;
+                        const pieces = stockForm.quantity / sel.inchesPerPiece;
+                        return (
+                          <p className="text-xs text-amber-700 bg-amber-100 rounded px-3 py-1.5">
+                            {stockForm.quantity} inches ÷ {sel.inchesPerPiece}" per piece = <strong>{pieces.toFixed(3)} pieces</strong> will be stored
+                          </p>
+                        );
+                      })()}
                     </form>
                   )}
 
@@ -250,7 +281,7 @@ export default function WarehousesPage() {
                                   <button
                                     onClick={() => {
                                       setShowStockForm(w._id);
-                                      setStockForm({ product_id: item.productId, quantity: Number(item.quantity) });
+                                      setStockForm({ product_id: item.productId, quantity: Number(item.quantity), inputUnit: 'pieces' });
                                     }}
                                     className="text-slate-300 hover:text-amber-500 transition-colors">
                                     <Edit2 className="w-3.5 h-3.5" />

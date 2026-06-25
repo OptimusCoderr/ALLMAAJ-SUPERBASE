@@ -14,6 +14,8 @@ const toProduct = (p: ProductRow) => ({
   unitPrice: num(p.unit_price), previousPrice: num(p.previous_price),
   currentPrice: num(p.current_price), unit: p.unit,
   category: p.category, isActive: p.is_active,
+  isCuttable: p.is_cuttable ?? false,
+  inchesPerPiece: p.inches_per_piece != null ? num(p.inches_per_piece) : null,
   createdAt: p.created_at, updatedAt: p.updated_at,
 });
 
@@ -38,16 +40,20 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 router.post('/', adminOnly,
   [body('name').trim().notEmpty(), body('unitPrice').isFloat({ min: 0 }),
-   body('unit').isIn(['piece','kg','litre','box','carton','bag','roll','pair','set','dozen'])],
+   body('unit').isIn(['piece','kg','litre','box','carton','bag','roll','pair','set','dozen']),
+   body('inchesPerPiece').optional({ nullable: true }).isFloat({ min: 0.0001 })],
   async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
     try {
-      const { name, sku, description, unitPrice, unit, category } = req.body;
+      const { name, sku, description, unitPrice, unit, category, isCuttable, inchesPerPiece } = req.body;
+      const cuttable = isCuttable === true || isCuttable === 'true';
+      const ipp = cuttable && inchesPerPiece ? Number(inchesPerPiece) : null;
       const [product] = await sql<ProductRow[]>`
-        INSERT INTO products (name, sku, description, unit_price, previous_price, current_price, unit, category)
+        INSERT INTO products (name, sku, description, unit_price, previous_price, current_price, unit, category, is_cuttable, inches_per_piece)
         VALUES (${name}, ${sku ?? null}, ${description ?? null}, ${unitPrice}, 0,
-                ${req.body.currentPrice ?? unitPrice}, ${unit}::product_unit, ${category ?? null})
+                ${req.body.currentPrice ?? unitPrice}, ${unit}::product_unit, ${category ?? null},
+                ${cuttable}, ${ipp})
         RETURNING *
       `;
       return sendResponse(res, 201, 'Product created', toProduct(product));
@@ -58,27 +64,37 @@ router.post('/', adminOnly,
   }
 );
 
-router.put('/:id', adminOnly, [body('name').optional().trim().notEmpty()], async (req: Request, res: Response) => {
+router.put('/:id', adminOnly, [body('name').optional().trim().notEmpty(),
+  body('inchesPerPiece').optional({ nullable: true }).isFloat({ min: 0.0001 })],
+  async (req: Request, res: Response) => {
   try {
     const [existing] = await sql<ProductRow[]>`SELECT * FROM products WHERE id = ${req.params.id}`;
     if (!existing) return sendError(res, 404, 'Product not found');
-    const { name, sku, description, unitPrice, unit, category, isActive } = req.body;
+    const { name, sku, description, unitPrice, unit, category, isActive, isCuttable, inchesPerPiece } = req.body;
     const newUnit      = num(existing.unit_price);
     const newCurrent   = unitPrice !== undefined ? unitPrice : num(existing.current_price);
     const newPrevious  = unitPrice !== undefined && unitPrice !== newUnit
                          ? num(existing.current_price) : num(existing.previous_price);
+    const cuttable = isCuttable !== undefined
+      ? (isCuttable === true || isCuttable === 'true')
+      : existing.is_cuttable;
+    const ipp = inchesPerPiece !== undefined
+      ? (inchesPerPiece != null ? Number(inchesPerPiece) : null)
+      : (existing.inches_per_piece != null ? num(existing.inches_per_piece) : null);
     const [product] = await sql<ProductRow[]>`
       UPDATE products SET
-        name           = COALESCE(${name        ?? null}, name),
-        sku            = COALESCE(${sku         ?? null}, sku),
-        description    = COALESCE(${description ?? null}, description),
-        unit_price     = ${unitPrice ?? newUnit},
-        previous_price = ${newPrevious},
-        current_price  = ${newCurrent},
-        unit           = COALESCE(${unit        ?? null}::product_unit, unit),
-        category       = COALESCE(${category    ?? null}, category),
-        is_active      = COALESCE(${isActive    ?? null}, is_active),
-        updated_at     = now()
+        name             = COALESCE(${name        ?? null}, name),
+        sku              = COALESCE(${sku         ?? null}, sku),
+        description      = COALESCE(${description ?? null}, description),
+        unit_price       = ${unitPrice ?? newUnit},
+        previous_price   = ${newPrevious},
+        current_price    = ${newCurrent},
+        unit             = COALESCE(${unit        ?? null}::product_unit, unit),
+        category         = COALESCE(${category    ?? null}, category),
+        is_active        = COALESCE(${isActive    ?? null}, is_active),
+        is_cuttable      = ${cuttable},
+        inches_per_piece = ${ipp},
+        updated_at       = now()
       WHERE id = ${req.params.id}
       RETURNING *
     `;
