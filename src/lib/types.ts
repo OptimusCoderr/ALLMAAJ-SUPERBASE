@@ -155,6 +155,10 @@ export interface WarehouseSaleItem {
   unitPrice: number;
   subtotal: number;
   unit: string;
+  sourceWarehouseId?: string | null;
+  sourceWarehouseName?: string | null;
+  isExternal?: boolean;
+  externalSource?: string | null;
 }
 
 export interface WarehouseSale extends MongoDoc {
