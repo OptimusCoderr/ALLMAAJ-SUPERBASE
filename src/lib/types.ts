@@ -114,6 +114,8 @@ export interface Debtor extends MongoDoc {
   name: string;
   phone: string;
   amountOwed: number;
+  totalAmount?: number | null;
+  dueDate?: string | null;
   branchId: string;
   createdBy: string;
   createdByName: string;
@@ -129,6 +131,17 @@ export interface Debtor extends MongoDoc {
   paymentMethod?: 'cash' | 'pos' | 'unpaid' | 'part';
   totalSaleAmount?: number;
   saleItems?: Array<{ product_id: string; quantity: number; unit_price: number; subtotal: number }>;
+}
+
+export interface DebtorPayment extends MongoDoc {
+  debtorId: string;
+  amount: number;
+  method: 'cash' | 'pos' | 'transfer';
+  recordedBy: string;
+  recordedByName: string | null;
+  notes?: string | null;
+  paidAt: string;
+  createdAt: string;
 }
 
 // ─── Expenses ──────────────────────────────────────────────────────────────────

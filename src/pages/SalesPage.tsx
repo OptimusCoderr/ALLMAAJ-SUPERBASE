@@ -546,8 +546,10 @@ export default function SalesPage() {
       const legacyPart        = partSales.filter(s => !(s.notes || '').includes('[Part:CASH]') && !(s.notes || '').includes('[Part:POS]'));
       const partCashPaid      = taggedCashPart.reduce((a: number, s: any) => a + Number(s.amountPaid), 0);
       const partPosPaid       = taggedPosPart.reduce((a: number, s: any) => a + Number(s.amountPaid), 0);
-      const totalCashSales    = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0) + partCashPaid;
-      const totalPosSales     = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0) + partPosPaid;
+      const splitCashPaid     = todaySales.filter(s => s.paymentMethod === 'split').reduce((a, s) => a + Number(s.cashAmount ?? 0), 0);
+      const splitPosPaid      = todaySales.filter(s => s.paymentMethod === 'split').reduce((a, s) => a + Number(s.posAmount  ?? 0), 0);
+      const totalCashSales    = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0) + partCashPaid + splitCashPaid;
+      const totalPosSales     = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0) + partPosPaid  + splitPosPaid;
       const totalPartSales    = legacyPart.reduce((a: number, s: any) => a + Number(s.totalAmount), 0);
       const totalUnpaidSales  = todaySales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
       const totalExpenses     = (expensesData as Expense[]).reduce((a, e) => a + Number(e.amount), 0);
@@ -586,8 +588,10 @@ export default function SalesPage() {
   const _rLegacyPart    = _rPartSales.filter(s => !(s.notes || '').includes('[Part:CASH]') && !(s.notes || '').includes('[Part:POS]'));
   const _rPartCashPaid  = _rTaggedCash.reduce((a, s) => a + Number(s.amountPaid), 0);
   const _rPartPosPaid   = _rTaggedPos.reduce((a, s) => a + Number(s.amountPaid), 0);
-  const rsCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0) + _rPartCashPaid;
-  const rsPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0) + _rPartPosPaid;
+  const _rSplitCash = todaySales.filter(s => s.paymentMethod === 'split').reduce((a, s) => a + Number(s.cashAmount ?? 0), 0);
+  const _rSplitPos  = todaySales.filter(s => s.paymentMethod === 'split').reduce((a, s) => a + Number(s.posAmount  ?? 0), 0);
+  const rsCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((a, s) => a + Number(s.totalAmount), 0) + _rPartCashPaid + _rSplitCash;
+  const rsPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((a, s) => a + Number(s.totalAmount), 0) + _rPartPosPaid  + _rSplitPos;
   const rsPart     = _rLegacyPart.reduce((a, s) => a + Number(s.totalAmount), 0);
   const rsUnpaid   = todaySales.filter(s => s.paymentMethod === 'unpaid').reduce((a, s) => a + Number(s.totalAmount), 0);
   const rsExpenses = todayExpenses.reduce((a, e) => a + Number(e.amount), 0);
@@ -854,8 +858,10 @@ export default function SalesPage() {
   const _tdPartSales       = todaySales.filter(s => s.paymentMethod === 'part');
   const _tdPartCashPaid    = _tdPartSales.filter(s => (s.notes || '').includes('[Part:CASH]')).reduce((s, x) => s + Number(x.amountPaid), 0);
   const _tdPartPosPaid     = _tdPartSales.filter(s => (s.notes || '').includes('[Part:POS]')).reduce((s, x) => s + Number(x.amountPaid), 0);
-  const totalTodayCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartCashPaid;
-  const totalTodayPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartPosPaid;
+  const _tdSplitCash       = todaySales.filter(s => s.paymentMethod === 'split').reduce((s, x) => s + Number(x.cashAmount ?? 0), 0);
+  const _tdSplitPos        = todaySales.filter(s => s.paymentMethod === 'split').reduce((s, x) => s + Number(x.posAmount  ?? 0), 0);
+  const totalTodayCash     = todaySales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartCashPaid + _tdSplitCash;
+  const totalTodayPos      = todaySales.filter(s => s.paymentMethod === 'pos').reduce((s, x) => s + Number(x.totalAmount), 0) + _tdPartPosPaid  + _tdSplitPos;
   const totalTodayExpenses = todayExpenses.reduce((s, e) => s + Number(e.amount), 0);
   const totalTodayDebt     = todayDebtors.reduce((s, d) => s + Number(d.amountOwed), 0);
 
