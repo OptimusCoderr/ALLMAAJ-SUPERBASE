@@ -96,7 +96,7 @@ async function fileToDataUrl(file: File): Promise<string> {
 
 function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: CompanySettings }) {
   const isWaybill = sale.docType === 'waybill';
-  const date = new Date(sale.saleDate + 'T00:00:00').toLocaleDateString('en-NG', {
+  const date = new Date((sale.saleDate ?? '').split('T')[0] + 'T12:00:00').toLocaleDateString('en-NG', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
 
@@ -965,7 +965,7 @@ export default function WarehouseSalesPage() {
                     </div>
                     <p className="font-semibold text-slate-800">{s.customerName}</p>
                     <p className="text-xs text-slate-400">
-                      {new Date(s.saleDate + 'T00:00:00').toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {new Date((s.saleDate ?? '').split('T')[0] + 'T12:00:00').toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
                       {s.warehouseName && ` · ${s.warehouseName}`}
                     </p>
                   </div>
