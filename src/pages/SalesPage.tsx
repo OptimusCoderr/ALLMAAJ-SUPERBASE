@@ -93,10 +93,11 @@ function safeItems(raw: any): any[] {
 function pmButtonStyle(m: PaymentMethod, current: PaymentMethod) {
   const on = current === m;
   const c: Record<PaymentMethod, string> = {
-    cash:   on ? 'bg-green-500 text-white border-green-500'   : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-    pos:    on ? 'bg-blue-500 text-white border-blue-500'     : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-    part:   on ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
-    unpaid: on ? 'bg-red-500 text-white border-red-500'       : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    cash:   on ? 'bg-green-500 text-white border-green-500'    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    pos:    on ? 'bg-blue-500 text-white border-blue-500'      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    part:   on ? 'bg-orange-500 text-white border-orange-500'  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    unpaid: on ? 'bg-red-500 text-white border-red-500'        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
+    split:  on ? 'bg-purple-500 text-white border-purple-500'  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300',
   };
   return `flex-1 py-2 rounded-lg text-sm font-medium transition-colors border ${c[m]}`;
 }
