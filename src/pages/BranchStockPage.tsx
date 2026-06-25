@@ -265,7 +265,10 @@ export default function BranchStockPage() {
   // Add Stock modal (admin)
   const [showAddModal, setShowAddModal]   = useState(false);
   const [addProductId, setAddProductId]   = useState('');
+  const [addSelectedProduct, setAddSelectedProduct] = useState<Product | null>(null);
   const [addQty, setAddQty]               = useState(1);
+  const [addInputMode, setAddInputMode]   = useState<'pieces' | 'inches'>('pieces');
+  const [addInches, setAddInches]         = useState(0);
   const [addSourceType, setAddSourceType] = useState('warehouse');
   const [addWarehouseId, setAddWarehouseId] = useState('');
   const [addSaving, setAddSaving]         = useState(false);
@@ -396,11 +399,13 @@ export default function BranchStockPage() {
     setAddSuggestions([]); setShowAddDropdown(false);
   }
   function selectAddProduct(p: Product) {
-    setAddProductId(p._id); setAddSearch(p.name);
+    setAddProductId(p._id); setAddSearch(p.name); setAddSelectedProduct(p);
+    setAddInputMode('pieces'); setAddInches(0);
     setAddSuggestions([]); setShowAddDropdown(false);
   }
   function resetAddSearch() {
-    setAddSearch(''); setAddCategory('all'); setAddProductId('');
+    setAddSearch(''); setAddCategory('all'); setAddProductId(''); setAddSelectedProduct(null);
+    setAddInputMode('pieces'); setAddInches(0);
     setAddSuggestions([]); setShowAddDropdown(false);
   }
 
@@ -485,11 +490,18 @@ export default function BranchStockPage() {
     e.preventDefault();
     if (!addProductId) { setAddError('Select a product'); return; }
     if (addSourceType === 'warehouse' && !addWarehouseId) { setAddError('Select a warehouse'); return; }
+
+    let finalQty = addQty;
+    if (addInputMode === 'inches' && addSelectedProduct?.isCuttable && addSelectedProduct?.unitLengthInches) {
+      if (!addInches || addInches <= 0) { setAddError('Enter a valid length in inches'); return; }
+      finalQty = addInches / addSelectedProduct.unitLengthInches;
+    }
+
     setAddSaving(true); setAddError('');
     try {
       await authFetch(`/api/branches/${selectedBranch}/stock/add`, token, {
         method: 'POST',
-        body: JSON.stringify({ productId: addProductId, quantity: addQty, sourceType: addSourceType, warehouseId: addWarehouseId || undefined }),
+        body: JSON.stringify({ productId: addProductId, quantity: finalQty, sourceType: addSourceType, warehouseId: addWarehouseId || undefined }),
       });
       setShowAddModal(false);
       setAddQty(1); setAddSourceType('warehouse'); setAddWarehouseId(''); resetAddSearch();
@@ -1020,15 +1032,55 @@ export default function BranchStockPage() {
                 onSearchChange={handleAddSearchChange}
                 onCategoryChange={handleAddCategoryChange}
                 onSelect={selectAddProduct}
-                onClearSearch={() => { setAddSearch(''); setAddProductId(''); setAddSuggestions([]); setShowAddDropdown(false); }}
+                onClearSearch={() => { setAddSearch(''); setAddProductId(''); setAddSelectedProduct(null); setAddInputMode('pieces'); setAddInches(0); setAddSuggestions([]); setShowAddDropdown(false); }}
                 onDropdownShow={setShowAddDropdown}
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
-              <input type="number" min="0.01" step="0.01" value={addQty}
-                onChange={e => setAddQty(Number(e.target.value))} required
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+              {addSelectedProduct?.isCuttable && addSelectedProduct?.unitLengthInches ? (
+                <div className="space-y-2">
+                  {/* Mode toggle */}
+                  <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm">
+                    <button type="button"
+                      onClick={() => setAddInputMode('pieces')}
+                      className={`flex-1 py-2 font-medium transition-colors ${addInputMode === 'pieces' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                      In Pieces
+                    </button>
+                    <button type="button"
+                      onClick={() => setAddInputMode('inches')}
+                      className={`flex-1 py-2 font-medium transition-colors ${addInputMode === 'inches' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                      In Inches
+                    </button>
+                  </div>
+
+                  {addInputMode === 'pieces' ? (
+                    <input type="number" min="0.01" step="0.01" value={addQty}
+                      onChange={e => setAddQty(Number(e.target.value))} required
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="relative">
+                        <input type="number" min="0.1" step="0.1" value={addInches || ''}
+                          onChange={e => setAddInches(Number(e.target.value))} required
+                          placeholder="Total length in inches"
+                          className="w-full px-3 py-2.5 pr-14 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">inches</span>
+                      </div>
+                      {addInches > 0 && (
+                        <div className="px-3 py-2 bg-blue-50 rounded-lg text-xs text-blue-700">
+                          = <span className="font-semibold">{(addInches / addSelectedProduct.unitLengthInches).toFixed(4)}</span> pieces
+                          <span className="text-blue-400 ml-1">({addInches}" ÷ {addSelectedProduct.unitLengthInches}" per piece)</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <input type="number" min="0.01" step="0.01" value={addQty}
+                  onChange={e => setAddQty(Number(e.target.value))} required
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Source *</label>
