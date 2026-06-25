@@ -87,10 +87,12 @@ export interface SaleRow {
   staff_id: string;
   customer_name: string | null;
   customer_phone: string | null;
-  payment_method: 'cash' | 'pos' | 'unpaid' | 'part';  // ← add 'part'
+  payment_method: 'cash' | 'pos' | 'unpaid' | 'part' | 'split';
   total_amount: string;
-  amount_paid: string;    // ← new
-  balance_due: string;    // ← new
+  amount_paid: string;
+  balance_due: string;
+  cash_amount: string | null;
+  pos_amount:  string | null;
   notes: string | null;
   items: SaleItemJson[];
   sale_date: string;

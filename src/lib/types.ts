@@ -94,10 +94,12 @@ export interface Sale extends MongoDoc {
   staffName: string;
   customerName?: string;
   customerPhone?: string;
-  paymentMethod: 'cash' | 'pos' | 'unpaid' | 'part';
+  paymentMethod: 'cash' | 'pos' | 'unpaid' | 'part' | 'split';
   totalAmount: number;
   amountPaid?: number;
   balanceDue?: number;
+  cashAmount?: number | null;
+  posAmount?: number | null;
   notes?: string;
   items: SaleItem[];
   saleDate: string;

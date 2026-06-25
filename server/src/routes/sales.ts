@@ -29,6 +29,8 @@ const toSale = (s: SaleRow & { staff_name?: string }) => ({
   totalAmount:   num(s.total_amount),
   amountPaid:    num((s as any).amount_paid ?? s.total_amount),
   balanceDue:    num((s as any).balance_due ?? 0),
+  cashAmount:    s.cash_amount != null ? num(s.cash_amount) : null,
+  posAmount:     s.pos_amount  != null ? num(s.pos_amount)  : null,
   notes:         s.notes,
   items:         typeof s.items === 'string' ? JSON.parse(s.items) : (s.items ?? []),
   saleDate:      s.sale_date,
@@ -112,7 +114,7 @@ router.post(
   '/',
   [
     body('branchId').notEmpty(),
-    body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
+    body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part', 'split']),
     body('items').isArray({ min: 1 }),
     body('items.*.productId').optional({ nullable: true }),   // ← was .notEmpty() — broke services
     body('items.*.quantity').isFloat({ min: 0.01 }),
@@ -124,7 +126,7 @@ router.post(
     try {
       const {
         paymentMethod, customerName, customerPhone,
-        notes, saleDate, items, amountPaid,
+        notes, saleDate, items, amountPaid, cashAmount, posAmount,
       } = req.body;
 
       const branchId = req.user?.role !== 'admin' && req.user?.branchId
@@ -186,21 +188,31 @@ router.post(
         }
       }
 
+      const splitCash = paymentMethod === 'split' ? Number(cashAmount ?? 0) : null;
+      const splitPos  = paymentMethod === 'split' ? Number(posAmount  ?? 0) : null;
       const paid    = paymentMethod === 'unpaid' ? 0
                     : paymentMethod === 'part'   ? Number(amountPaid ?? 0)
+                    : paymentMethod === 'split'  ? (splitCash! + splitPos!)
                     : totalAmount;
       const balance = totalAmount - paid;
+
+      if (paymentMethod === 'split' && Math.abs(paid - totalAmount) > 0.01) {
+        return sendError(res, 400, `Split amounts (₦${paid}) must equal the total (₦${totalAmount})`);
+      }
+
       const staffName = (req.user as any)?.fullName ?? (req.user as any)?.email ?? 'Unknown';
 
       const [sale] = await sql<SaleRow[]>`
         INSERT INTO sales
           (branch_id, staff_id, staff_name, customer_name, customer_phone,
-           payment_method, total_amount, amount_paid, balance_due, notes, items, sale_date)
+           payment_method, total_amount, amount_paid, balance_due,
+           cash_amount, pos_amount, notes, items, sale_date)
         VALUES (
           ${branchId}, ${req.userId!}, ${staffName},
           ${customerName ?? null}, ${customerPhone ?? null},
           ${paymentMethod}::payment_method, ${totalAmount},
           ${paid}, ${balance},
+          ${splitCash}, ${splitPos},
           ${notes ?? null}, ${JSON.stringify(processedItems)},
           ${saleDate ? new Date(saleDate).toISOString() : new Date().toISOString()}
         )
@@ -226,7 +238,7 @@ router.post(
 router.put(
   '/:id',
   [
-    body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part']),
+    body('paymentMethod').isIn(['cash', 'pos', 'unpaid', 'part', 'split']),
     body('items').isArray({ min: 1 }),
     body('items.*.productId').optional({ nullable: true }),   // ← same fix as POST
     body('items.*.quantity').isFloat({ min: 0.01 }),
@@ -253,7 +265,7 @@ router.put(
       if (!isAdmin && existing.staff_id !== req.userId)
         return sendError(res, 403, 'You can only edit your own sales.');
 
-      const { paymentMethod, customerName, customerPhone, notes, items, amountPaid } = req.body;
+      const { paymentMethod, customerName, customerPhone, notes, items, amountPaid, cashAmount, posAmount } = req.body;
 
       // Only product items require a productId
       for (const item of items) {
@@ -329,10 +341,22 @@ router.put(
         }
       }
 
+      const splitCash = paymentMethod === 'split' ? Number(cashAmount ?? 0) : null;
+      const splitPos  = paymentMethod === 'split' ? Number(posAmount  ?? 0) : null;
       const paid    = paymentMethod === 'unpaid' ? 0
                     : paymentMethod === 'part'   ? Number(amountPaid ?? 0)
+                    : paymentMethod === 'split'  ? (splitCash! + splitPos!)
                     : totalAmount;
       const balance = totalAmount - paid;
+
+      if (paymentMethod === 'split' && Math.abs(paid - totalAmount) > 0.01) {
+        for (const old of oldProductItems) {
+          const restore = old.stock_deduct_qty ?? old.quantity;
+          await sql`UPDATE branch_stock SET quantity = quantity - ${restore}, updated_at = NOW() WHERE branch_id = ${existing.branch_id} AND product_id = ${old.product_id}`;
+        }
+        return sendError(res, 400, `Split amounts (₦${paid}) must equal the total (₦${totalAmount})`);
+      }
+
       const oldBalance = num((existing as any).balance_due ?? 0);
 
       const [updated] = await sql<SaleRow[]>`
@@ -343,6 +367,8 @@ router.put(
           total_amount   = ${totalAmount},
           amount_paid    = ${paid},
           balance_due    = ${balance},
+          cash_amount    = ${splitCash},
+          pos_amount     = ${splitPos},
           notes          = ${notes ?? null},
           items          = ${JSON.stringify(newItems)},
           updated_at     = NOW()
