@@ -106,6 +106,8 @@ export interface DebtorRow {
   name: string;
   phone: string;
   amount_owed: string;
+  total_amount: string | null;
+  due_date: string | null;
   created_by: string;
   sale_id: string | null;
   is_cleared: boolean;
@@ -114,6 +116,17 @@ export interface DebtorRow {
   notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DebtorPaymentRow {
+  id: string;
+  debtor_id: string;
+  amount: string;
+  method: 'cash' | 'pos' | 'transfer';
+  recorded_by: string;
+  notes: string | null;
+  paid_at: string;
+  created_at: string;
 }
 
 export interface ExpenseRow {

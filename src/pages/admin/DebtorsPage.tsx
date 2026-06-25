@@ -1,7 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { find, updateOne, getAuthToken, Collections } from '../../lib/api';
-import type { Debtor, Branch } from '../../lib/types';
-import { UserCheck, Search, CheckCircle, XCircle, Phone, User, Clock, Trash2, Pencil, X } from 'lucide-react';
+import type { Debtor, Branch, DebtorPayment } from '../../lib/types';
+import {
+  UserCheck, Search, CheckCircle, XCircle, Phone, User, Clock, Trash2,
+  Pencil, X, History, ChevronDown, ChevronUp, DollarSign, CreditCard,
+  ArrowLeftRight, Calendar, AlertTriangle, Plus,
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
@@ -9,15 +13,29 @@ import { SkeletonCard } from '../../components/Skeleton';
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
+// ── Types ──────────────────────────────────────────────────────────────────────
+
 interface EditDebtorState {
   debtor: Debtor;
   name: string;
   phone: string;
   amount: string;
   notes: string;
+  dueDate: string;
   loading: boolean;
   error: string;
 }
+
+interface PayModalState {
+  debtor: Debtor;
+  amount: string;
+  method: 'cash' | 'pos' | 'transfer';
+  notes: string;
+  loading: boolean;
+  error: string;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function timeOwing(createdAt: string): { label: string; days: number } {
   const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
@@ -42,19 +60,43 @@ function parseProducts(notes: string | undefined): string {
   return match ? match[1].trim() : '';
 }
 
+function isOverdue(dueDate: string | null | undefined, isCleared: boolean): boolean {
+  if (!dueDate || isCleared) return false;
+  return new Date(dueDate) < new Date();
+}
+
+function methodIcon(method: 'cash' | 'pos' | 'transfer') {
+  if (method === 'cash')     return <DollarSign className="w-3 h-3" />;
+  if (method === 'pos')      return <CreditCard className="w-3 h-3" />;
+  return <ArrowLeftRight className="w-3 h-3" />;
+}
+
+function methodLabel(method: 'cash' | 'pos' | 'transfer') {
+  if (method === 'cash')  return 'Cash';
+  if (method === 'pos')   return 'POS';
+  return 'Transfer';
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
+
 export default function DebtorsPage() {
   const { user } = useAuth();
   const toast    = useToast();
   const confirm  = useConfirm();
-  const [debtors, setDebtors]       = useState<Debtor[]>([]);
-  const [branches, setBranches]     = useState<Branch[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [search, setSearch]         = useState('');
+
+  const [debtors, setDebtors]           = useState<Debtor[]>([]);
+  const [branches, setBranches]         = useState<Branch[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState('');
   const [branchFilter, setBranchFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'cleared'>('active');
-  const [clearing, setClearing]     = useState<string | null>(null);
-  const [deleting, setDeleting]     = useState<string | null>(null);
-  const [editDebtor, setEditDebtor] = useState<EditDebtorState | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'cleared' | 'overdue'>('active');
+  const [clearing, setClearing]         = useState<string | null>(null);
+  const [deleting, setDeleting]         = useState<string | null>(null);
+  const [editDebtor, setEditDebtor]     = useState<EditDebtorState | null>(null);
+  const [payModal, setPayModal]         = useState<PayModalState | null>(null);
+  const [expandedId, setExpandedId]     = useState<string | null>(null);
+  const [historyMap, setHistoryMap]     = useState<Record<string, DebtorPayment[]>>({});
+  const [historyLoading, setHistoryLoading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     find(Collections.BRANCHES, {}, { sort: { name: 1 } }).then(b => setBranches(b as Branch[]));
@@ -77,21 +119,84 @@ export default function DebtorsPage() {
     }
   }
 
+  // ── Payment history ─────────────────────────────────────────────────────────
+
+  const loadHistory = useCallback(async (debtorId: string) => {
+    if (historyMap[debtorId] !== undefined) return;
+    setHistoryLoading(prev => ({ ...prev, [debtorId]: true }));
+    try {
+      const res = await fetch(`${BASE}/api/reports/debtors/${debtorId}/payments`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      });
+      const json = await res.json();
+      setHistoryMap(prev => ({ ...prev, [debtorId]: json.data ?? [] }));
+    } catch {
+      setHistoryMap(prev => ({ ...prev, [debtorId]: [] }));
+    } finally {
+      setHistoryLoading(prev => ({ ...prev, [debtorId]: false }));
+    }
+  }, [historyMap]);
+
+  function toggleHistory(debtorId: string) {
+    if (expandedId === debtorId) {
+      setExpandedId(null);
+    } else {
+      setExpandedId(debtorId);
+      loadHistory(debtorId);
+    }
+  }
+
+  // ── Record payment ──────────────────────────────────────────────────────────
+
+  async function recordPayment() {
+    if (!payModal) return;
+    const amt = parseFloat(payModal.amount);
+    if (!amt || amt <= 0) { setPayModal({ ...payModal, error: 'Enter a valid amount' }); return; }
+    if (amt > payModal.debtor.amountOwed + 0.01) {
+      setPayModal({ ...payModal, error: `Cannot exceed amount owed (₦${payModal.debtor.amountOwed.toLocaleString('en-NG')})` });
+      return;
+    }
+    setPayModal({ ...payModal, loading: true, error: '' });
+    try {
+      const res = await fetch(`${BASE}/api/reports/debtors/${payModal.debtor._id}/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({
+          amount: amt,
+          method: payModal.method,
+          notes:  payModal.notes.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
+
+      const updatedDebtor: Debtor = json.data?.debtor;
+      if (updatedDebtor) {
+        setDebtors(prev => prev.map(d => d._id === payModal.debtor._id ? { ...d, ...updatedDebtor } : d));
+      }
+      setHistoryMap(prev => { const copy = { ...prev }; delete copy[payModal.debtor._id]; return copy; });
+      toast.success(`Payment of ₦${amt.toLocaleString('en-NG')} recorded`);
+      setPayModal(null);
+    } catch (err: any) {
+      setPayModal(prev => prev ? { ...prev, loading: false, error: err.message || 'Failed to record payment' } : null);
+    }
+  }
+
+  // ── Debt management ─────────────────────────────────────────────────────────
+
   async function clearDebtor(d: Debtor) {
-    if (!await confirm({ title: 'Clear Debt', message: `Mark "${d.name}" as cleared? They owed ₦${d.amountOwed.toLocaleString()}.`, confirmText: 'Clear Debt' })) return;
+    if (!await confirm({ title: 'Clear Debt', message: `Mark "${d.name}" as fully cleared? They owed ₦${d.amountOwed.toLocaleString('en-NG')}.`, confirmText: 'Clear Debt' })) return;
     setClearing(d._id);
-    await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
-      $set: {
-        isCleared: true,
-        clearedBy: user!.id,
-        clearedByName: user!.fullName,
-        clearedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    });
-    setDebtors(prev => prev.map(x => x._id === d._id
-      ? { ...x, isCleared: true, clearedBy: user!.id, clearedByName: user!.fullName, clearedAt: new Date().toISOString() }
-      : x));
+    try {
+      await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
+        $set: { isCleared: true },
+      });
+      setDebtors(prev => prev.map(x => x._id === d._id
+        ? { ...x, isCleared: true, clearedBy: user!.id, clearedByName: user!.fullName, clearedAt: new Date().toISOString(), amountOwed: 0 }
+        : x));
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to clear debtor');
+    }
     setClearing(null);
   }
 
@@ -117,9 +222,14 @@ export default function DebtorsPage() {
 
   function openEditDebtor(d: Debtor) {
     setEditDebtor({
-      debtor: d, name: d.name || '', phone: d.phone || '',
-      amount: String(d.amountOwed), notes: d.notes || '',
-      loading: false, error: '',
+      debtor: d,
+      name:    d.name || '',
+      phone:   d.phone || '',
+      amount:  String(d.amountOwed),
+      notes:   d.notes || '',
+      dueDate: d.dueDate ? d.dueDate.split('T')[0] : '',
+      loading: false,
+      error:   '',
     });
   }
 
@@ -130,19 +240,23 @@ export default function DebtorsPage() {
     if (!editDebtor.amount || parseFloat(editDebtor.amount) <= 0) { setEditDebtor({ ...editDebtor, error: 'Amount owed required' }); return; }
     setEditDebtor({ ...editDebtor, loading: true, error: '' });
     try {
-      await updateOne(
-        Collections.DEBTORS,
-        { _id: { $oid: editDebtor.debtor._id } },
-        { $set: {
-          name: editDebtor.name.trim(), phone: editDebtor.phone.trim(),
-          amountOwed: parseFloat(editDebtor.amount), notes: editDebtor.notes.trim(),
-          updatedAt: new Date().toISOString(),
-        }},
-      );
-      setDebtors(prev => prev.map(x => x._id === editDebtor.debtor._id
-        ? { ...x, name: editDebtor.name.trim(), phone: editDebtor.phone.trim(), amountOwed: parseFloat(editDebtor.amount), notes: editDebtor.notes.trim() }
-        : x));
+      const res = await fetch(`${BASE}/api/reports/debtors/${editDebtor.debtor._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({
+          name:      editDebtor.name.trim(),
+          phone:     editDebtor.phone.trim(),
+          amountOwed: parseFloat(editDebtor.amount),
+          notes:     editDebtor.notes.trim() || null,
+          dueDate:   editDebtor.dueDate || null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
+      const updated: Debtor = json.data;
+      setDebtors(prev => prev.map(x => x._id === editDebtor.debtor._id ? { ...x, ...updated } : x));
       setEditDebtor(null);
+      toast.success('Debtor updated');
     } catch (err: any) {
       setEditDebtor(prev => prev ? { ...prev, loading: false, error: err.message || 'Failed to save' } : null);
     }
@@ -151,18 +265,25 @@ export default function DebtorsPage() {
   async function reactivateDebtor(d: Debtor) {
     if (!await confirm({ title: 'Reactivate Debtor', message: `Reactivate "${d.name}" as an active debtor?`, confirmText: 'Reactivate' })) return;
     setClearing(d._id);
-    await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
-      $set: { isCleared: false, clearedBy: null, clearedByName: null, clearedAt: null, updatedAt: new Date().toISOString() },
-    });
-    setDebtors(prev => prev.map(x => x._id === d._id
-      ? { ...x, isCleared: false, clearedBy: undefined, clearedByName: undefined, clearedAt: undefined }
-      : x));
+    try {
+      await updateOne(Collections.DEBTORS, { _id: { $oid: d._id } }, {
+        $set: { isCleared: false },
+      });
+      setDebtors(prev => prev.map(x => x._id === d._id
+        ? { ...x, isCleared: false, clearedBy: undefined, clearedByName: undefined, clearedAt: undefined }
+        : x));
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reactivate');
+    }
     setClearing(null);
   }
+
+  // ── Derived lists ───────────────────────────────────────────────────────────
 
   const filtered = debtors.filter(d => {
     if (statusFilter === 'active'  && d.isCleared)  return false;
     if (statusFilter === 'cleared' && !d.isCleared) return false;
+    if (statusFilter === 'overdue' && (!isOverdue(d.dueDate, d.isCleared) || d.isCleared)) return false;
     if (search) {
       const q = search.toLowerCase();
       return d.name.toLowerCase().includes(q) || d.phone.includes(search);
@@ -170,9 +291,12 @@ export default function DebtorsPage() {
     return true;
   });
 
-  const totalActive  = debtors.filter(d => !d.isCleared).reduce((s, d) => s + d.amountOwed, 0);
-  const totalCleared = debtors.filter(d => d.isCleared).reduce((s, d) => s + d.amountOwed, 0);
+  const totalActive   = debtors.filter(d => !d.isCleared).reduce((s, d) => s + d.amountOwed, 0);
+  const totalCleared  = debtors.filter(d =>  d.isCleared).reduce((s, d) => s + (d.totalAmount ?? d.amountOwed), 0);
+  const overdueCount  = debtors.filter(d => isOverdue(d.dueDate, d.isCleared)).length;
   const fmt = (n: number) => `₦${Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`;
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-6 space-y-6">
@@ -182,7 +306,7 @@ export default function DebtorsPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-100">
           <p className="text-slate-500 text-sm">Active Debtors</p>
           <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => !d.isCleared).length}</p>
@@ -192,6 +316,11 @@ export default function DebtorsPage() {
           <p className="text-slate-500 text-sm">Cleared Debtors</p>
           <p className="font-bold text-slate-800 text-xl mt-1">{debtors.filter(d => d.isCleared).length}</p>
           <p className="text-sm font-medium mt-1 text-blue-600">{fmt(totalCleared)}</p>
+        </div>
+        <div className="col-span-2 sm:col-span-1 bg-white rounded-xl p-5 shadow-sm border border-orange-100 bg-orange-50/30">
+          <p className="text-slate-500 text-sm">Overdue</p>
+          <p className="font-bold text-orange-700 text-xl mt-1">{overdueCount}</p>
+          <p className="text-xs text-orange-500 mt-1">Past due date</p>
         </div>
       </div>
 
@@ -208,23 +337,31 @@ export default function DebtorsPage() {
               className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
             />
           </div>
-          <select
-            value={branchFilter}
-            onChange={e => setBranchFilter(e.target.value)}
-            className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-          >
-            <option value="">All Branches</option>
-            {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-          </select>
-          <div className="flex gap-2">
-            {(['active', 'cleared', 'all'] as const).map(s => (
+          {user?.role === 'admin' && (
+            <select
+              value={branchFilter}
+              onChange={e => setBranchFilter(e.target.value)}
+              className="px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="">All Branches</option>
+              {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+            </select>
+          )}
+          <div className="flex gap-1.5 flex-wrap">
+            {(['active', 'cleared', 'overdue', 'all'] as const).map(s => (
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
-                  statusFilter === s ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                className={`px-3 py-2 rounded-lg text-sm font-medium capitalize transition-colors ${
+                  statusFilter === s
+                    ? s === 'overdue' ? 'bg-orange-500 text-white' : 'bg-amber-500 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
-              >{s}</button>
+              >
+                {s}{s === 'overdue' && overdueCount > 0 && (
+                  <span className="ml-1.5 bg-white/30 text-white text-xs rounded-full px-1.5 py-0.5">{overdueCount}</span>
+                )}
+              </button>
             ))}
           </div>
         </div>
@@ -244,132 +381,297 @@ export default function DebtorsPage() {
         <div className="space-y-3">
           {filtered.map(d => {
             const { label: timeLabel, days } = timeOwing(d.createdAt);
-            const products = parseProducts(d.notes);
-            const isPartPayment = d.paymentMethod === 'part';
+            const products     = parseProducts(d.notes);
+            const isPartPay    = d.paymentMethod === 'part';
+            const overdue      = isOverdue(d.dueDate, d.isCleared);
+            const originalAmt  = d.totalAmount ?? d.totalSaleAmount ?? null;
+            const paidAmt      = originalAmt != null ? Math.max(0, originalAmt - d.amountOwed) : null;
+            const progressPct  = (originalAmt && originalAmt > 0)
+              ? Math.min(100, (paidAmt! / originalAmt) * 100)
+              : null;
+            const isExpanded   = expandedId === d._id;
+            const history      = historyMap[d._id];
+            const histLoading  = historyLoading[d._id];
 
             return (
               <div
                 key={d._id}
-                className={`bg-white rounded-xl p-4 shadow-sm border ${d.isCleared ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100'}`}
+                className={`bg-white rounded-xl shadow-sm border transition-all ${
+                  overdue ? 'border-orange-300' : d.isCleared ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100'
+                }`}
               >
-                <div className="flex items-start justify-between gap-4">
-                  {/* Left: avatar + info */}
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
-                      <User className="w-5 h-5 text-amber-600" />
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    {/* Left: avatar + info */}
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${overdue ? 'bg-orange-100' : 'bg-amber-100'}`}>
+                        <User className={`w-5 h-5 ${overdue ? 'text-orange-600' : 'text-amber-600'}`} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-slate-800">{d.name}</span>
+                          {overdue && (
+                            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">
+                              <AlertTriangle className="w-3 h-3" />Overdue
+                            </span>
+                          )}
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            isPartPay ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {isPartPay ? 'Part Payment' : 'Unpaid'}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            d.isCleared ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {d.isCleared ? 'Cleared' : 'Active'}
+                          </span>
+                        </div>
+
+                        <a href={`tel:${d.phone}`} className="flex items-center gap-1 text-sm text-blue-600 hover:underline mt-0.5">
+                          <Phone className="w-3 h-3" />{d.phone}
+                        </a>
+
+                        {products && (
+                          <p className="text-xs text-slate-500 mt-1 truncate max-w-xs">
+                            <span className="font-medium text-slate-600">Items:</span> {products}
+                          </p>
+                        )}
+
+                        {d.dueDate && (
+                          <p className={`flex items-center gap-1 text-xs mt-1 font-medium ${overdue ? 'text-orange-600' : 'text-slate-500'}`}>
+                            <Calendar className="w-3 h-3" />
+                            Due: {new Date(d.dueDate).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          </p>
+                        )}
+
+                        {d.createdByName && (
+                          <p className="text-xs text-slate-400 mt-0.5">Recorded by {d.createdByName}</p>
+                        )}
+                        {d.isCleared && d.clearedByName && (
+                          <p className="text-xs text-blue-600 mt-0.5">Cleared by {d.clearedByName}</p>
+                        )}
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-slate-800">{d.name}</span>
-                        {/* Payment type badge */}
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                          isPartPayment
-                            ? 'bg-orange-100 text-orange-700'
-                            : 'bg-red-100 text-red-700'
-                        }`}>
-                          {isPartPayment ? 'Part Payment' : 'Unpaid'}
-                        </span>
-                        {/* Status badge */}
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                          d.isCleared ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'
-                        }`}>
-                          {d.isCleared ? 'Cleared' : 'Active'}
-                        </span>
+
+                    {/* Right: amount + time + actions */}
+                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                      <div className="text-right">
+                        <p className={`font-bold text-lg ${d.isCleared ? 'text-blue-600' : 'text-red-600'}`}>
+                          {fmt(d.amountOwed)}
+                        </p>
+                        {originalAmt != null && originalAmt > 0 && (
+                          <p className="text-xs text-slate-400">of {fmt(originalAmt)}</p>
+                        )}
+                        {d.isCleared && d.clearedAt && (
+                          <p className="text-xs text-blue-400 mt-0.5">{new Date(d.clearedAt).toLocaleDateString('en-NG')}</p>
+                        )}
                       </div>
 
-                      {/* Phone */}
-                      <a
-                        href={`tel:${d.phone}`}
-                        className="flex items-center gap-1 text-sm text-blue-600 hover:underline mt-0.5"
-                      >
-                        <Phone className="w-3 h-3" />{d.phone}
-                      </a>
-
-                      {/* Products */}
-                      {products && (
-                        <p className="text-xs text-slate-500 mt-1 truncate max-w-xs">
-                          <span className="font-medium text-slate-600">Items:</span> {products}
-                        </p>
+                      {!d.isCleared && (
+                        <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${urgencyStyle(days)}`}>
+                          <Clock className="w-3 h-3" />{timeLabel}
+                        </span>
                       )}
 
-                      {/* Recorded by */}
-                      {d.createdByName && (
-                        <p className="text-xs text-slate-400 mt-0.5">Recorded by {d.createdByName}</p>
-                      )}
-                      {d.isCleared && d.clearedByName && (
-                        <p className="text-xs text-blue-600 mt-0.5">Cleared by {d.clearedByName}</p>
-                      )}
+                      {/* Action buttons */}
+                      <div className="flex flex-col gap-1.5 items-end">
+                        {!d.isCleared && (
+                          <button
+                            onClick={() => setPayModal({ debtor: d, amount: '', method: 'cash', notes: '', loading: false, error: '' })}
+                            disabled={deleting === d._id || clearing === d._id}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50 font-medium"
+                          >
+                            <Plus className="w-3.5 h-3.5" />Pay
+                          </button>
+                        )}
+                        <button
+                          onClick={() => openEditDebtor(d)}
+                          disabled={deleting === d._id || clearing === d._id}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />Edit
+                        </button>
+                        {d.isCleared ? (
+                          <button
+                            onClick={() => reactivateDebtor(d)}
+                            disabled={clearing === d._id || deleting === d._id}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {clearing === d._id
+                              ? <span className="w-3 h-3 border border-amber-600 border-t-transparent rounded-full animate-spin" />
+                              : <XCircle className="w-3.5 h-3.5" />}
+                            Reactivate
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => clearDebtor(d)}
+                            disabled={clearing === d._id || deleting === d._id}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {clearing === d._id
+                              ? <span className="w-3 h-3 border border-teal-600 border-t-transparent rounded-full animate-spin" />
+                              : <CheckCircle className="w-3.5 h-3.5" />}
+                            Clear
+                          </button>
+                        )}
+                        <button
+                          onClick={() => deleteDebtor(d)}
+                          disabled={deleting === d._id || clearing === d._id}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {deleting === d._id
+                            ? <span className="w-3 h-3 border border-red-600 border-t-transparent rounded-full animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" />}
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Right: amount + time + action */}
-                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                    <div className="text-right">
-                      <p className={`font-bold text-lg ${d.isCleared ? 'text-blue-600' : 'text-red-600'}`}>{fmt(d.amountOwed)}</p>
-                      {isPartPayment && d.totalSaleAmount != null && d.totalSaleAmount > 0 && (
-                        <p className="text-xs text-slate-400">of {fmt(d.totalSaleAmount)} total</p>
-                      )}
-                      {d.isCleared && d.clearedAt && (
-                        <p className="text-xs text-blue-400 mt-0.5">{new Date(d.clearedAt).toLocaleDateString('en-NG')}</p>
-                      )}
+                  {/* Progress bar */}
+                  {progressPct !== null && (
+                    <div className="mt-3">
+                      <div className="flex justify-between text-xs text-slate-500 mb-1">
+                        <span>Paid: {fmt(paidAmt!)}</span>
+                        <span>{progressPct.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${d.isCleared ? 'bg-blue-400' : 'bg-amber-400'}`}
+                          style={{ width: `${progressPct}%` }}
+                        />
+                      </div>
                     </div>
+                  )}
 
-                    {/* Time owing */}
-                    {!d.isCleared && (
-                      <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${urgencyStyle(days)}`}>
-                        <Clock className="w-3 h-3" />{timeLabel}
-                      </span>
-                    )}
-
-                    {/* Action buttons */}
-                    <div className="flex flex-col gap-1.5 items-end">
-                      <button
-                        onClick={() => openEditDebtor(d)}
-                        disabled={deleting === d._id || clearing === d._id}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                        Edit
-                      </button>
-                      {d.isCleared ? (
-                        <button
-                          onClick={() => reactivateDebtor(d)}
-                          disabled={clearing === d._id || deleting === d._id}
-                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {clearing === d._id
-                            ? <span className="w-3 h-3 border border-amber-600 border-t-transparent rounded-full animate-spin" />
-                            : <XCircle className="w-3.5 h-3.5" />}
-                          Reactivate
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => clearDebtor(d)}
-                          disabled={clearing === d._id || deleting === d._id}
-                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-green-50 text-green-600 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {clearing === d._id
-                            ? <span className="w-3 h-3 border border-green-600 border-t-transparent rounded-full animate-spin" />
-                            : <CheckCircle className="w-3.5 h-3.5" />}
-                          Clear Debt
-                        </button>
-                      )}
-                      <button
-                        onClick={() => deleteDebtor(d)}
-                        disabled={deleting === d._id || clearing === d._id}
-                        className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors disabled:opacity-50"
-                      >
-                        {deleting === d._id
-                          ? <span className="w-3 h-3 border border-red-600 border-t-transparent rounded-full animate-spin" />
-                          : <Trash2 className="w-3.5 h-3.5" />}
-                        Delete
-                      </button>
-                    </div>
-                  </div>
+                  {/* Payment history toggle */}
+                  <button
+                    onClick={() => toggleHistory(d._id)}
+                    className="mt-3 flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors"
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    Payment History
+                    {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
+
+                {/* Payment history panel */}
+                {isExpanded && (
+                  <div className="border-t border-slate-100 px-4 pb-4 pt-3 bg-slate-50/60 rounded-b-xl">
+                    {histLoading ? (
+                      <p className="text-xs text-slate-400 text-center py-3">Loading history…</p>
+                    ) : !history || history.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-3">No payments recorded yet</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {history.map(p => (
+                          <div key={p._id} className="flex items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded font-medium ${
+                                p.method === 'cash' ? 'bg-green-100 text-green-700'
+                                : p.method === 'pos' ? 'bg-blue-100 text-blue-700'
+                                : 'bg-purple-100 text-purple-700'
+                              }`}>
+                                {methodIcon(p.method)}{methodLabel(p.method)}
+                              </span>
+                              <span className="text-slate-600">
+                                {new Date(p.paidAt).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
+                              </span>
+                              {p.recordedByName && <span className="text-slate-400">· {p.recordedByName}</span>}
+                              {p.notes && <span className="text-slate-400 italic">· {p.notes}</span>}
+                            </div>
+                            <span className="font-bold text-green-700">{fmt(p.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Record Payment Modal ── */}
+      {payModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <div>
+                <h2 className="text-lg font-bold text-slate-800">Record Payment</h2>
+                <p className="text-sm text-slate-500 mt-0.5">{payModal.debtor.name} · Owes {fmt(payModal.debtor.amountOwed)}</p>
+              </div>
+              <button onClick={() => setPayModal(null)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              {payModal.error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">{payModal.error}</div>
+              )}
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Amount (₦) *</label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={payModal.amount}
+                  onChange={e => setPayModal({ ...payModal, amount: e.target.value })}
+                  placeholder={`Max ₦${payModal.debtor.amountOwed.toLocaleString('en-NG')}`}
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Payment Method *</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['cash', 'pos', 'transfer'] as const).map(m => (
+                    <button
+                      key={m}
+                      onClick={() => setPayModal({ ...payModal, method: m })}
+                      className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-xs font-semibold border transition-colors ${
+                        payModal.method === m
+                          ? 'bg-amber-500 text-white border-amber-500'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      {m === 'cash' && <DollarSign className="w-4 h-4" />}
+                      {m === 'pos'  && <CreditCard className="w-4 h-4" />}
+                      {m === 'transfer' && <ArrowLeftRight className="w-4 h-4" />}
+                      {methodLabel(m)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>
+                <input
+                  type="text"
+                  value={payModal.notes}
+                  onChange={e => setPayModal({ ...payModal, notes: e.target.value })}
+                  placeholder="e.g. partial payment, bank ref…"
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 p-5 border-t border-slate-100">
+              <button
+                onClick={() => setPayModal(null)}
+                disabled={payModal.loading}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={recordPayment}
+                disabled={payModal.loading || !payModal.amount}
+                className="flex-1 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 disabled:bg-green-300 text-white font-bold text-sm transition-colors flex items-center justify-center gap-2 shadow-sm"
+              >
+                {payModal.loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Record Payment
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -408,16 +710,27 @@ export default function DebtorsPage() {
                   />
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Amount Owed (₦) *</label>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={editDebtor.amount}
-                  onChange={e => setEditDebtor({ ...editDebtor, amount: e.target.value })}
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Amount Owed (₦) *</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={editDebtor.amount}
+                    onChange={e => setEditDebtor({ ...editDebtor, amount: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Due Date</label>
+                  <input
+                    type="date"
+                    value={editDebtor.dueDate}
+                    onChange={e => setEditDebtor({ ...editDebtor, dueDate: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50"
+                  />
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Notes (optional)</label>

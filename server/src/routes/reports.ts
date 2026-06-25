@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import sql from '../db/client.js';
-import type { DailyReportRow, DebtorRow, ExpenseRow } from '../db/types.js';
+import type { DailyReportRow, DebtorRow, DebtorPaymentRow, ExpenseRow } from '../db/types.js';
 import { num } from '../db/types.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.js';
 import { sendResponse, sendError } from '../utils/apiResponse.js';
@@ -49,6 +49,8 @@ const toDebtor = (d: DebtorRow & {
   name:            d.name,
   phone:           d.phone,
   amountOwed:      num(d.amount_owed),
+  totalAmount:     d.total_amount != null ? num(d.total_amount) : null,
+  dueDate:         d.due_date ?? null,
   createdBy:       d.created_by,
   createdByName:   d.created_by_name  ?? null,
   saleId:          d.sale_id,
@@ -62,6 +64,19 @@ const toDebtor = (d: DebtorRow & {
   paymentMethod:   d.sale_payment_method ?? null,
   totalSaleAmount: num(d.sale_total_amount),
   saleItems:       Array.isArray(d.sale_items) ? d.sale_items : [],
+});
+
+const toDebtorPayment = (p: DebtorPaymentRow & { recorded_by_name?: string | null }) => ({
+  id:             p.id,
+  _id:            p.id,
+  debtorId:       p.debtor_id,
+  amount:         num(p.amount),
+  method:         p.method,
+  recordedBy:     p.recorded_by,
+  recordedByName: p.recorded_by_name ?? null,
+  notes:          p.notes,
+  paidAt:         p.paid_at,
+  createdAt:      p.created_at,
 });
 
 const toExpense = (e: ExpenseRow & { recorded_by_name?: string | null }) => ({
@@ -271,16 +286,18 @@ router.get('/debtors', async (req: Request, res: Response) => {
 // POST /api/reports/debtors
 router.post('/debtors', async (req: Request, res: Response) => {
   try {
-    const { name, phone, amountOwed, saleId, notes } = req.body;
+    const { name, phone, amountOwed, saleId, notes, totalAmount, dueDate } = req.body;
     const branchId = req.user?.role !== 'admin' && req.user?.branchId
       ? req.user.branchId
       : req.body.branchId;
 
     const [debtor] = await sql<DebtorRow[]>`
-      INSERT INTO debtors (name, phone, amount_owed, branch_id, created_by, sale_id, notes)
+      INSERT INTO debtors (name, phone, amount_owed, total_amount, due_date, branch_id, created_by, sale_id, notes)
       VALUES (
-        ${name}, ${phone}, ${amountOwed}, ${branchId},
-        ${req.userId!},
+        ${name}, ${phone}, ${amountOwed},
+        ${totalAmount != null ? Number(totalAmount) : null},
+        ${dueDate ?? null},
+        ${branchId}, ${req.userId!},
         ${saleId ?? null}, ${notes ?? null}
       )
       RETURNING *
@@ -294,7 +311,7 @@ router.post('/debtors', async (req: Request, res: Response) => {
 // PUT /api/reports/debtors/:id
 router.put('/debtors/:id', async (req: Request, res: Response) => {
   try {
-    const { name, phone, amountOwed, notes } = req.body;
+    const { name, phone, amountOwed, notes, dueDate, totalAmount } = req.body;
     const isAdmin = req.user?.role === 'admin';
 
     const [debtor] = await sql<DebtorRow[]>`
@@ -302,6 +319,8 @@ router.put('/debtors/:id', async (req: Request, res: Response) => {
         name         = COALESCE(${name ?? null}, name),
         phone        = COALESCE(${phone ?? null}, phone),
         amount_owed  = COALESCE(${amountOwed ?? null}, amount_owed),
+        total_amount = COALESCE(${totalAmount != null ? Number(totalAmount) : null}, total_amount),
+        due_date     = ${dueDate ?? null},
         notes        = ${notes ?? null},
         updated_at   = now()
       WHERE id = ${req.params.id}
@@ -344,6 +363,66 @@ router.patch('/debtors/:id/reactivate', adminOnly, async (req: Request, res: Res
     if (!debtor) return sendError(res, 404, 'Debtor not found');
     return sendResponse(res, 200, 'Debtor reactivated', toDebtor(debtor));
   } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
+// GET /api/reports/debtors/:id/payments
+router.get('/debtors/:id/payments', async (req: Request, res: Response) => {
+  try {
+    const payments = await sql<(DebtorPaymentRow & { recorded_by_name: string })[]>`
+      SELECT dp.*, u.full_name AS recorded_by_name
+      FROM debtor_payments dp
+      JOIN users u ON u.id = dp.recorded_by
+      WHERE dp.debtor_id = ${req.params.id}
+      ORDER BY dp.paid_at DESC
+    `;
+    return sendResponse(res, 200, 'Payments fetched', payments.map(toDebtorPayment));
+  } catch (err) {
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
+// POST /api/reports/debtors/:id/payments
+router.post('/debtors/:id/payments', async (req: Request, res: Response) => {
+  try {
+    const { amount, method = 'cash', notes } = req.body;
+    if (!amount || Number(amount) <= 0) return sendError(res, 400, 'Amount must be positive');
+    if (!['cash', 'pos', 'transfer'].includes(method)) return sendError(res, 400, 'Invalid payment method');
+
+    const [debtor] = await sql<DebtorRow[]>`SELECT * FROM debtors WHERE id = ${req.params.id}`;
+    if (!debtor) return sendError(res, 404, 'Debtor not found');
+    if (debtor.is_cleared) return sendError(res, 400, 'Debtor is already cleared');
+
+    const payAmt = Number(amount);
+    const owed   = num(debtor.amount_owed);
+    if (payAmt > owed + 0.01) return sendError(res, 400, `Payment exceeds amount owed (₦${owed.toLocaleString()})`);
+
+    const [payment] = await sql<DebtorPaymentRow[]>`
+      INSERT INTO debtor_payments (debtor_id, amount, method, recorded_by, notes)
+      VALUES (${req.params.id}, ${payAmt}, ${method}, ${req.userId!}, ${notes ?? null})
+      RETURNING *
+    `;
+
+    const newOwed      = Math.max(0, Math.round((owed - payAmt) * 100) / 100);
+    const isNowCleared = newOwed <= 0.001;
+    const [updated] = await sql<DebtorRow[]>`
+      UPDATE debtors SET
+        amount_owed = ${newOwed},
+        is_cleared  = ${isNowCleared},
+        cleared_by  = CASE WHEN ${isNowCleared} THEN ${req.userId!}::uuid ELSE cleared_by END,
+        cleared_at  = CASE WHEN ${isNowCleared} THEN now() ELSE cleared_at END,
+        updated_at  = now()
+      WHERE id = ${req.params.id}
+      RETURNING *
+    `;
+
+    return sendResponse(res, 201, 'Payment recorded', {
+      payment: toDebtorPayment({ ...payment, recorded_by_name: null }),
+      debtor:  toDebtor(updated),
+    });
+  } catch (err) {
+    console.error('[POST /debtors/:id/payments]', err);
     return sendError(res, 500, 'Server error', err);
   }
 });
