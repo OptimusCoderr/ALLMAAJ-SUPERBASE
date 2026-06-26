@@ -188,6 +188,7 @@ export interface WarehouseSaleRow {
   total_amount: string;
   amount_paid: string;
   balance_due: string;
+  discounted_total: string | null;
   doc_type: 'invoice' | 'waybill';
   notes: string | null;
   sale_date: string;
@@ -205,6 +206,7 @@ export interface WarehouseSaleItemRow {
   subtotal: string;
   unit: string;
   source_warehouse_id: string | null;
+  source_branch_id: string | null;
   is_external: boolean;
   external_source: string | null;
 }

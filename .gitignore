@@ -1,3 +1,6 @@
+# Confidential company assets (signature, name, role)
+confidential-assets/
+
 logs
 *.log
 npm-debug.log*
