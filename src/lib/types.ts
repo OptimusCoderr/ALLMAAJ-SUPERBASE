@@ -157,6 +157,8 @@ export interface WarehouseSaleItem {
   unit: string;
   sourceWarehouseId?: string | null;
   sourceWarehouseName?: string | null;
+  sourceBranchId?: string | null;
+  sourceBranchName?: string | null;
   isExternal?: boolean;
   externalSource?: string | null;
 }
@@ -174,6 +176,7 @@ export interface WarehouseSale extends MongoDoc {
   totalAmount: number;
   amountPaid: number;
   balanceDue: number;
+  discountedTotal?: number | null;
   docType: 'invoice' | 'waybill';
   notes?: string | null;
   saleDate: string;

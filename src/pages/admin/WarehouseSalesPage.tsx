@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { getAuthToken } from '../../lib/api';
-import type { Warehouse, WarehouseSale, WarehouseSaleItem } from '../../lib/types';
+import type { Warehouse, WarehouseSale, WarehouseSaleItem, Branch } from '../../lib/types';
 import {
   ShoppingCart, Printer, FileText, Truck, Trash2, Plus, Minus,
   Search, X, Package, Building2, User, Phone, MapPin, CreditCard,
   DollarSign, ArrowLeftRight, Clock, CheckCircle, ChevronDown,
-  RefreshCw, Eye, Upload, Settings, ExternalLink, Edit2,
+  RefreshCw, Eye, Upload, Settings, ExternalLink, Edit2, Store,
+  Tag,
 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 
@@ -15,14 +16,19 @@ const SETTINGS_KEY = 'allmaaj_invoice_settings';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+type StockSource = 'warehouse' | 'branch';
+
 interface StockItem {
   productId: string;
   productName: string;
   quantity: number;
   unitPrice: number;
   unit: string;
+  sourceType: StockSource;
   warehouseId: string;
   warehouseName: string;
+  branchId?: string;
+  branchName?: string;
 }
 
 interface CartItem {
@@ -36,6 +42,8 @@ interface CartItem {
   availableQty: number;
   sourceWarehouseId: string | null;
   sourceWarehouseName: string | null;
+  sourceBranchId: string | null;
+  sourceBranchName: string | null;
   isExternal: boolean;
   externalSource: string;
 }
@@ -54,10 +62,10 @@ type PayMethod = 'cash' | 'pos' | 'transfer' | 'credit';
 type DocType   = 'invoice' | 'waybill';
 
 const DEFAULT_SETTINGS: CompanySettings = {
-  name: 'Allmaaj & Co. Nig. Ltd.',
-  tagline: 'Quality Products & Services',
-  address: '',
-  phone: '',
+  name: 'ALLMAAJ PRINTS.',
+  tagline: 'Master Prints',
+  address: 'ABUJA, NIGERIA',
+  phone: '+2349064325057',
   email: '',
   logoDataUrl: '',
   signatureDataUrl: '',
@@ -228,7 +236,11 @@ function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: Co
               )}
               {isWaybill && (
                 <td style={{ padding: '8px 10px', fontSize: 11, color: '#64748b', borderBottom: '1px solid #e2e8f0' }}>
-                  {item.isExternal ? (item.externalSource || 'External') : (item.sourceWarehouseName || 'Warehouse')}
+                  {item.isExternal
+                    ? (item.externalSource || 'External')
+                    : item.sourceBranchName
+                      ? `Branch: ${item.sourceBranchName}`
+                      : (item.sourceWarehouseName || 'Warehouse')}
                 </td>
               )}
             </tr>
@@ -237,10 +249,24 @@ function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: Co
         {!isWaybill && (
           <tfoot>
             <tr style={{ background: '#f1f5f9' }}>
-              <td colSpan={3} style={{ padding: '10px', textAlign: 'right', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: '#475569', textTransform: 'uppercase' }}>Grand Total</td>
-              <td colSpan={2} style={{ padding: '10px', textAlign: 'right', fontSize: 16, fontWeight: 800, color: '#d97706' }}>{fmt(sale.totalAmount)}</td>
+              <td colSpan={3} style={{ padding: '10px', textAlign: 'right', fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: '#475569', textTransform: 'uppercase' }}>
+                {sale.discountedTotal != null ? 'Normal Total' : 'Grand Total'}
+              </td>
+              <td colSpan={2} style={{ padding: '10px', textAlign: 'right', fontSize: 16, fontWeight: 800, color: sale.discountedTotal != null ? '#94a3b8' : '#d97706' }}>
+                {fmt(sale.totalAmount)}
+              </td>
             </tr>
-            {sale.amountPaid > 0 && sale.amountPaid < sale.totalAmount && (
+            {sale.discountedTotal != null && (
+              <tr style={{ background: '#fef9ee' }}>
+                <td colSpan={3} style={{ padding: '10px', textAlign: 'right', fontSize: 12, fontWeight: 700, letterSpacing: 0.5, color: '#d97706', textTransform: 'uppercase' }}>
+                  Discounted Total
+                </td>
+                <td colSpan={2} style={{ padding: '10px', textAlign: 'right', fontSize: 18, fontWeight: 800, color: '#d97706' }}>
+                  {fmt(sale.discountedTotal)}
+                </td>
+              </tr>
+            )}
+            {sale.amountPaid > 0 && sale.amountPaid < (sale.discountedTotal ?? sale.totalAmount) && (
               <tr>
                 <td colSpan={3} style={{ padding: '6px 10px', textAlign: 'right', fontSize: 11, color: '#64748b' }}>Amount Paid</td>
                 <td colSpan={2} style={{ padding: '6px 10px', textAlign: 'right', fontSize: 12, fontWeight: 600, color: '#16a34a' }}>{fmt(sale.amountPaid)}</td>
@@ -306,11 +332,13 @@ export default function WarehouseSalesPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState<CompanySettings>(loadSettings);
 
-  // ── Warehouses & stock
+  // ── Warehouses & branches & stock
   const [warehouses, setWarehouses]                   = useState<Warehouse[]>([]);
+  const [branches, setBranches]                       = useState<Branch[]>([]);
   const [allStock, setAllStock]                       = useState<StockItem[]>([]);
   const [stockLoading, setStockLoading]               = useState(false);
   const [pickerWarehouse, setPickerWarehouse]         = useState('');   // which warehouse tab in picker
+  const [pickerSource, setPickerSource]               = useState<'warehouse' | 'branch'>('warehouse');
   const [primaryWarehouse, setPrimaryWarehouse]       = useState('');   // invoice "issued from"
 
   // ── Cart
@@ -334,6 +362,7 @@ export default function WarehouseSalesPage() {
   const [docType, setDocType]                 = useState<DocType>('invoice');
   const [notes, setNotes]                     = useState('');
   const [saleDate, setSaleDate]               = useState(new Date().toISOString().split('T')[0]);
+  const [discountedTotal, setDiscountedTotal] = useState<number | ''>('');
 
   // ── Submission
   const [submitting, setSubmitting] = useState(false);
@@ -368,26 +397,31 @@ export default function WarehouseSalesPage() {
   const [editExtQty, setEditExtQty]                 = useState(1);
   const [editExtPrice, setEditExtPrice]             = useState(0);
   const [editExtUnit, setEditExtUnit]               = useState('pcs');
+  const [editDiscountedTotal, setEditDiscountedTotal] = useState<number | ''>('');
 
   const total   = cart.reduce((s, i) => s + i.subtotal, 0);
   const balance = payMethod === 'credit' ? Math.max(0, total - amountPaid) : 0;
 
-  // ── Load warehouses ─────────────────────────────────────────────────────────
+  // ── Load warehouses & branches ───────────────────────────────────────────────
 
   useEffect(() => {
     fetch(`${BASE}/api/warehouses`, { headers: { Authorization: `Bearer ${getAuthToken()}` } })
       .then(r => r.json())
       .then(j => setWarehouses(j.data ?? []))
       .catch(() => {});
+    fetch(`${BASE}/api/branches`, { headers: { Authorization: `Bearer ${getAuthToken()}` } })
+      .then(r => r.json())
+      .then(j => setBranches(j.data ?? []))
+      .catch(() => {});
   }, []);
 
-  // ── Load stock from all warehouses ──────────────────────────────────────────
+  // ── Load stock from all warehouses & branches ────────────────────────────────
 
   const loadAllStock = useCallback(async () => {
-    if (warehouses.length === 0) return;
+    if (warehouses.length === 0 && branches.length === 0) return;
     setStockLoading(true);
     try {
-      const results = await Promise.all(
+      const warehouseResults = await Promise.all(
         warehouses.map(w =>
           fetch(`${BASE}/api/warehouses/${w._id}/stock`, { headers: { Authorization: `Bearer ${getAuthToken()}` } })
             .then(r => r.json())
@@ -395,18 +429,45 @@ export default function WarehouseSalesPage() {
             .catch(() => ({ warehouseId: w._id, warehouseName: w.name, rows: [] }))
         )
       );
+      const branchResults = await Promise.all(
+        branches.map(b =>
+          fetch(`${BASE}/api/branches/${b._id}/stock`, { headers: { Authorization: `Bearer ${getAuthToken()}` } })
+            .then(r => r.json())
+            .then((j: any) => ({ branchId: b._id, branchName: b.name, rows: j.data ?? [] }))
+            .catch(() => ({ branchId: b._id, branchName: b.name, rows: [] }))
+        )
+      );
       const combined: StockItem[] = [];
-      for (const { warehouseId, warehouseName, rows } of results) {
+      for (const { warehouseId, warehouseName, rows } of warehouseResults) {
         for (const r of rows) {
           if (parseFloat(r.quantity) > 0) {
             combined.push({
-              productId:     r.product_id   ?? r.productId,
-              productName:   r.product?.name ?? r.productName ?? 'Unknown',
-              quantity:      parseFloat(r.quantity),
-              unitPrice:     parseFloat(r.product?.unit_price ?? r.unitPrice ?? 0),
-              unit:          r.product?.unit ?? 'pcs',
+              productId:   r.product_id   ?? r.productId,
+              productName: r.product?.name ?? r.productName ?? 'Unknown',
+              quantity:    parseFloat(r.quantity),
+              unitPrice:   parseFloat(r.product?.unit_price ?? r.unitPrice ?? 0),
+              unit:        r.product?.unit ?? 'pcs',
+              sourceType:  'warehouse',
               warehouseId,
               warehouseName,
+            });
+          }
+        }
+      }
+      for (const { branchId, branchName, rows } of branchResults) {
+        for (const r of rows) {
+          if (parseFloat(r.quantity) > 0) {
+            combined.push({
+              productId:   r.product_id   ?? r.productId,
+              productName: r.product?.name ?? r.productName ?? 'Unknown',
+              quantity:    parseFloat(r.quantity),
+              unitPrice:   parseFloat(r.product?.unit_price ?? r.unitPrice ?? 0),
+              unit:        r.product?.unit ?? 'pcs',
+              sourceType:  'branch',
+              warehouseId: '',
+              warehouseName: '',
+              branchId,
+              branchName,
             });
           }
         }
@@ -414,22 +475,26 @@ export default function WarehouseSalesPage() {
       setAllStock(combined);
     } catch { setAllStock([]); }
     setStockLoading(false);
-  }, [warehouses]);
+  }, [warehouses, branches]);
 
   useEffect(() => { loadAllStock(); }, [loadAllStock]);
 
   // ── Filtered stock for picker ───────────────────────────────────────────────
 
   const filteredStock = allStock.filter(s => {
-    const matchWh = !pickerWarehouse || s.warehouseId === pickerWarehouse;
+    const matchType = s.sourceType === pickerSource;
+    const matchWh = pickerSource === 'branch' || !pickerWarehouse || s.warehouseId === pickerWarehouse;
+    const matchBr = pickerSource === 'warehouse' || !pickerWarehouse || s.branchId === pickerWarehouse;
     const matchQ  = !productSearch || s.productName.toLowerCase().includes(productSearch.toLowerCase());
-    return matchWh && matchQ;
+    return matchType && (pickerSource === 'warehouse' ? matchWh : matchBr) && matchQ;
   });
 
   // ── Cart operations ─────────────────────────────────────────────────────────
 
   function addStockItem(item: StockItem) {
-    const key = `${item.productId}::${item.warehouseId}`;
+    const key = item.sourceType === 'branch'
+      ? `${item.productId}::branch::${item.branchId}`
+      : `${item.productId}::${item.warehouseId}`;
     const existing = cart.find(c => c.key === key);
     if (existing) {
       const newQty = existing.quantity + 1;
@@ -443,7 +508,10 @@ export default function WarehouseSalesPage() {
         quantity: 1, unitPrice: item.unitPrice,
         subtotal: item.unitPrice,
         unit: item.unit, availableQty: item.quantity,
-        sourceWarehouseId: item.warehouseId, sourceWarehouseName: item.warehouseName,
+        sourceWarehouseId: item.sourceType === 'warehouse' ? item.warehouseId : null,
+        sourceWarehouseName: item.sourceType === 'warehouse' ? item.warehouseName : null,
+        sourceBranchId: item.sourceType === 'branch' ? (item.branchId ?? null) : null,
+        sourceBranchName: item.sourceType === 'branch' ? (item.branchName ?? null) : null,
         isExternal: false, externalSource: '',
       }]);
     }
@@ -461,6 +529,7 @@ export default function WarehouseSalesPage() {
       subtotal: Math.round(extQty * extPrice * 100) / 100,
       unit: extUnit, availableQty: Infinity,
       sourceWarehouseId: null, sourceWarehouseName: null,
+      sourceBranchId: null, sourceBranchName: null,
       isExternal: true, externalSource: extSource.trim(),
     }]);
     setExtName(''); setExtSource(''); setExtQty(1); setExtPrice(0); setExtUnit('pcs');
@@ -510,6 +579,7 @@ export default function WarehouseSalesPage() {
           customerAddress: customerAddress.trim() || null,
           paymentMethod: payMethod,
           amountPaid: payMethod === 'credit' ? amountPaid : total,
+          discountedTotal: discountedTotal !== '' && Number(discountedTotal) > 0 ? Number(discountedTotal) : null,
           docType, notes: notes.trim() || null, saleDate,
           items: cart.map(c => ({
             productId:         c.productId,
@@ -519,6 +589,7 @@ export default function WarehouseSalesPage() {
             subtotal:          c.subtotal,
             unit:              c.unit,
             sourceWarehouseId: c.sourceWarehouseId,
+            sourceBranchId:    c.sourceBranchId,
             isExternal:        c.isExternal,
             externalSource:    c.externalSource || null,
           })),
@@ -534,6 +605,7 @@ export default function WarehouseSalesPage() {
       setCart([]); setCustomerName(''); setCustomerPhone('');
       setCustomerAddress(''); setNotes(''); setAmountPaid(0);
       setPayMethod('cash'); setSaleDate(new Date().toISOString().split('T')[0]);
+      setDiscountedTotal('');
       loadAllStock();
       setViewSale(created);
     } catch (err: any) {
@@ -584,10 +656,13 @@ export default function WarehouseSalesPage() {
       unit: item.unit,
       availableQty: Infinity,
       sourceWarehouseId: item.sourceWarehouseId ?? null,
-      sourceWarehouseName: (item as any).sourceWarehouseName ?? null,
+      sourceWarehouseName: item.sourceWarehouseName ?? null,
+      sourceBranchId: item.sourceBranchId ?? null,
+      sourceBranchName: item.sourceBranchName ?? null,
       isExternal: item.isExternal ?? false,
       externalSource: item.externalSource ?? '',
     })));
+    setEditDiscountedTotal(sale.discountedTotal != null ? sale.discountedTotal : '');
     setEditCustomerName(sale.customerName);
     setEditCustomerPhone(sale.customerPhone ?? '');
     setEditCustomerAddress(sale.customerAddress ?? '');
@@ -624,6 +699,7 @@ export default function WarehouseSalesPage() {
       subtotal: Math.round(editExtQty * editExtPrice * 100) / 100,
       unit: editExtUnit, availableQty: Infinity,
       sourceWarehouseId: null, sourceWarehouseName: null,
+      sourceBranchId: null, sourceBranchName: null,
       isExternal: true, externalSource: editExtSource.trim(),
     }]);
     setEditExtName(''); setEditExtSource(''); setEditExtQty(1); setEditExtPrice(0); setEditExtUnit('pcs');
@@ -649,6 +725,7 @@ export default function WarehouseSalesPage() {
           customerAddress: editCustomerAddress.trim() || null,
           paymentMethod: editPayMethod,
           amountPaid: editPayMethod === 'credit' ? editAmountPaid : editTotal,
+          discountedTotal: editDiscountedTotal !== '' && Number(editDiscountedTotal) > 0 ? Number(editDiscountedTotal) : null,
           docType: editDocType,
           notes: editNotes.trim() || null,
           saleDate: editSaleDate,
@@ -656,6 +733,7 @@ export default function WarehouseSalesPage() {
             productId: c.productId, productName: c.productName,
             quantity: c.quantity, unitPrice: c.unitPrice, subtotal: c.subtotal,
             unit: c.unit, sourceWarehouseId: c.sourceWarehouseId,
+            sourceBranchId: c.sourceBranchId,
             isExternal: c.isExternal, externalSource: c.externalSource || null,
           })),
         }),
@@ -896,22 +974,48 @@ export default function WarehouseSalesPage() {
                 </div>
               )}
 
-              {/* Warehouse tabs */}
+              {/* Source type toggle */}
+              <div className="flex gap-2 mb-2">
+                <button onClick={() => { setPickerSource('warehouse'); setPickerWarehouse(''); }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    pickerSource === 'warehouse' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}>
+                  <Building2 className="w-3 h-3" />Warehouses
+                </button>
+                <button onClick={() => { setPickerSource('branch'); setPickerWarehouse(''); }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    pickerSource === 'branch' ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}>
+                  <Store className="w-3 h-3" />Branches
+                </button>
+              </div>
+
+              {/* Warehouse / Branch location tabs */}
               <div className="flex gap-1 flex-wrap mb-2">
                 <button onClick={() => setPickerWarehouse('')}
                   className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                    !pickerWarehouse ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    !pickerWarehouse ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}>
                   All
                 </button>
-                {warehouses.map(w => (
-                  <button key={w._id} onClick={() => setPickerWarehouse(w._id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors truncate max-w-[120px] ${
-                      pickerWarehouse === w._id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}>
-                    {w.name}
-                  </button>
-                ))}
+                {pickerSource === 'warehouse'
+                  ? warehouses.map(w => (
+                    <button key={w._id} onClick={() => setPickerWarehouse(w._id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors truncate max-w-[120px] ${
+                        pickerWarehouse === w._id ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}>
+                      {w.name}
+                    </button>
+                  ))
+                  : branches.map(b => (
+                    <button key={b._id} onClick={() => setPickerWarehouse(b._id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors truncate max-w-[120px] ${
+                        pickerWarehouse === b._id ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}>
+                      {b.name}
+                    </button>
+                  ))
+                }
               </div>
 
               <div className="relative mb-2">
@@ -930,15 +1034,23 @@ export default function WarehouseSalesPage() {
               ) : (
                 <div className="max-h-52 overflow-y-auto space-y-1 pr-0.5">
                   {filteredStock.map((s, idx) => {
-                    const key = `${s.productId}::${s.warehouseId}`;
+                    const key = s.sourceType === 'branch'
+                      ? `${s.productId}::branch::${s.branchId}`
+                      : `${s.productId}::${s.warehouseId}`;
                     const inCart = cart.some(c => c.key === key);
+                    const sourceName = s.sourceType === 'branch' ? s.branchName : s.warehouseName;
+                    const sourceBadgeClass = s.sourceType === 'branch'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-slate-100 text-slate-600';
                     return (
-                      <div key={`${s.productId}-${s.warehouseId}-${idx}`}
+                      <div key={`${s.productId}-${s.warehouseId}-${s.branchId}-${idx}`}
                         className="flex items-center justify-between gap-2 p-2 rounded-lg hover:bg-slate-50 transition-colors">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-slate-800 truncate">{s.productName}</p>
                           <p className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap">
-                            <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-medium">{s.warehouseName}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${sourceBadgeClass}`}>
+                              {s.sourceType === 'branch' ? '🏪 ' : ''}{sourceName}
+                            </span>
                             Stock: {s.quantity} {s.unit} · {fmt(s.unitPrice)}/{s.unit}
                           </p>
                         </div>
@@ -987,6 +1099,10 @@ export default function WarehouseSalesPage() {
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">
                                 EXT{item.externalSource ? ` · ${item.externalSource}` : ''}
                               </span>
+                            ) : item.sourceBranchName ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-medium">
+                                🏪 {item.sourceBranchName}
+                              </span>
                             ) : (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">
                                 {item.sourceWarehouseName}
@@ -1028,8 +1144,29 @@ export default function WarehouseSalesPage() {
 
               <div className="p-4 border-t border-slate-100 space-y-3">
                 <div className="flex justify-between items-center">
-                  <span className="text-sm font-semibold text-slate-600">Total</span>
-                  <span className="text-xl font-extrabold text-amber-600">{fmt(total)}</span>
+                  <span className="text-sm font-semibold text-slate-600">Normal Total</span>
+                  <span className={`text-xl font-extrabold ${discountedTotal !== '' && Number(discountedTotal) > 0 ? 'text-slate-400 line-through text-base' : 'text-amber-600'}`}>{fmt(total)}</span>
+                </div>
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 mb-1.5">
+                    <Tag className="w-3.5 h-3.5 text-amber-500" />Discounted Total (optional)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-medium">₦</span>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={discountedTotal}
+                      onChange={e => setDiscountedTotal(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+                      placeholder="Enter discounted price…"
+                      className="w-full pl-7 pr-3 py-2 border border-amber-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-amber-50 font-medium text-amber-800 placeholder:text-slate-400 placeholder:font-normal"
+                    />
+                  </div>
+                  {discountedTotal !== '' && Number(discountedTotal) > 0 && (
+                    <div className="flex justify-between items-center mt-2 pt-2 border-t border-amber-100">
+                      <span className="text-sm font-bold text-amber-700">Discounted Total</span>
+                      <span className="text-xl font-extrabold text-amber-600">{fmt(Number(discountedTotal))}</span>
+                    </div>
+                  )}
                 </div>
                 {balance > 0 && (
                   <div className="flex justify-between items-center text-sm">
@@ -1333,11 +1470,34 @@ export default function WarehouseSalesPage() {
                   )}
                 </div>
 
-                <div className="flex justify-between items-center pt-2 border-t border-slate-200">
-                  <span className="text-sm font-semibold text-slate-600">Total</span>
-                  <span className="text-lg font-extrabold text-amber-600">
-                    {fmt(editCart.reduce((s, i) => s + i.subtotal, 0))}
-                  </span>
+                <div className="space-y-2 pt-2 border-t border-slate-200">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-semibold text-slate-600">Normal Total</span>
+                    <span className={`text-lg font-extrabold ${editDiscountedTotal !== '' && Number(editDiscountedTotal) > 0 ? 'text-slate-400 line-through text-base' : 'text-amber-600'}`}>
+                      {fmt(editCart.reduce((s, i) => s + i.subtotal, 0))}
+                    </span>
+                  </div>
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 mb-1">
+                      <Tag className="w-3 h-3 text-amber-500" />Discounted Total (optional)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">₦</span>
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={editDiscountedTotal}
+                        onChange={e => setEditDiscountedTotal(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+                        placeholder="Enter discounted price…"
+                        className="w-full pl-7 pr-3 py-2 border border-amber-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-amber-50 font-medium text-amber-800 placeholder:text-slate-400 placeholder:font-normal"
+                      />
+                    </div>
+                    {editDiscountedTotal !== '' && Number(editDiscountedTotal) > 0 && (
+                      <div className="flex justify-between items-center mt-1.5">
+                        <span className="text-sm font-bold text-amber-700">Discounted Total</span>
+                        <span className="text-lg font-extrabold text-amber-600">{fmt(Number(editDiscountedTotal))}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 

@@ -15,7 +15,7 @@ const toSale = (
   r: WarehouseSaleRow & {
     warehouse_name?: string | null;
     created_by_name?: string | null;
-    items?: WarehouseSaleItemRow[];
+    items?: (WarehouseSaleItemRow & { source_warehouse_name?: string | null; source_branch_name?: string | null })[];
   }
 ) => ({
   id:              r.id,
@@ -32,6 +32,7 @@ const toSale = (
   totalAmount:     num(r.total_amount),
   amountPaid:      num(r.amount_paid),
   balanceDue:      num(r.balance_due),
+  discountedTotal: r.discounted_total != null ? num(r.discounted_total) : null,
   docType:         r.doc_type,
   notes:           r.notes,
   saleDate:        r.sale_date,
@@ -47,6 +48,9 @@ const toSale = (
     subtotal:          num(i.subtotal),
     unit:              i.unit,
     sourceWarehouseId: i.source_warehouse_id,
+    sourceWarehouseName: (i as any).source_warehouse_name ?? null,
+    sourceBranchId:    i.source_branch_id,
+    sourceBranchName:  (i as any).source_branch_name ?? null,
     isExternal:        i.is_external,
     externalSource:    i.external_source,
   })),
@@ -94,10 +98,11 @@ router.get('/:id', async (req: Request, res: Response) => {
     `;
     if (!sale) return sendError(res, 404, 'Sale not found');
 
-    const items = await sql<(WarehouseSaleItemRow & { source_warehouse_name?: string | null })[]>`
-      SELECT wsi.*, w.name AS source_warehouse_name
+    const items = await sql<(WarehouseSaleItemRow & { source_warehouse_name?: string | null; source_branch_name?: string | null })[]>`
+      SELECT wsi.*, w.name AS source_warehouse_name, b.name AS source_branch_name
       FROM   warehouse_sale_items wsi
       LEFT JOIN warehouses w ON w.id = wsi.source_warehouse_id
+      LEFT JOIN branches   b ON b.id = wsi.source_branch_id
       WHERE  wsi.sale_id = ${req.params.id}
       ORDER  BY wsi.id
     `;
@@ -115,7 +120,7 @@ router.post('/', async (req: Request, res: Response) => {
       warehouseId,       // primary/issuing warehouse (nullable)
       customerName, customerPhone, customerAddress,
       paymentMethod = 'cash', amountPaid = 0,
-      docType = 'invoice', notes, saleDate, items,
+      docType = 'invoice', notes, saleDate, items, discountedTotal,
     } = req.body;
 
     if (!customerName?.trim())
@@ -131,29 +136,43 @@ router.post('/', async (req: Request, res: Response) => {
     if (total <= 0) return sendError(res, 400, 'Total must be positive');
 
     const result = await sql.begin(async tx => {
-      // Validate and deduct stock per item, using each item's sourceWarehouseId
+      // Validate and deduct stock per item
       for (const item of items) {
         if (item.isExternal || !item.productId) continue;
 
-        const srcWh = item.sourceWarehouseId ?? warehouseId;
-        if (!srcWh) throw new Error(`Item "${item.productName}" has no source warehouse`);
+        if (item.sourceBranchId) {
+          // Validate branch stock
+          const [stock] = await tx<{ quantity: string }[]>`
+            SELECT quantity FROM branch_stock
+            WHERE branch_id = ${item.sourceBranchId} AND product_id = ${item.productId}
+          `;
+          if (!stock)
+            throw new Error(`"${item.productName}" not found in the selected branch`);
+          if (num(stock.quantity) < Number(item.quantity))
+            throw new Error(`Insufficient stock for "${item.productName}" in branch (available: ${num(stock.quantity)}, requested: ${item.quantity})`);
+        } else {
+          const srcWh = item.sourceWarehouseId ?? warehouseId;
+          if (!srcWh) throw new Error(`Item "${item.productName}" has no source warehouse or branch`);
 
-        const [stock] = await tx<{ quantity: string }[]>`
-          SELECT quantity FROM warehouse_stock
-          WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
-        `;
-        if (!stock)
-          throw new Error(`"${item.productName}" not found in the selected warehouse`);
-        if (num(stock.quantity) < Number(item.quantity))
-          throw new Error(`Insufficient stock for "${item.productName}" (available: ${num(stock.quantity)}, requested: ${item.quantity})`);
+          const [stock] = await tx<{ quantity: string }[]>`
+            SELECT quantity FROM warehouse_stock
+            WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
+          `;
+          if (!stock)
+            throw new Error(`"${item.productName}" not found in the selected warehouse`);
+          if (num(stock.quantity) < Number(item.quantity))
+            throw new Error(`Insufficient stock for "${item.productName}" (available: ${num(stock.quantity)}, requested: ${item.quantity})`);
+        }
       }
+
+      const discTotal = discountedTotal != null && Number(discountedTotal) > 0 ? Number(discountedTotal) : null;
 
       // Create the sale
       const [sale] = await tx<WarehouseSaleRow[]>`
         INSERT INTO warehouse_sales (
           warehouse_id, created_by, customer_name, customer_phone,
           customer_address, payment_method, total_amount, amount_paid,
-          doc_type, notes, sale_date
+          discounted_total, doc_type, notes, sale_date
         ) VALUES (
           ${warehouseId ?? null},
           ${req.userId!},
@@ -163,6 +182,7 @@ router.post('/', async (req: Request, res: Response) => {
           ${paymentMethod},
           ${total},
           ${Number(amountPaid)},
+          ${discTotal},
           ${docType},
           ${notes ?? null},
           ${saleDate ?? sql`CURRENT_DATE`}
@@ -172,12 +192,13 @@ router.post('/', async (req: Request, res: Response) => {
 
       const insertedItems: WarehouseSaleItemRow[] = [];
       for (const item of items) {
-        const srcWh = item.sourceWarehouseId ?? warehouseId ?? null;
+        const srcWh = item.sourceBranchId ? null : (item.sourceWarehouseId ?? warehouseId ?? null);
+        const srcBr = item.sourceBranchId ?? null;
 
         const [inserted] = await tx<WarehouseSaleItemRow[]>`
           INSERT INTO warehouse_sale_items
             (sale_id, product_id, product_name, quantity, unit_price, subtotal, unit,
-             source_warehouse_id, is_external, external_source)
+             source_warehouse_id, source_branch_id, is_external, external_source)
           VALUES (
             ${sale.id},
             ${item.productId ?? null},
@@ -186,7 +207,8 @@ router.post('/', async (req: Request, res: Response) => {
             ${Number(item.unitPrice)},
             ${Number(item.subtotal)},
             ${item.unit ?? 'pcs'},
-            ${!item.isExternal ? srcWh : null},
+            ${!item.isExternal && !srcBr ? srcWh : null},
+            ${!item.isExternal && srcBr ? srcBr : null},
             ${item.isExternal ?? false},
             ${item.externalSource ?? null}
           )
@@ -194,14 +216,22 @@ router.post('/', async (req: Request, res: Response) => {
         `;
         insertedItems.push(inserted);
 
-        // Deduct from correct warehouse
-        if (!item.isExternal && item.productId && srcWh) {
-          await tx`
-            UPDATE warehouse_stock
-            SET quantity   = quantity - ${Number(item.quantity)},
-                updated_at = now()
-            WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
-          `;
+        if (!item.isExternal && item.productId) {
+          if (srcBr) {
+            await tx`
+              UPDATE branch_stock
+              SET quantity   = quantity - ${Number(item.quantity)},
+                  updated_at = now()
+              WHERE branch_id = ${srcBr} AND product_id = ${item.productId}
+            `;
+          } else if (srcWh) {
+            await tx`
+              UPDATE warehouse_stock
+              SET quantity   = quantity - ${Number(item.quantity)},
+                  updated_at = now()
+              WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
+            `;
+          }
         }
       }
 
@@ -236,7 +266,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     const {
       warehouseId, customerName, customerPhone, customerAddress,
       paymentMethod = 'cash', amountPaid = 0,
-      docType = 'invoice', notes, saleDate, items,
+      docType = 'invoice', notes, saleDate, items, discountedTotal,
     } = req.body;
 
     if (!customerName?.trim())
@@ -257,14 +287,24 @@ router.put('/:id', async (req: Request, res: Response) => {
         SELECT * FROM warehouse_sale_items WHERE sale_id = ${req.params.id}
       `;
       for (const item of oldItems) {
-        if (!item.is_external && item.product_id && item.source_warehouse_id) {
-          await tx`
-            UPDATE warehouse_stock
-            SET quantity   = quantity + ${num(item.quantity)},
-                updated_at = now()
-            WHERE warehouse_id = ${item.source_warehouse_id}
-              AND product_id   = ${item.product_id}
-          `;
+        if (!item.is_external && item.product_id) {
+          if (item.source_branch_id) {
+            await tx`
+              UPDATE branch_stock
+              SET quantity   = quantity + ${num(item.quantity)},
+                  updated_at = now()
+              WHERE branch_id = ${item.source_branch_id}
+                AND product_id = ${item.product_id}
+            `;
+          } else if (item.source_warehouse_id) {
+            await tx`
+              UPDATE warehouse_stock
+              SET quantity   = quantity + ${num(item.quantity)},
+                  updated_at = now()
+              WHERE warehouse_id = ${item.source_warehouse_id}
+                AND product_id   = ${item.product_id}
+            `;
+          }
         }
       }
 
@@ -273,17 +313,30 @@ router.put('/:id', async (req: Request, res: Response) => {
       // Validate new stock
       for (const item of items) {
         if (item.isExternal || !item.productId) continue;
-        const srcWh = item.sourceWarehouseId ?? warehouseId;
-        if (!srcWh) throw new Error(`Item "${item.productName}" has no source warehouse`);
-        const [stock] = await tx<{ quantity: string }[]>`
-          SELECT quantity FROM warehouse_stock
-          WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
-        `;
-        if (!stock)
-          throw new Error(`"${item.productName}" not found in the selected warehouse`);
-        if (num(stock.quantity) < Number(item.quantity))
-          throw new Error(`Insufficient stock for "${item.productName}" (available: ${num(stock.quantity)}, requested: ${item.quantity})`);
+        if (item.sourceBranchId) {
+          const [stock] = await tx<{ quantity: string }[]>`
+            SELECT quantity FROM branch_stock
+            WHERE branch_id = ${item.sourceBranchId} AND product_id = ${item.productId}
+          `;
+          if (!stock)
+            throw new Error(`"${item.productName}" not found in the selected branch`);
+          if (num(stock.quantity) < Number(item.quantity))
+            throw new Error(`Insufficient stock for "${item.productName}" in branch (available: ${num(stock.quantity)}, requested: ${item.quantity})`);
+        } else {
+          const srcWh = item.sourceWarehouseId ?? warehouseId;
+          if (!srcWh) throw new Error(`Item "${item.productName}" has no source warehouse or branch`);
+          const [stock] = await tx<{ quantity: string }[]>`
+            SELECT quantity FROM warehouse_stock
+            WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
+          `;
+          if (!stock)
+            throw new Error(`"${item.productName}" not found in the selected warehouse`);
+          if (num(stock.quantity) < Number(item.quantity))
+            throw new Error(`Insufficient stock for "${item.productName}" (available: ${num(stock.quantity)}, requested: ${item.quantity})`);
+        }
       }
+
+      const discTotal = discountedTotal != null && Number(discountedTotal) > 0 ? Number(discountedTotal) : null;
 
       // Update sale header
       await tx`
@@ -295,6 +348,7 @@ router.put('/:id', async (req: Request, res: Response) => {
           payment_method   = ${paymentMethod},
           total_amount     = ${total},
           amount_paid      = ${Number(amountPaid)},
+          discounted_total = ${discTotal},
           doc_type         = ${docType},
           notes            = ${notes ?? null},
           sale_date        = ${saleDate ?? sql`CURRENT_DATE`},
@@ -304,11 +358,12 @@ router.put('/:id', async (req: Request, res: Response) => {
 
       // Insert new items and deduct stock
       for (const item of items) {
-        const srcWh = item.sourceWarehouseId ?? warehouseId ?? null;
+        const srcWh = item.sourceBranchId ? null : (item.sourceWarehouseId ?? warehouseId ?? null);
+        const srcBr = item.sourceBranchId ?? null;
         await tx`
           INSERT INTO warehouse_sale_items
             (sale_id, product_id, product_name, quantity, unit_price, subtotal, unit,
-             source_warehouse_id, is_external, external_source)
+             source_warehouse_id, source_branch_id, is_external, external_source)
           VALUES (
             ${req.params.id},
             ${item.productId ?? null},
@@ -317,18 +372,28 @@ router.put('/:id', async (req: Request, res: Response) => {
             ${Number(item.unitPrice)},
             ${Number(item.subtotal)},
             ${item.unit ?? 'pcs'},
-            ${!item.isExternal ? srcWh : null},
+            ${!item.isExternal && !srcBr ? srcWh : null},
+            ${!item.isExternal && srcBr ? srcBr : null},
             ${item.isExternal ?? false},
             ${item.externalSource ?? null}
           )
         `;
-        if (!item.isExternal && item.productId && srcWh) {
-          await tx`
-            UPDATE warehouse_stock
-            SET quantity   = quantity - ${Number(item.quantity)},
-                updated_at = now()
-            WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
-          `;
+        if (!item.isExternal && item.productId) {
+          if (srcBr) {
+            await tx`
+              UPDATE branch_stock
+              SET quantity   = quantity - ${Number(item.quantity)},
+                  updated_at = now()
+              WHERE branch_id = ${srcBr} AND product_id = ${item.productId}
+            `;
+          } else if (srcWh) {
+            await tx`
+              UPDATE warehouse_stock
+              SET quantity   = quantity - ${Number(item.quantity)},
+                  updated_at = now()
+              WHERE warehouse_id = ${srcWh} AND product_id = ${item.productId}
+            `;
+          }
         }
       }
     });
@@ -364,14 +429,24 @@ router.delete('/:id', async (req: Request, res: Response) => {
         SELECT * FROM warehouse_sale_items WHERE sale_id = ${req.params.id}
       `;
       for (const item of items) {
-        if (!item.is_external && item.product_id && item.source_warehouse_id) {
-          await tx`
-            UPDATE warehouse_stock
-            SET quantity   = quantity + ${num(item.quantity)},
-                updated_at = now()
-            WHERE warehouse_id = ${item.source_warehouse_id}
-              AND product_id   = ${item.product_id}
-          `;
+        if (!item.is_external && item.product_id) {
+          if (item.source_branch_id) {
+            await tx`
+              UPDATE branch_stock
+              SET quantity   = quantity + ${num(item.quantity)},
+                  updated_at = now()
+              WHERE branch_id = ${item.source_branch_id}
+                AND product_id = ${item.product_id}
+            `;
+          } else if (item.source_warehouse_id) {
+            await tx`
+              UPDATE warehouse_stock
+              SET quantity   = quantity + ${num(item.quantity)},
+                  updated_at = now()
+              WHERE warehouse_id = ${item.source_warehouse_id}
+                AND product_id   = ${item.product_id}
+            `;
+          }
         }
       }
       await tx`DELETE FROM warehouse_sales WHERE id = ${req.params.id}`;
