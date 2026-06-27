@@ -220,11 +220,6 @@ function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: Co
             <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafc' }}>
               <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 500, borderBottom: '1px solid #e2e8f0' }}>
                 {item.productName}
-                {item.isExternal && (
-                  <span style={{ marginLeft: 6, fontSize: 10, background: '#fef3c7', color: '#92400e', borderRadius: 4, padding: '1px 5px', fontWeight: 600 }}>
-                    EXT
-                  </span>
-                )}
               </td>
               <td style={{ padding: '8px 10px', textAlign: 'center', fontSize: 12, borderBottom: '1px solid #e2e8f0' }}>{item.quantity}</td>
               <td style={{ padding: '8px 10px', textAlign: 'center', fontSize: 11, color: '#64748b', borderBottom: '1px solid #e2e8f0' }}>{item.unit}</td>
