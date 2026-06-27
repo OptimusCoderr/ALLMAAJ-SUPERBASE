@@ -62,10 +62,10 @@ type PayMethod = 'cash' | 'pos' | 'transfer' | 'credit';
 type DocType   = 'invoice' | 'waybill';
 
 const DEFAULT_SETTINGS: CompanySettings = {
-  name: 'Allmaaj & Co. Nig. Ltd.',
-  tagline: 'Quality Products & Services',
-  address: '',
-  phone: '',
+  name: 'ALLMAAJ PRINTS',
+  tagline: 'Master Prints & General Contractors',
+  address: 'SHOP B77, MURG PLAZA, AREA 10, GARKI, ABUJA',
+  phone: '+2349064325057',
   email: '',
   logoDataUrl: '',
   signatureDataUrl: '',
