@@ -398,6 +398,11 @@ export default function WarehouseSalesPage() {
   const [editExtPrice, setEditExtPrice]             = useState(0);
   const [editExtUnit, setEditExtUnit]               = useState('pcs');
   const [editDiscountedTotal, setEditDiscountedTotal] = useState<number | ''>('');
+  // Edit modal — stock picker
+  const [editShowStockPicker, setEditShowStockPicker] = useState(false);
+  const [editPickerSource, setEditPickerSource]     = useState<'warehouse' | 'branch'>('warehouse');
+  const [editPickerWarehouse, setEditPickerWarehouse] = useState('');
+  const [editStockSearch, setEditStockSearch]       = useState('');
 
   const total   = cart.reduce((s, i) => s + i.subtotal, 0);
   const balance = payMethod === 'credit' ? Math.max(0, total - amountPaid) : 0;
@@ -673,6 +678,10 @@ export default function WarehouseSalesPage() {
     setEditSaleDate((sale.saleDate ?? '').split('T')[0]);
     setEditError('');
     setEditShowExtForm(false);
+    setEditShowStockPicker(false);
+    setEditStockSearch('');
+    setEditPickerSource('warehouse');
+    setEditPickerWarehouse('');
   }
 
   function updateEditQty(key: string, qty: number) {
@@ -704,6 +713,33 @@ export default function WarehouseSalesPage() {
     }]);
     setEditExtName(''); setEditExtSource(''); setEditExtQty(1); setEditExtPrice(0); setEditExtUnit('pcs');
     setEditShowExtForm(false);
+  }
+
+  function addStockItemToEdit(item: StockItem) {
+    const key = item.sourceType === 'branch'
+      ? `${item.productId}::branch::${item.branchId}`
+      : `${item.productId}::${item.warehouseId}`;
+    const existing = editCart.find(c => c.key === key);
+    if (existing) {
+      const newQty = existing.quantity + 1;
+      if (newQty > item.quantity) { toast.error(`Only ${item.quantity} available`); return; }
+      setEditCart(p => p.map(c => c.key === key
+        ? { ...c, quantity: newQty, subtotal: Math.round(newQty * c.unitPrice * 100) / 100 }
+        : c));
+    } else {
+      setEditCart(p => [...p, {
+        key, productId: item.productId, productName: item.productName,
+        quantity: 1, unitPrice: item.unitPrice,
+        subtotal: item.unitPrice,
+        unit: item.unit, availableQty: item.quantity,
+        sourceWarehouseId: item.sourceType === 'warehouse' ? item.warehouseId : null,
+        sourceWarehouseName: item.sourceType === 'warehouse' ? item.warehouseName : null,
+        sourceBranchId: item.sourceType === 'branch' ? (item.branchId ?? null) : null,
+        sourceBranchName: item.sourceType === 'branch' ? (item.branchName ?? null) : null,
+        isExternal: false, externalSource: '',
+      }]);
+    }
+    setEditStockSearch('');
   }
 
   async function handleUpdate() {
@@ -1379,14 +1415,124 @@ export default function WarehouseSalesPage() {
 
               {/* Items */}
               <div className="bg-slate-50 rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Items ({editCart.length})</p>
-                  <button onClick={() => setEditShowExtForm(v => !v)}
-                    className="flex items-center gap-1 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg font-semibold">
-                    <Plus className="w-3.5 h-3.5" />Add External Item
-                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setEditShowStockPicker(v => !v); setEditShowExtForm(false); }}
+                      className="flex items-center gap-1 text-xs px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg font-semibold">
+                      <Package className="w-3.5 h-3.5" />Add from Stock
+                    </button>
+                    <button onClick={() => { setEditShowExtForm(v => !v); setEditShowStockPicker(false); }}
+                      className="flex items-center gap-1 text-xs px-3 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg font-semibold">
+                      <ExternalLink className="w-3.5 h-3.5" />External Item
+                    </button>
+                  </div>
                 </div>
 
+                {/* ── Stock picker (warehouse / branch) ── */}
+                {editShowStockPicker && (() => {
+                  const editFiltered = allStock.filter(s => {
+                    const matchType = s.sourceType === editPickerSource;
+                    const matchLoc = !editPickerWarehouse || (
+                      editPickerSource === 'warehouse' ? s.warehouseId === editPickerWarehouse : s.branchId === editPickerWarehouse
+                    );
+                    const matchQ = !editStockSearch || s.productName.toLowerCase().includes(editStockSearch.toLowerCase());
+                    return matchType && matchLoc && matchQ;
+                  });
+                  return (
+                    <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-slate-600">Add from Stock</p>
+                        <button onClick={() => setEditShowStockPicker(false)} className="text-slate-300 hover:text-slate-500">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {/* Source toggle */}
+                      <div className="flex gap-2">
+                        <button onClick={() => { setEditPickerSource('warehouse'); setEditPickerWarehouse(''); }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                            editPickerSource === 'warehouse' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}>
+                          <Building2 className="w-3 h-3" />Warehouses
+                        </button>
+                        <button onClick={() => { setEditPickerSource('branch'); setEditPickerWarehouse(''); }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                            editPickerSource === 'branch' ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}>
+                          <Store className="w-3 h-3" />Branches
+                        </button>
+                      </div>
+                      {/* Location tabs */}
+                      <div className="flex gap-1 flex-wrap">
+                        <button onClick={() => setEditPickerWarehouse('')}
+                          className={`px-2 py-1 rounded-lg text-xs font-medium transition-colors ${!editPickerWarehouse ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                          All
+                        </button>
+                        {editPickerSource === 'warehouse'
+                          ? warehouses.map(w => (
+                            <button key={w._id} onClick={() => setEditPickerWarehouse(w._id)}
+                              className={`px-2 py-1 rounded-lg text-xs font-medium transition-colors truncate max-w-[110px] ${editPickerWarehouse === w._id ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                              {w.name}
+                            </button>
+                          ))
+                          : branches.map(b => (
+                            <button key={b._id} onClick={() => setEditPickerWarehouse(b._id)}
+                              className={`px-2 py-1 rounded-lg text-xs font-medium transition-colors truncate max-w-[110px] ${editPickerWarehouse === b._id ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                              {b.name}
+                            </button>
+                          ))
+                        }
+                      </div>
+                      {/* Search */}
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                        <input type="text" value={editStockSearch} onChange={e => setEditStockSearch(e.target.value)}
+                          placeholder="Search products…"
+                          className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
+                      </div>
+                      {/* Results */}
+                      {editFiltered.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-3">
+                          {allStock.filter(s => s.sourceType === editPickerSource).length === 0
+                            ? `No stock in any ${editPickerSource}`
+                            : 'No matching products'}
+                        </p>
+                      ) : (
+                        <div className="max-h-44 overflow-y-auto space-y-1 pr-0.5">
+                          {editFiltered.map((s, idx) => {
+                            const key = s.sourceType === 'branch'
+                              ? `${s.productId}::branch::${s.branchId}`
+                              : `${s.productId}::${s.warehouseId}`;
+                            const inCart = editCart.some(c => c.key === key);
+                            const sourceName = s.sourceType === 'branch' ? s.branchName : s.warehouseName;
+                            return (
+                              <div key={`edit-${s.productId}-${idx}`}
+                                className="flex items-center justify-between gap-2 p-2 rounded-lg hover:bg-slate-50 transition-colors">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-slate-800 truncate">{s.productName}</p>
+                                  <p className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap">
+                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${s.sourceType === 'branch' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                                      {s.sourceType === 'branch' ? '🏪 ' : ''}{sourceName}
+                                    </span>
+                                    {s.quantity} {s.unit} · {fmt(s.unitPrice)}/{s.unit}
+                                  </p>
+                                </div>
+                                <button onClick={() => addStockItemToEdit(s)}
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors flex-shrink-0 ${
+                                    inCart ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                  }`}>
+                                  {inCart ? <><CheckCircle className="w-3.5 h-3.5" />Added</> : <><Plus className="w-3.5 h-3.5" />Add</>}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* ── External item form ── */}
                 {editShowExtForm && (
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
                     <p className="text-xs font-semibold text-amber-800">New External / Custom Item</p>
@@ -1428,6 +1574,10 @@ export default function WarehouseSalesPage() {
                             {item.isExternal ? (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">
                                 EXT{item.externalSource ? ` · ${item.externalSource}` : ''}
+                              </span>
+                            ) : item.sourceBranchName ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-medium">
+                                🏪 {item.sourceBranchName}
                               </span>
                             ) : (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
