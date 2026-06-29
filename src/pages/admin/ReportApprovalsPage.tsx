@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { find, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { DailyReport, Branch, Sale } from '../../lib/types';
+import { SkeletonRow } from '../../components/Skeleton';
 import {
   CheckCircle, XCircle, Clock, Eye, X, Trash2,
   Search, Download, RefreshCw, ChevronDown, ChevronUp,
@@ -457,10 +458,8 @@ export default function ReportApprovalsPage() {
       {/* ── Report list ────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
         {loading ? (
-          <div className="p-5 space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-[68px] bg-slate-100 rounded-xl animate-pulse" />
-            ))}
+          <div className="p-5 space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} cols={5} />)}
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState filter={filter} search={search} />

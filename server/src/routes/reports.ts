@@ -242,7 +242,7 @@ router.patch('/daily/:id/review', adminOnly, async (req: Request, res: Response)
 // GET /api/reports/debtors
 router.get('/debtors', async (req: Request, res: Response) => {
   try {
-    const { branchId, isCleared } = req.query as Record<string, string>;
+    const { branchId, isCleared, page, limit: limitParam, search } = req.query as Record<string, string>;
     const effectiveBranchId =
       req.user?.role !== 'admin' && req.user?.branchId ? req.user.branchId : (branchId ?? null);
     const clearedFilter = isCleared === 'true' ? true : isCleared === 'false' ? false : null;
@@ -253,6 +253,39 @@ router.get('/debtors', async (req: Request, res: Response) => {
     const clearedCond = clearedFilter !== null
       ? sql`AND d.is_cleared = ${clearedFilter}`
       : sql``;
+    const searchCond = search
+      ? sql`AND (d.name ILIKE ${'%' + search + '%'} OR d.phone ILIKE ${'%' + search + '%'})`
+      : sql``;
+
+    if (page && limitParam) {
+      const lim  = Math.min(parseInt(limitParam) || 25, 200);
+      const skip = (parseInt(page) - 1) * lim;
+
+      const debtors = await sql<(DebtorRow & {
+        created_by_name: string; cleared_by_name: string | null;
+        sale_payment_method: string | null; sale_total_amount: string | null; sale_items: any;
+      })[]>`
+        SELECT d.*, cu.full_name AS created_by_name, cl.full_name AS cleared_by_name,
+          s.payment_method AS sale_payment_method, s.total_amount AS sale_total_amount, s.items AS sale_items
+        FROM debtors d
+        JOIN users cu ON cu.id = d.created_by
+        LEFT JOIN users cl ON cl.id = d.cleared_by
+        LEFT JOIN sales s ON s.id = d.sale_id
+        WHERE TRUE ${branchCond} ${clearedCond} ${searchCond}
+        ORDER BY d.created_at DESC
+        LIMIT ${lim} OFFSET ${skip}
+      `;
+      const [{ count }] = await sql<[{ count: string }]>`
+        SELECT COUNT(*)::text AS count FROM debtors d
+        WHERE TRUE ${branchCond} ${clearedCond} ${searchCond}
+      `;
+      return sendResponse(res, 200, 'Debtors fetched', {
+        debtors: debtors.map(toDebtor),
+        total: parseInt(count),
+        page: parseInt(page),
+        limit: lim,
+      });
+    }
 
     const debtors = await sql<(DebtorRow & {
       created_by_name: string;
@@ -275,6 +308,7 @@ router.get('/debtors', async (req: Request, res: Response) => {
       WHERE TRUE
         ${branchCond}
         ${clearedCond}
+        ${searchCond}
       ORDER BY d.created_at DESC
     `;
     return sendResponse(res, 200, 'Debtors fetched', debtors.map(toDebtor));

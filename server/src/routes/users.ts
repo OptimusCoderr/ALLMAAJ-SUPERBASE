@@ -22,8 +22,41 @@ const toUser = (u: UserRow) => ({
 });
 
 // ── GET /api/users ────────────────────────────────────────────────────────────
-router.get('/', adminOnly, async (_req: Request, res: Response) => {
+router.get('/', adminOnly, async (req: Request, res: Response) => {
   try {
+    const { page, limit: limitParam, search, role, active } = req.query as Record<string, string>;
+
+    const isActive = active === 'true' ? true : active === 'false' ? false : null;
+
+    if (page && limitParam) {
+      const lim  = Math.min(parseInt(limitParam) || 25, 200);
+      const skip = (parseInt(page) - 1) * lim;
+
+      const users = await sql<UserRow[]>`
+        SELECT id, email, full_name, phone, role, branch_id, is_active, is_verified, created_at, updated_at
+        FROM users
+        WHERE
+          (${isActive}::boolean IS NULL OR is_active = ${isActive}::boolean)
+          AND (${role ?? null}::text IS NULL OR role::text = ${role ?? null})
+          AND (${search ?? null}::text IS NULL OR full_name ILIKE ${'%' + (search ?? '') + '%'} OR email ILIKE ${'%' + (search ?? '') + '%'})
+        ORDER BY created_at DESC
+        LIMIT ${lim} OFFSET ${skip}
+      `;
+      const [{ count }] = await sql<[{ count: string }]>`
+        SELECT COUNT(*)::text AS count FROM users
+        WHERE
+          (${isActive}::boolean IS NULL OR is_active = ${isActive}::boolean)
+          AND (${role ?? null}::text IS NULL OR role::text = ${role ?? null})
+          AND (${search ?? null}::text IS NULL OR full_name ILIKE ${'%' + (search ?? '') + '%'} OR email ILIKE ${'%' + (search ?? '') + '%'})
+      `;
+      return sendResponse(res, 200, 'Users fetched', {
+        users: users.map(toUser),
+        total: parseInt(count),
+        page: parseInt(page),
+        limit: lim,
+      });
+    }
+
     const users = await sql<UserRow[]>`
       SELECT id, email, full_name, phone, role, branch_id, is_active, is_verified, created_at, updated_at
       FROM users

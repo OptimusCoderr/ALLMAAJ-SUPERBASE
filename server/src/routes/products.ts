@@ -21,10 +21,41 @@ const toProduct = (p: ProductRow) => ({
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { active } = req.query;
+    const { active, page, limit: limitParam, search, category } = req.query as Record<string, string>;
+
+    const isActive = active === 'true' ? true : active === 'false' ? false : null;
+
+    if (page && limitParam) {
+      const lim  = Math.min(parseInt(limitParam) || 25, 200);
+      const skip = (parseInt(page) - 1) * lim;
+
+      const products = await sql<ProductRow[]>`
+        SELECT * FROM products
+        WHERE
+          (${isActive}::boolean IS NULL OR is_active = ${isActive}::boolean)
+          AND (${search ?? null}::text IS NULL OR name ILIKE ${'%' + (search ?? '') + '%'} OR category ILIKE ${'%' + (search ?? '') + '%'})
+          AND (${category ?? null}::text IS NULL OR category = ${category ?? null})
+        ORDER BY name
+        LIMIT ${lim} OFFSET ${skip}
+      `;
+      const [{ count }] = await sql<[{ count: string }]>`
+        SELECT COUNT(*)::text AS count FROM products
+        WHERE
+          (${isActive}::boolean IS NULL OR is_active = ${isActive}::boolean)
+          AND (${search ?? null}::text IS NULL OR name ILIKE ${'%' + (search ?? '') + '%'} OR category ILIKE ${'%' + (search ?? '') + '%'})
+          AND (${category ?? null}::text IS NULL OR category = ${category ?? null})
+      `;
+      return sendResponse(res, 200, 'Products fetched', {
+        products: products.map(toProduct),
+        total: parseInt(count),
+        page: parseInt(page),
+        limit: lim,
+      });
+    }
+
     const products =
-      active === 'true'  ? await sql<ProductRow[]>`SELECT * FROM products WHERE is_active = true  ORDER BY name` :
-      active === 'false' ? await sql<ProductRow[]>`SELECT * FROM products WHERE is_active = false ORDER BY name` :
+      isActive === true  ? await sql<ProductRow[]>`SELECT * FROM products WHERE is_active = true  ORDER BY name` :
+      isActive === false ? await sql<ProductRow[]>`SELECT * FROM products WHERE is_active = false ORDER BY name` :
                            await sql<ProductRow[]>`SELECT * FROM products ORDER BY name`;
     return sendResponse(res, 200, 'Products fetched', products.map(toProduct));
   } catch (err) { return sendError(res, 500, 'Server error', err); }

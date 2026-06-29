@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { ShoppingBag, Eye, EyeOff, LogIn } from 'lucide-react';
+import { ShoppingBag, Eye, EyeOff, LogIn, AlertTriangle } from 'lucide-react';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -9,6 +9,8 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const sessionExpired = new URLSearchParams(window.location.search).get('expired') === '1';
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -35,6 +37,13 @@ export default function LoginPage() {
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <h2 className="text-xl font-semibold text-slate-800 mb-6">Sign in to your account</h2>
+
+          {sessionExpired && !error && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              Your session expired. Please sign in again.
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">

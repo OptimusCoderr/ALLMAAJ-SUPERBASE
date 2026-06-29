@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { SkeletonCard } from '../../components/Skeleton';
+import Pagination from '../../components/Pagination';
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
@@ -280,6 +281,11 @@ export default function DebtorsPage() {
 
   // ── Derived lists ───────────────────────────────────────────────────────────
 
+  const [page, setPage]   = useState(1);
+  const [limit, setLimit] = useState(20);
+
+  useEffect(() => { setPage(1); }, [search, branchFilter, statusFilter]);
+
   const filtered = debtors.filter(d => {
     if (statusFilter === 'active'  && d.isCleared)  return false;
     if (statusFilter === 'cleared' && !d.isCleared) return false;
@@ -290,6 +296,9 @@ export default function DebtorsPage() {
     }
     return true;
   });
+
+  const paginated  = filtered.slice((page - 1) * limit, page * limit);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / limit));
 
   const totalActive   = debtors.filter(d => !d.isCleared).reduce((s, d) => s + d.amountOwed, 0);
   const totalCleared  = debtors.filter(d =>  d.isCleared).reduce((s, d) => s + (d.totalAmount ?? d.amountOwed), 0);
@@ -379,7 +388,7 @@ export default function DebtorsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(d => {
+          {paginated.map(d => {
             const { label: timeLabel, days } = timeOwing(d.createdAt);
             const products     = parseProducts(d.notes);
             const isPartPay    = d.paymentMethod === 'part';
@@ -590,6 +599,21 @@ export default function DebtorsPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Pagination ── */}
+      {!loading && filtered.length > limit && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4">
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={filtered.length}
+            limit={limit}
+            onPageChange={setPage}
+            onLimitChange={l => { setLimit(l); setPage(1); }}
+            limitOptions={[10, 20, 50]}
+          />
         </div>
       )}
 

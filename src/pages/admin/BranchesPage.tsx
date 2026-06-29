@@ -3,6 +3,7 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { Branch, User } from '../../lib/types';
+import { SkeletonRow } from '../../components/Skeleton';
 import {
   Plus, Edit2, Trash2, X, Check, Search, Download,
   RefreshCw, MapPin,XCircle, CheckCircle,
@@ -304,10 +305,8 @@ export default function BranchesPage() {
       {/* ── Branch list ────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
         {loading ? (
-          <div className="p-5 space-y-3">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="h-[72px] bg-slate-100 rounded-xl animate-pulse" />
-            ))}
+          <div className="p-5 space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} cols={4} />)}
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-14 text-slate-400">

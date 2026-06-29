@@ -18,6 +18,11 @@ let _authToken: string | null = null;
 export function setAuthToken(token: string | null) { _authToken = token; }
 export function getAuthToken(): string | null { return _authToken; }
 
+// ─── Global 401 handler ───────────────────────────────────────────────────────
+let _on401: (() => void) | null = null;
+
+export function registerOn401Handler(handler: () => void) { _on401 = handler; }
+
 // ─── Low-level fetch wrapper ──────────────────────────────────────────────────
 async function apiFetch(path: string, options: RequestInit = {}): Promise<any> {
   const headers: Record<string, string> = {
@@ -29,6 +34,9 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
   if (!res.ok) {
+    if (res.status === 401 && _on401) {
+      _on401();
+    }
     const body = await res.json().catch(() => ({ message: res.statusText }));
     const detail = Array.isArray(body?.errors)
       ? body.errors.map((e: any) => e.msg || e.message || JSON.stringify(e)).join('; ')
@@ -37,6 +45,42 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<any> {
   }
   const json = await res.json();
   return json?.data ?? json;
+}
+
+// ─── Paginated fetch ──────────────────────────────────────────────────────────
+export async function findPaginated(
+  collection: string,
+  filter: object = {},
+  { page = 1, limit = 25, sort }: { page?: number; limit?: number; sort?: object } = {}
+): Promise<{ items: any[]; total: number; page: number; totalPages: number; limit: number }> {
+  const endpoint = collectionToEndpoint(collection);
+  const params = new URLSearchParams();
+  const f = filter as any;
+
+  if (f.isActive !== undefined) params.set('active',    String(f.isActive));
+  if (f.branchId)               params.set('branchId',  f.branchId);
+  if (f.status)                 params.set('status',    f.status);
+  if (f.isCleared !== undefined) params.set('isCleared', String(f.isCleared));
+
+  const dateField = f.saleDate ?? f.expenseDate ?? f.reportDate;
+  if (dateField?.$gte) params.set('startDate', dateField.$gte);
+  if (dateField?.$lte) params.set('endDate',   dateField.$lte);
+
+  if (f.paymentMethod) params.set('paymentMethod', f.paymentMethod);
+  if (sort) params.set('sort', JSON.stringify(sort));
+
+  params.set('page',  String(page));
+  params.set('limit', String(limit));
+
+  const qs   = params.toString();
+  const data = await apiFetch(`${endpoint}${qs ? `?${qs}` : ''}`);
+
+  const items = Array.isArray(data) ? data
+    : (data?.sales ?? data?.users ?? data?.products ?? data?.items ?? data?.reports ?? data?.debtors ?? []);
+  const total      = data?.total ?? items.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  return { items, total, page, totalPages, limit };
 }
 
 // ─── Generic CRUD helpers ─────────────────────────────────────────────────────

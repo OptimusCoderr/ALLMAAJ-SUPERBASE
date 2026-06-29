@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Star, Plus, Pencil, Trash2, X, Check, Search, Phone, Mail, MapPin, FileText } from 'lucide-react';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { SpecialCustomer } from '../../lib/types';
+import { SkeletonCard } from '../../components/Skeleton';
 
 const emptyForm = { name: '', phone: '', email: '', address: '', notes: '' };
 
@@ -145,7 +146,9 @@ export default function SpecialCustomersPage() {
 
       {/* Customer list */}
       {loading ? (
-        <div className="text-center py-16 text-slate-400">Loading…</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-slate-400">
           {search ? 'No customers match your search.' : 'No special customers yet. Add one above.'}

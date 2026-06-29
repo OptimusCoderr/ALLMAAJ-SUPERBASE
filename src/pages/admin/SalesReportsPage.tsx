@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { find, Collections, getAuthToken } from '../../lib/api';
 import type { Sale, Branch, Debtor, Expense, WarehouseSale } from '../../lib/types';
 import { TrendingUp, Download, AlertCircle, CheckCircle2, Receipt, Truck } from 'lucide-react';
+import Pagination from '../../components/Pagination';
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 
@@ -94,6 +95,13 @@ export default function SalesReportsPage() {
   const [warehouseSales, setWarehouseSales]   = useState<WarehouseSale[]>([]);
   const [branchMap, setBranchMap]             = useState<Record<string, string>>({});
   const [loading, setLoading]                 = useState(false);
+  const [salesPage, setSalesPage]             = useState(1);
+  const salesPageLimit = 50;
+  const salesPageTotal = Math.max(1, Math.ceil(sales.length / salesPageLimit));
+  const paginatedSales = useMemo(
+    () => sales.slice((salesPage - 1) * salesPageLimit, salesPage * salesPageLimit),
+    [sales, salesPage]
+  );
 
   useEffect(() => {
     find(Collections.BRANCHES, { isActive: true }, { sort: { name: 1 } }).then(data => {
@@ -133,6 +141,7 @@ export default function SalesReportsPage() {
     ]);
 
     setSales(salesData as Sale[]);
+    setSalesPage(1);
     setExpenses(expenseData as Expense[]);
     setWarehouseSales((whRes?.data ?? []) as WarehouseSale[]);
 
@@ -585,7 +594,7 @@ export default function SalesReportsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {sales.map(s => {
+                {paginatedSales.map(s => {
                   const items     = safeItems(s.items);
                   const paid      = Number(s.amountPaid ?? (s.paymentMethod === 'unpaid' ? 0 : s.totalAmount));
                   const balance   = Number(s.balanceDue ?? 0);
@@ -651,6 +660,17 @@ export default function SalesReportsPage() {
                 </tr>
               </tfoot>
             </table>
+          </div>
+        )}
+        {!loading && sales.length > salesPageLimit && (
+          <div className="px-4 pb-3 border-t border-slate-100">
+            <Pagination
+              page={salesPage}
+              totalPages={salesPageTotal}
+              total={sales.length}
+              limit={salesPageLimit}
+              onPageChange={setSalesPage}
+            />
           </div>
         )}
       </div>

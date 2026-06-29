@@ -3,6 +3,7 @@ import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { Warehouse, Product, WarehouseStock } from '../../lib/types';
+import { SkeletonCard } from '../../components/Skeleton';
 import {
   Plus, Edit2, Trash2, X, Check, Package,
   ChevronDown, ChevronUp, Search, Download,
@@ -485,10 +486,8 @@ export default function WarehousesPage() {
 
       {/* ── Warehouse list ──────────────────────────────────────────────────── */}
       {loading ? (
-        <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-24 bg-slate-100 rounded-xl animate-pulse" />
-          ))}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
       ) : filteredWarehouses.length === 0 ? (
         <div className="bg-white rounded-xl p-14 text-center text-slate-400 shadow-sm border border-slate-100">
