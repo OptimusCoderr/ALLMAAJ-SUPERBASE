@@ -216,7 +216,7 @@ function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: Co
           </tr>
         </thead>
         <tbody>
-          {sale.items.map((item, i) => (
+          {[...sale.items].sort((a, b) => a.productName.localeCompare(b.productName)).map((item, i) => (
             <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafc' }}>
               <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 500, borderBottom: '1px solid #e2e8f0' }}>
                 {item.productName}
