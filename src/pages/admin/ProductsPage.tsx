@@ -2,6 +2,8 @@ import { useEffect, useState, useMemo } from 'react';
 import { useToast } from '../../context/ToastContext';
 import { find, insertOne, updateOne, Collections } from '../../lib/api';
 import type { Product, Branch } from '../../lib/types';
+import { SkeletonRow, SkeletonCard } from '../../components/Skeleton';
+import Pagination from '../../components/Pagination';
 import {
   Plus, Edit2, Trash2, Package, X, Check, Search,
   Download, RefreshCw,
@@ -114,6 +116,10 @@ export default function ProductsPage() {
     ['all', ...Array.from(new Set(products.map(p => p.category).filter((c): c is string => Boolean(c)))).sort()],
   [products]);
 
+  // ── Pagination ────────────────────────────────────────────────────────────────
+  const [page, setPage]   = useState(1);
+  const [limit, setLimit] = useState(25);
+
   // ── Filtered list ─────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let out = products;
@@ -130,6 +136,11 @@ export default function ProductsPage() {
     }
     return out;
   }, [products, search, catFilter, statusFilter]);
+
+  const paginated  = useMemo(() => filtered.slice((page - 1) * limit, page * limit), [filtered, page, limit]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / limit));
+
+  useEffect(() => { setPage(1); }, [search, catFilter, statusFilter]);
 
   // ── Form helpers ──────────────────────────────────────────────────────────────
   function openNew() {
@@ -377,9 +388,10 @@ export default function ProductsPage() {
           ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'
           : 'space-y-2'
         }>
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />
-          ))}
+          {view === 'grid'
+            ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+            : Array.from({ length: 6 }).map((_, i) => <SkeletonRow key={i} cols={5} />)
+          }
         </div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-14 text-center text-slate-400">
@@ -392,7 +404,7 @@ export default function ProductsPage() {
       ) : view === 'grid' ? (
         /* ── Grid view ──────────────────────────────────────────────────────── */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(p => (
+          {paginated.map(p => (
             <div
               key={p._id}
               className={`bg-white rounded-xl border shadow-sm p-4 flex flex-col gap-3 transition-all hover:shadow-md ${
@@ -474,7 +486,7 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map(p => (
+                {paginated.map(p => (
                   <tr key={p._id} className={`hover:bg-slate-50/70 transition-colors ${!p.isActive ? 'opacity-50' : ''}`}>
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-800">{p.name}</p>
@@ -548,6 +560,20 @@ export default function ProductsPage() {
               </tfoot>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ── Pagination ─────────────────────────────────────────────────────── */}
+      {!loading && filtered.length > limit && (
+        <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4">
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={filtered.length}
+            limit={limit}
+            onPageChange={setPage}
+            onLimitChange={l => { setLimit(l); setPage(1); }}
+          />
         </div>
       )}
 

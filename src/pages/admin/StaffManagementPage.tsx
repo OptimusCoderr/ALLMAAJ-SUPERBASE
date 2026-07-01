@@ -3,6 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
+import { SkeletonRow } from '../../components/Skeleton';
+import Pagination from '../../components/Pagination';
 import type { User, Branch } from '../../lib/types';
 import {
   Plus, Edit2, X, Check, Search, Shield, RefreshCw,
@@ -123,6 +125,10 @@ export default function StaffManagementPage() {
     unassigned: staff.filter(u => u.isActive && !u.branchId).length,
   }), [staff]);
 
+  // ── Pagination ────────────────────────────────────────────────────────────
+  const [page, setPage]   = useState(1);
+  const [limit, setLimit] = useState(25);
+
   // ── Filtered ──────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let out = staff;
@@ -141,6 +147,12 @@ export default function StaffManagementPage() {
     }
     return out;
   }, [staff, search, roleFilter, statusFilter, branchFilter]);
+
+  const paginated   = useMemo(() => { return filtered.slice((page - 1) * limit, page * limit); }, [filtered, page, limit]);
+  const totalPages  = Math.max(1, Math.ceil(filtered.length / limit));
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [search, roleFilter, statusFilter, branchFilter]);
 
   // ── Branch lookup ─────────────────────────────────────────────────────────
   const branchMap = useMemo(() =>
@@ -400,10 +412,8 @@ export default function StaffManagementPage() {
       {/* ── Staff table ─────────────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
         {loading ? (
-          <div className="p-5 space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="h-[60px] bg-slate-100 rounded-xl animate-pulse" />
-            ))}
+          <div className="p-5 space-y-2">
+            {Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} cols={5} />)}
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-14 text-slate-400">
@@ -428,7 +438,7 @@ export default function StaffManagementPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map(u => (
+                {paginated.map(u => (
                   <tr key={u._id} className={`hover:bg-slate-50/70 transition-colors ${!u.isActive ? 'opacity-55' : ''}`}>
 
                     {/* User */}
@@ -543,6 +553,18 @@ export default function StaffManagementPage() {
                 </tr>
               </tfoot>
             </table>
+          </div>
+        )}
+        {!loading && filtered.length > limit && (
+          <div className="px-4 pb-3 border-t border-slate-100">
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={filtered.length}
+              limit={limit}
+              onPageChange={p => setPage(p)}
+              onLimitChange={l => { setLimit(l); setPage(1); }}
+            />
           </div>
         )}
       </div>

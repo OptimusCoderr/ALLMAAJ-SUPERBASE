@@ -216,7 +216,7 @@ function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: Co
           </tr>
         </thead>
         <tbody>
-          {sale.items.map((item, i) => (
+          {[...sale.items].sort((a, b) => a.productName.localeCompare(b.productName)).map((item, i) => (
             <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafc' }}>
               <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 500, borderBottom: '1px solid #e2e8f0' }}>
                 {item.productName}
@@ -612,6 +612,30 @@ export default function WarehouseSalesPage() {
       setFormError(err.message || 'Failed to create sale');
     }
     setSubmitting(false);
+  }
+
+  // ── Delete ──────────────────────────────────────────────────────────────────
+
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function handleDelete(id: string, invoiceNumber: string) {
+    if (!window.confirm(`Delete invoice #${invoiceNumber}? This will restore stock and cannot be undone.`)) return;
+    setDeleting(id);
+    try {
+      const res = await fetch(`${BASE}/api/warehouse-sales/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
+      setHistory(prev => prev.filter(s => s._id !== id));
+      if (viewSale?._id === id) setViewSale(null);
+      toast.success(`Invoice #${invoiceNumber} deleted`);
+      loadAllStock();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete invoice');
+    }
+    setDeleting(null);
   }
 
   // ── History ─────────────────────────────────────────────────────────────────
@@ -1265,10 +1289,20 @@ export default function WarehouseSalesPage() {
                   <div className="text-right flex-shrink-0">
                     <p className="font-bold text-lg text-slate-800">{fmt(s.totalAmount)}</p>
                     {s.balanceDue > 0.01 && <p className="text-xs text-red-500 font-medium">Owes {fmt(s.balanceDue)}</p>}
-                    <button onClick={() => viewDetail(s._id)}
-                      className="mt-1 flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 font-medium ml-auto">
-                      <Eye className="w-3.5 h-3.5" />View
-                    </button>
+                    <div className="mt-1 flex items-center gap-2 justify-end">
+                      <button onClick={() => viewDetail(s._id)}
+                        className="flex items-center gap-1 text-xs text-amber-600 hover:text-amber-700 font-medium">
+                        <Eye className="w-3.5 h-3.5" />View
+                      </button>
+                      <button onClick={() => handleDelete(s._id, s.invoiceNumber)}
+                        disabled={deleting === s._id}
+                        className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 font-medium disabled:opacity-50">
+                        {deleting === s._id
+                          ? <span className="w-3 h-3 border border-red-400 border-t-transparent rounded-full animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" />}
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1301,6 +1335,14 @@ export default function WarehouseSalesPage() {
                 <button onClick={handlePrint}
                   className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm">
                   <Printer className="w-4 h-4" />Print
+                </button>
+                <button onClick={() => handleDelete(viewSale._id, viewSale.invoiceNumber)}
+                  disabled={deleting === viewSale._id}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-sm font-bold transition-colors disabled:opacity-50">
+                  {deleting === viewSale._id
+                    ? <span className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                    : <Trash2 className="w-4 h-4" />}
+                  Delete
                 </button>
                 <button onClick={() => setViewSale(null)}
                   className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">

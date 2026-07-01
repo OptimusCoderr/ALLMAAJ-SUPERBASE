@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AuthUser, getCurrentUser, loadSession, loginUser, logoutUser } from '../lib/auth';
+import { registerOn401Handler } from '../lib/api';
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -21,6 +22,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const token = loadSession();
     if (token) setUser(getCurrentUser());
     setLoading(false);
+
+    registerOn401Handler(() => {
+      logoutUser();
+      setUser(null);
+      window.location.href = '/login?expired=1';
+    });
   }, []);
 
   async function login(email: string, password: string) {
