@@ -2,12 +2,12 @@ import { Router, Request, Response } from 'express';
 import sql from '../db/client.js';
 import type { WarehouseSaleRow, WarehouseSaleItemRow } from '../db/types.js';
 import { num } from '../db/types.js';
-import { authMiddleware, adminOnly } from '../middleware/auth.js';
+import { authMiddleware, managerOrAdmin } from '../middleware/auth.js';
 import { sendResponse, sendError } from '../utils/apiResponse.js';
 
 const router = Router();
 router.use(authMiddleware);
-router.use(adminOnly);
+router.use(managerOrAdmin);
 
 // ── Mapper ────────────────────────────────────────────────────────────────────
 

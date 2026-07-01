@@ -15,18 +15,18 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { path: '/',           label: 'Dashboard',        icon: <LayoutDashboard className="w-5 h-5" />, roles: ['admin', 'staff'] },
-  { path: '/sales',      label: 'Record Sale',      icon: <ShoppingBag className="w-5 h-5" />,     roles: ['admin', 'staff'] },
-  { path: '/daily-report', label: 'Daily Report',  icon: <FileText className="w-5 h-5" />,       roles: ['admin', 'staff'] },
-  { path: '/branch-stock', label: 'Branch Stock',  icon: <Store className="w-5 h-5" />,           roles: ['admin', 'staff'] },
-  { path: '/admin/reports', label: 'Sales Reports', icon: <TrendingUp className="w-5 h-5" />,     roles: ['admin'] },
-  { path: '/admin/debtors', label: 'Debtors',       icon: <UserCheck className="w-5 h-5" />,       roles: ['admin'] },
-  { path: '/admin/report-approvals', label: 'Report Approvals', icon: <FileText className="w-5 h-5" />, roles: ['admin'] },
-  { path: '/admin/warehouses', label: 'Warehouses', icon: <Warehouse className="w-5 h-5" />,      roles: ['admin'] },
-  { path: '/admin/warehouse-sales', label: 'Warehouse Sales', icon: <Truck className="w-5 h-5" />, roles: ['admin'] },
-  { path: '/admin/products', label: 'Products',    icon: <Package className="w-5 h-5" />,        roles: ['admin'] },
-  { path: '/admin/branches', label: 'Branches',     icon: <GitBranch className="w-5 h-5" />,       roles: ['admin'] },
-  { path: '/admin/special-customers', label: 'Special Customers', icon: <Star className="w-5 h-5" />, roles: ['admin'] },
+  { path: '/',           label: 'Dashboard',        icon: <LayoutDashboard className="w-5 h-5" />, roles: ['admin', 'manager', 'staff'] },
+  { path: '/sales',      label: 'Record Sale',      icon: <ShoppingBag className="w-5 h-5" />,     roles: ['admin', 'manager', 'staff'] },
+  { path: '/daily-report', label: 'Daily Report',  icon: <FileText className="w-5 h-5" />,       roles: ['admin', 'manager', 'staff'] },
+  { path: '/branch-stock', label: 'Branch Stock',  icon: <Store className="w-5 h-5" />,           roles: ['admin', 'manager', 'staff'] },
+  { path: '/admin/reports', label: 'Sales Reports', icon: <TrendingUp className="w-5 h-5" />,     roles: ['admin', 'manager'] },
+  { path: '/admin/debtors', label: 'Debtors',       icon: <UserCheck className="w-5 h-5" />,       roles: ['admin', 'manager'] },
+  { path: '/admin/report-approvals', label: 'Report Approvals', icon: <FileText className="w-5 h-5" />, roles: ['admin', 'manager'] },
+  { path: '/admin/warehouses', label: 'Warehouses', icon: <Warehouse className="w-5 h-5" />,      roles: ['admin', 'manager'] },
+  { path: '/admin/warehouse-sales', label: 'Warehouse Sales', icon: <Truck className="w-5 h-5" />, roles: ['admin', 'manager'] },
+  { path: '/admin/products', label: 'Products',    icon: <Package className="w-5 h-5" />,        roles: ['admin', 'manager'] },
+  { path: '/admin/branches', label: 'Branches',     icon: <GitBranch className="w-5 h-5" />,       roles: ['admin', 'manager'] },
+  { path: '/admin/special-customers', label: 'Special Customers', icon: <Star className="w-5 h-5" />, roles: ['admin', 'manager'] },
   { path: '/admin/staff', label: 'Staff Management', icon: <Users className="w-5 h-5" />,          roles: ['admin'] },
 ];
 
@@ -39,8 +39,9 @@ export default function Layout() {
   const visibleItems = NAV_ITEMS.filter(item => item.roles.includes(role));
 
   const roleBadgeColor: Record<string, string> = {
-    admin: 'bg-red-100 text-red-700',
-    staff: 'bg-green-100 text-green-700',
+    admin:   'bg-red-100 text-red-700',
+    manager: 'bg-purple-100 text-purple-700',
+    staff:   'bg-green-100 text-green-700',
   };
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>

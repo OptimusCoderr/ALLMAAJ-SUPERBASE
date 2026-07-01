@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
+import { useAuth } from '../../context/AuthContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { Warehouse, Product, WarehouseStock } from '../../lib/types';
 import { SkeletonCard } from '../../components/Skeleton';
@@ -58,6 +59,8 @@ function exportStockCSV(warehouseName: string, items: StockItem[]) {
 export default function WarehousesPage() {
   const toast = useToast();
   const confirm = useConfirm();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [warehouses, setWarehouses]     = useState<Warehouse[]>([]);
   const [products, setProducts]         = useState<Product[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -363,12 +366,14 @@ export default function WarehousesPage() {
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
-          >
-            <Plus className="w-4 h-4" /> New Warehouse
-          </button>
+          {isAdmin && (
+            <button
+              onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
+            >
+              <Plus className="w-4 h-4" /> New Warehouse
+            </button>
+          )}
         </div>
       </div>
 
@@ -542,20 +547,24 @@ export default function WarehousesPage() {
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => openEdit(w)}
-                      className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                      title="Edit warehouse"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(w)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Delete warehouse"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => openEdit(w)}
+                        className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                        title="Edit warehouse"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleDelete(w)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Delete warehouse"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => toggleExpand(w._id)}
                       className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-colors ${
@@ -786,23 +795,27 @@ export default function WarehousesPage() {
                                       </td>
                                       <td className="px-4 py-3">
                                         <div className="flex items-center gap-2 justify-end">
-                                          <button
-                                            onClick={() => {
-                                              setShowStockForm(w._id);
-                                              setStockForm({ product_id: item.productId, quantity: qty });
-                                            }}
-                                            className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"
-                                            title="Edit quantity"
-                                          >
-                                            <Edit2 className="w-3.5 h-3.5" />
-                                          </button>
-                                          <button
-                                            onClick={() => handleDeleteStock(item.productId, w._id, item.product?.name ?? '')}
-                                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                            title="Remove from stock"
-                                          >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                          </button>
+                                          {isAdmin && (
+                                            <button
+                                              onClick={() => {
+                                                setShowStockForm(w._id);
+                                                setStockForm({ product_id: item.productId, quantity: qty });
+                                              }}
+                                              className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors"
+                                              title="Edit quantity"
+                                            >
+                                              <Edit2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                          {isAdmin && (
+                                            <button
+                                              onClick={() => handleDeleteStock(item.productId, w._id, item.product?.name ?? '')}
+                                              className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                              title="Remove from stock"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
                                         </div>
                                       </td>
                                     </tr>

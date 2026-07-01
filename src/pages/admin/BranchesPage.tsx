@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
+import { useAuth } from '../../context/AuthContext';
 import { find, insertOne, updateOne, deleteOne, Collections } from '../../lib/api';
 import type { Branch, User } from '../../lib/types';
 import { SkeletonRow } from '../../components/Skeleton';
@@ -44,6 +45,8 @@ function exportCSV(branches: Branch[]) {
 export default function BranchesPage() {
   const toast = useToast();
   const confirm = useConfirm();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [branches, setBranches]     = useState<Branch[]>([]);
   const [staffMap, setStaffMap]     = useState<Record<string, number>>({});
   const [loading, setLoading]       = useState(true);
@@ -203,12 +206,14 @@ export default function BranchesPage() {
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <button
-            onClick={openNew}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
-          >
-            <Plus className="w-4 h-4" /> New Branch
-          </button>
+          {isAdmin && (
+            <button
+              onClick={openNew}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
+            >
+              <Plus className="w-4 h-4" /> New Branch
+            </button>
+          )}
         </div>
       </div>
 
@@ -381,38 +386,40 @@ export default function BranchesPage() {
                   )}
 
                   {/* Actions */}
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => handleToggleActive(b)}
-                      className={`p-2 rounded-lg transition-colors ${
-                        b.isActive
-                          ? 'text-green-500 hover:text-slate-400 hover:bg-slate-100'
-                          : 'text-slate-300 hover:text-green-500 hover:bg-green-50'
-                      }`}
-                      title={b.isActive ? 'Deactivate branch' : 'Activate branch'}
-                    >
-                      {b.isActive
-                        ? <ToggleRight className="w-5 h-5" />
-                        : <ToggleLeft className="w-5 h-5" />}
-                    </button>
-                    <button
-                      onClick={() => openEdit(b)}
-                      className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                      title="Edit branch"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(b)}
-                      disabled={isDeleting}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Delete branch"
-                    >
-                      {isDeleting
-                        ? <span className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin inline-block" />
-                        : <Trash2 className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  {isAdmin && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => handleToggleActive(b)}
+                        className={`p-2 rounded-lg transition-colors ${
+                          b.isActive
+                            ? 'text-green-500 hover:text-slate-400 hover:bg-slate-100'
+                            : 'text-slate-300 hover:text-green-500 hover:bg-green-50'
+                        }`}
+                        title={b.isActive ? 'Deactivate branch' : 'Activate branch'}
+                      >
+                        {b.isActive
+                          ? <ToggleRight className="w-5 h-5" />
+                          : <ToggleLeft className="w-5 h-5" />}
+                      </button>
+                      <button
+                        onClick={() => openEdit(b)}
+                        className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                        title="Edit branch"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(b)}
+                        disabled={isDeleting}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Delete branch"
+                      >
+                        {isDeleting
+                          ? <span className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin inline-block" />
+                          : <Trash2 className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import sql from '../db/client.js';
 import type { DailyReportRow, DebtorRow, DebtorPaymentRow, ExpenseRow } from '../db/types.js';
 import { num } from '../db/types.js';
-import { authMiddleware, adminOnly } from '../middleware/auth.js';
+import { authMiddleware, adminOnly, managerOrAdmin } from '../middleware/auth.js';
 import { sendResponse, sendError } from '../utils/apiResponse.js';
 
 const router = Router();
@@ -200,7 +200,7 @@ router.post('/daily', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/reports/daily/:id  (admin only)
-router.delete('/daily/:id', adminOnly, async (req: Request, res: Response) => {
+router.delete('/daily/:id', managerOrAdmin, async (req: Request, res: Response) => {
   try {
     await sql`UPDATE sales SET report_id = NULL WHERE report_id = ${req.params.id}`;
     const [deleted] = await sql<DailyReportRow[]>`
@@ -214,7 +214,7 @@ router.delete('/daily/:id', adminOnly, async (req: Request, res: Response) => {
 });
 
 // PATCH /api/reports/daily/:id/review  (admin only)
-router.patch('/daily/:id/review', adminOnly, async (req: Request, res: Response) => {
+router.patch('/daily/:id/review', managerOrAdmin, async (req: Request, res: Response) => {
   try {
     const { status, reviewNotes } = req.body;
     if (!['approved', 'rejected', 'pending'].includes(status))
@@ -369,7 +369,7 @@ router.put('/debtors/:id', async (req: Request, res: Response) => {
 });
 
 // PATCH /api/reports/debtors/:id/clear  (admin only)
-router.patch('/debtors/:id/clear', adminOnly, async (req: Request, res: Response) => {
+router.patch('/debtors/:id/clear', managerOrAdmin, async (req: Request, res: Response) => {
   try {
     const [debtor] = await sql<DebtorRow[]>`
       UPDATE debtors SET
@@ -386,7 +386,7 @@ router.patch('/debtors/:id/clear', adminOnly, async (req: Request, res: Response
 });
 
 // PATCH /api/reports/debtors/:id/reactivate  (admin only)
-router.patch('/debtors/:id/reactivate', adminOnly, async (req: Request, res: Response) => {
+router.patch('/debtors/:id/reactivate', managerOrAdmin, async (req: Request, res: Response) => {
   try {
     const [debtor] = await sql<DebtorRow[]>`
       UPDATE debtors SET

@@ -74,6 +74,14 @@ export const adminOnly = (req: Request, res: Response, next: NextFunction): void
   next();
 };
 
+export const managerOrAdmin = (req: Request, res: Response, next: NextFunction): void => {
+  if (!req.user || !['admin', 'manager'].includes(req.user.role)) {
+    res.status(403).json({ message: 'Manager or admin access required' });
+    return;
+  }
+  next();
+};
+
 export const staffOnly = (req: Request, res: Response, next: NextFunction): void => {
   if (!req.user || !['admin', 'manager', 'staff'].includes(req.user.role)) {
     res.status(403).json({ message: 'Insufficient permissions' });
