@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { find, insertOne, updateOne, Collections } from '../../lib/api';
 import type { Product, Branch } from '../../lib/types';
 import { SkeletonRow, SkeletonCard } from '../../components/Skeleton';
@@ -55,6 +56,8 @@ function exportCSV(products: Product[]) {
 
 export default function ProductsPage() {
   const toast = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [products, setProducts]   = useState<Product[]>([]);
   const [branches, setBranches]   = useState<Branch[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -249,12 +252,14 @@ export default function ProductsPage() {
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <button
-            onClick={openNew}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
-          >
-            <Plus className="w-4 h-4" /> New Product
-          </button>
+          {isAdmin && (
+            <button
+              onClick={openNew}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors"
+            >
+              <Plus className="w-4 h-4" /> New Product
+            </button>
+          )}
         </div>
       </div>
 
@@ -441,29 +446,35 @@ export default function ProductsPage() {
                   <p className="text-xs text-slate-400">per {p.unit}</p>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => { setShowStock(p); setStockBranch(''); setStockQty(0); }}
-                    className="text-xs px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
-                  >
-                    Stock
-                  </button>
-                  <button
-                    onClick={() => openEdit(p)}
-                    className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleToggleActive(p)}
-                    className={`p-1.5 rounded-lg transition-colors ${
-                      p.isActive
-                        ? 'text-green-500 hover:text-slate-400 hover:bg-slate-50'
-                        : 'text-slate-300 hover:text-green-500 hover:bg-green-50'
-                    }`}
-                    title={p.isActive ? 'Deactivate' : 'Activate'}
-                  >
-                    {p.isActive ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
-                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => { setShowStock(p); setStockBranch(''); setStockQty(0); }}
+                      className="text-xs px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                    >
+                      Stock
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      onClick={() => openEdit(p)}
+                      className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleToggleActive(p)}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        p.isActive
+                          ? 'text-green-500 hover:text-slate-400 hover:bg-slate-50'
+                          : 'text-slate-300 hover:text-green-500 hover:bg-green-50'
+                      }`}
+                      title={p.isActive ? 'Deactivate' : 'Activate'}
+                    >
+                      {p.isActive ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -511,37 +522,45 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => { setShowStock(p); setStockBranch(''); setStockQty(0); }}
-                          className="text-xs px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
-                        >
-                          Stock
-                        </button>
-                        <button
-                          onClick={() => openEdit(p)}
-                          className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                          title="Edit"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleActive(p)}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            p.isActive
-                              ? 'text-green-500 hover:text-slate-400 hover:bg-slate-50'
-                              : 'text-slate-300 hover:text-green-500 hover:bg-green-50'
-                          }`}
-                          title={p.isActive ? 'Deactivate' : 'Activate'}
-                        >
-                          {p.isActive ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
-                        </button>
-                        <button
-                          onClick={() => handleToggleActive(p)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title={p.isActive ? 'Deactivate product' : 'Activate product'}
-                        >
-                          <Archive className="w-3.5 h-3.5" />
-                        </button>
+                        {isAdmin && (
+                          <button
+                            onClick={() => { setShowStock(p); setStockBranch(''); setStockQty(0); }}
+                            className="text-xs px-2.5 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                          >
+                            Stock
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => openEdit(p)}
+                            className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                            title="Edit"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleToggleActive(p)}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              p.isActive
+                                ? 'text-green-500 hover:text-slate-400 hover:bg-slate-50'
+                                : 'text-slate-300 hover:text-green-500 hover:bg-green-50'
+                            }`}
+                            title={p.isActive ? 'Deactivate' : 'Activate'}
+                          >
+                            {p.isActive ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                          </button>
+                        )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleToggleActive(p)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title={p.isActive ? 'Deactivate product' : 'Activate product'}
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

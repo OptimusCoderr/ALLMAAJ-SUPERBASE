@@ -62,7 +62,7 @@ const router = createBrowserRouter([
       {
         path: 'admin/warehouses',
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole="managerOrAdmin">
             <WarehousesPage />
           </ProtectedRoute>
         ),
@@ -70,7 +70,7 @@ const router = createBrowserRouter([
       {
         path: 'admin/warehouse-sales',
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole="managerOrAdmin">
             <WarehouseSalesPage />
           </ProtectedRoute>
         ),
@@ -78,7 +78,7 @@ const router = createBrowserRouter([
       {
         path: 'admin/products',
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole="managerOrAdmin">
             <ProductsPage />
           </ProtectedRoute>
         ),
@@ -86,7 +86,7 @@ const router = createBrowserRouter([
       {
         path: 'admin/reports',
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole="managerOrAdmin">
             <SalesReportsPage />
           </ProtectedRoute>
         ),
@@ -94,7 +94,7 @@ const router = createBrowserRouter([
       {
         path: 'admin/debtors',
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole="managerOrAdmin">
             <DebtorsPage />
           </ProtectedRoute>
         ),
@@ -102,7 +102,7 @@ const router = createBrowserRouter([
       {
         path: 'admin/report-approvals',
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole="managerOrAdmin">
             <ReportApprovalsPage />
           </ProtectedRoute>
         ),
@@ -110,7 +110,7 @@ const router = createBrowserRouter([
       {
         path: 'admin/special-customers',
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredRole="managerOrAdmin">
             <SpecialCustomersPage />
           </ProtectedRoute>
         ),

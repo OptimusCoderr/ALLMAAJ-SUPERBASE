@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { body, param, validationResult } from 'express-validator';
 import sql from '../db/client.js';
 import type { SpecialCustomerRow } from '../db/types.js';
-import { authMiddleware, adminOnly } from '../middleware/auth.js';
+import { authMiddleware, managerOrAdmin } from '../middleware/auth.js';
 import { sendResponse, sendError } from '../utils/apiResponse.js';
 
 const router = Router();
@@ -42,7 +42,7 @@ router.get('/', async (req: Request, res: Response) => {
 // ── POST /api/special-customers ────────────────────────────────────────────────
 router.post(
   '/',
-  adminOnly,
+  managerOrAdmin,
   [
     body('name').trim().notEmpty().isLength({ max: 150 }).escape(),
     body('phone').optional({ nullable: true }).trim().isLength({ max: 30 }),
@@ -75,7 +75,7 @@ router.post(
 // ── PUT /api/special-customers/:id ────────────────────────────────────────────
 router.put(
   '/:id',
-  adminOnly,
+  managerOrAdmin,
   [
     param('id').isUUID().withMessage('Invalid ID'),
     body('name').optional().trim().notEmpty().isLength({ max: 150 }).escape(),
@@ -115,7 +115,7 @@ router.put(
 // ── DELETE /api/special-customers/:id ─────────────────────────────────────────
 router.delete(
   '/:id',
-  adminOnly,
+  managerOrAdmin,
   [param('id').isUUID().withMessage('Invalid ID')],
   async (req: Request, res: Response) => {
     const errors = validationResult(req);
