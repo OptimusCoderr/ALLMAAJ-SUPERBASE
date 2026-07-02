@@ -190,6 +190,7 @@ export interface WarehouseSaleRow {
   balance_due: string;
   discounted_total: string | null;
   doc_type: 'invoice' | 'waybill';
+  doc_label: string | null;
   notes: string | null;
   sale_date: string;
   created_at: string;

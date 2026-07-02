@@ -178,6 +178,7 @@ export interface WarehouseSale extends MongoDoc {
   balanceDue: number;
   discountedTotal?: number | null;
   docType: 'invoice' | 'waybill';
+  docLabel?: string | null;
   notes?: string | null;
   saleDate: string;
   items: WarehouseSaleItem[];
