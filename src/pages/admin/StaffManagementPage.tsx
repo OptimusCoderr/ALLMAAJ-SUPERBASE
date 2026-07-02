@@ -17,11 +17,11 @@ import {
 
 type UserForm = {
   fullName: string; email: string; phone: string;
-  password: string; role: 'admin' | 'staff'; branchId: string;
+  password: string; role: 'admin' | 'staff' | 'manager'; branchId: string;
 };
 const BLANK: UserForm = { fullName: '', email: '', phone: '', password: '', role: 'staff', branchId: '' };
 
-type RoleFilter   = 'all' | 'admin' | 'staff';
+type RoleFilter   = 'all' | 'admin' | 'staff' | 'manager';
 type StatusFilter = 'all' | 'active' | 'inactive';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
