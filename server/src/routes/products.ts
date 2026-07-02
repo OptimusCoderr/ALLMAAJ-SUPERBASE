@@ -70,8 +70,14 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 router.post('/', adminOnly,
-  [body('name').trim().notEmpty(), body('unitPrice').isFloat({ min: 0 }),
-   body('unit').isIn(['piece','kg','litre','box','carton','bag','roll','pair','set','dozen'])],
+  [
+    body('name').trim().notEmpty().isLength({ max: 200 }).escape(),
+    body('sku').optional({ nullable: true }).trim().isLength({ max: 50 }),
+    body('description').optional({ nullable: true }).trim().isLength({ max: 1000 }),
+    body('category').optional({ nullable: true }).trim().isLength({ max: 100 }),
+    body('unitPrice').isFloat({ min: 0 }),
+    body('unit').isIn(['piece','kg','litre','box','carton','bag','roll','pair','set','dozen']),
+  ],
   async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
@@ -92,7 +98,14 @@ router.post('/', adminOnly,
   }
 );
 
-router.put('/:id', adminOnly, [body('name').optional().trim().notEmpty()], async (req: Request, res: Response) => {
+router.put('/:id', adminOnly, [
+  body('name').optional().trim().notEmpty().isLength({ max: 200 }).escape(),
+  body('sku').optional({ nullable: true }).trim().isLength({ max: 50 }),
+  body('description').optional({ nullable: true }).trim().isLength({ max: 1000 }),
+  body('category').optional({ nullable: true }).trim().isLength({ max: 100 }),
+  body('unitPrice').optional().isFloat({ min: 0 }),
+  body('unit').optional().isIn(['piece','kg','litre','box','carton','bag','roll','pair','set','dozen']),
+], async (req: Request, res: Response) => {
   try {
     const [existing] = await sql<ProductRow[]>`SELECT * FROM products WHERE id = ${req.params.id}`;
     if (!existing) return sendError(res, 404, 'Product not found');

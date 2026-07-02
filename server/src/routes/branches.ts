@@ -24,7 +24,11 @@ router.get('/', async (req: Request, res: Response) => {
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
-router.post('/', adminOnly, [body('name').trim().notEmpty()], async (req: Request, res: Response) => {
+router.post('/', adminOnly, [
+  body('name').trim().notEmpty().isLength({ max: 100 }).escape(),
+  body('location').optional({ nullable: true }).trim().isLength({ max: 200 }),
+  body('description').optional({ nullable: true }).trim().isLength({ max: 500 }),
+], async (req: Request, res: Response) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
   try {
@@ -185,7 +189,14 @@ router.get('/:id/stock', async (req: Request, res: Response) => {
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
-router.put('/:id', adminOnly, async (req: Request, res: Response) => {
+router.put('/:id', adminOnly, [
+  body('name').optional().trim().notEmpty().isLength({ max: 100 }).escape(),
+  body('location').optional({ nullable: true }).trim().isLength({ max: 200 }),
+  body('description').optional({ nullable: true }).trim().isLength({ max: 500 }),
+  body('isActive').optional().isBoolean(),
+], async (req: Request, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
   try {
     const { name, location, description, isActive } = req.body;
     const [branch] = await sql<BranchRow[]>`
