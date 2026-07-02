@@ -104,6 +104,7 @@ async function fileToDataUrl(file: File): Promise<string> {
 
 function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: CompanySettings }) {
   const isWaybill = sale.docType === 'waybill';
+  const docTitle = sale.docLabel?.trim() || (isWaybill ? 'Waybill' : 'Invoice');
   const date = new Date((sale.saleDate ?? '').split('T')[0] + 'T12:00:00').toLocaleDateString('en-NG', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -150,7 +151,7 @@ function InvoiceDocument({ sale, settings }: { sale: WarehouseSale; settings: Co
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 22, fontWeight: 800, color: '#d97706', letterSpacing: 2, textTransform: 'uppercase' }}>
-            {isWaybill ? 'Waybill' : 'Invoice'}
+            {docTitle}
           </div>
           <div style={{ fontSize: 12, fontFamily: 'monospace', fontWeight: 700, color: '#475569', marginTop: 4 }}>
             #{sale.invoiceNumber}
@@ -358,6 +359,7 @@ export default function WarehouseSalesPage() {
   const [notes, setNotes]                     = useState('');
   const [saleDate, setSaleDate]               = useState(new Date().toISOString().split('T')[0]);
   const [discountedTotal, setDiscountedTotal] = useState<number | ''>('');
+  const [docLabel, setDocLabel] = useState('');
 
   // ── Submission
   const [submitting, setSubmitting] = useState(false);
@@ -393,6 +395,7 @@ export default function WarehouseSalesPage() {
   const [editExtPrice, setEditExtPrice]             = useState(0);
   const [editExtUnit, setEditExtUnit]               = useState('pcs');
   const [editDiscountedTotal, setEditDiscountedTotal] = useState<number | ''>('');
+  const [editDocLabel, setEditDocLabel] = useState('');
   // Edit modal — stock picker
   const [editShowStockPicker, setEditShowStockPicker] = useState(false);
   const [editPickerSource, setEditPickerSource]     = useState<'warehouse' | 'branch'>('warehouse');
@@ -580,7 +583,7 @@ export default function WarehouseSalesPage() {
           paymentMethod: payMethod,
           amountPaid: payMethod === 'credit' ? amountPaid : total,
           discountedTotal: discountedTotal !== '' && Number(discountedTotal) > 0 ? Number(discountedTotal) : null,
-          docType, notes: notes.trim() || null, saleDate,
+          docType, docLabel: docLabel.trim() || null, notes: notes.trim() || null, saleDate,
           items: cart.map(c => ({
             productId:         c.productId,
             productName:       c.productName,
@@ -605,7 +608,7 @@ export default function WarehouseSalesPage() {
       setCart([]); setCustomerName(''); setCustomerPhone('');
       setCustomerAddress(''); setNotes(''); setAmountPaid(0);
       setPayMethod('cash'); setSaleDate(new Date().toISOString().split('T')[0]);
-      setDiscountedTotal('');
+      setDiscountedTotal(''); setDocLabel('');
       loadAllStock();
       setViewSale(created);
     } catch (err: any) {
@@ -687,6 +690,7 @@ export default function WarehouseSalesPage() {
       externalSource: item.externalSource ?? '',
     })));
     setEditDiscountedTotal(sale.discountedTotal != null ? sale.discountedTotal : '');
+    setEditDocLabel(sale.docLabel ?? '');
     setEditCustomerName(sale.customerName);
     setEditCustomerPhone(sale.customerPhone ?? '');
     setEditCustomerAddress(sale.customerAddress ?? '');
@@ -782,6 +786,7 @@ export default function WarehouseSalesPage() {
           amountPaid: editPayMethod === 'credit' ? editAmountPaid : editTotal,
           discountedTotal: editDiscountedTotal !== '' && Number(editDiscountedTotal) > 0 ? Number(editDiscountedTotal) : null,
           docType: editDocType,
+          docLabel: editDocLabel.trim() || null,
           notes: editNotes.trim() || null,
           saleDate: editSaleDate,
           items: editCart.map(c => ({
@@ -815,7 +820,7 @@ export default function WarehouseSalesPage() {
     const win = window.open('', '_blank', 'width=850,height=700');
     if (!win) return;
     win.document.write(`<!DOCTYPE html><html><head>
-      <title>${viewSale?.docType === 'waybill' ? 'Waybill' : 'Invoice'} #${viewSale?.invoiceNumber}</title>
+      <title>${viewSale?.docLabel?.trim() || (viewSale?.docType === 'waybill' ? 'Waybill' : 'Invoice')} #${viewSale?.invoiceNumber}</title>
       <style>* { margin:0; padding:0; box-sizing:border-box; } body { background:#fff; } @media print { body { margin:0; } }</style>
       </head><body>${invoiceRef.current.innerHTML}</body></html>`);
     win.document.close();
@@ -954,14 +959,45 @@ export default function WarehouseSalesPage() {
                       className={`flex flex-col items-center gap-1.5 py-3 rounded-xl text-xs font-semibold border transition-colors ${
                         docType === 'invoice' ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                       }`}>
-                      <FileText className="w-5 h-5" />Invoice
+                      <FileText className="w-5 h-5" />Invoice (with prices)
                     </button>
                     <button onClick={() => setDocType('waybill')}
                       className={`flex flex-col items-center gap-1.5 py-3 rounded-xl text-xs font-semibold border transition-colors ${
                         docType === 'waybill' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                       }`}>
-                      <Truck className="w-5 h-5" />Waybill
+                      <Truck className="w-5 h-5" />Waybill (no prices)
                     </button>
+                  </div>
+                  {/* Custom document label */}
+                  <div className="mb-2">
+                    <label className="block text-xs text-slate-500 mb-1">Document Title (optional — overrides header)</label>
+                    <input
+                      type="text"
+                      value={docLabel}
+                      onChange={e => setDocLabel(e.target.value)}
+                      placeholder={docType === 'waybill' ? 'e.g. Delivery Note' : 'e.g. Proforma Invoice'}
+                      maxLength={100}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50"
+                    />
+                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                      {['Proforma Invoice', 'Quotation', 'Receipt', 'Delivery Note', 'Credit Note'].map(preset => (
+                        <button key={preset} type="button"
+                          onClick={() => setDocLabel(preset)}
+                          className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors font-medium ${
+                            docLabel === preset
+                              ? 'bg-amber-500 text-white border-amber-500'
+                              : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:text-amber-600'
+                          }`}>
+                          {preset}
+                        </button>
+                      ))}
+                      {docLabel && (
+                        <button type="button" onClick={() => setDocLabel('')}
+                          className="text-[10px] px-2 py-0.5 rounded-full border border-slate-200 text-slate-400 hover:text-red-500">
+                          Clear
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <input type="date" value={saleDate} onChange={e => setSaleDate(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-slate-50" />
@@ -1237,7 +1273,7 @@ export default function WarehouseSalesPage() {
                   {submitting
                     ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     : docType === 'waybill' ? <Truck className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                  {submitting ? 'Processing…' : `Create ${docType === 'waybill' ? 'Waybill' : 'Invoice'}`}
+                  {submitting ? 'Processing…' : `Create ${docLabel.trim() || (docType === 'waybill' ? 'Waybill' : 'Invoice')}`}
                 </button>
               </div>
             </div>
@@ -1274,7 +1310,7 @@ export default function WarehouseSalesPage() {
                     <div className="flex items-center gap-2 flex-wrap mb-0.5">
                       <span className="font-mono font-bold text-slate-700 text-sm">#{s.invoiceNumber}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.docType === 'waybill' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                        {s.docType === 'waybill' ? 'Waybill' : 'Invoice'}
+                        {s.docLabel?.trim() || (s.docType === 'waybill' ? 'Waybill' : 'Invoice')}
                       </span>
                       <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600">
                         {PM_LABELS[s.paymentMethod]}
@@ -1322,7 +1358,7 @@ export default function WarehouseSalesPage() {
                   : <FileText className="w-5 h-5 text-blue-600" />}
                 <div>
                   <p className="font-bold text-slate-800">
-                    {viewSale.docType === 'waybill' ? 'Waybill' : 'Invoice'} #{viewSale.invoiceNumber}
+                    {viewSale.docLabel?.trim() || (viewSale.docType === 'waybill' ? 'Waybill' : 'Invoice')} #{viewSale.invoiceNumber}
                   </p>
                   <p className="text-xs text-slate-400">{viewSale.customerName} · {fmt(viewSale.totalAmount)}</p>
                 </div>
@@ -1440,6 +1476,36 @@ export default function WarehouseSalesPage() {
                     <label className="block text-xs text-slate-500 mb-1">Sale Date</label>
                     <input type="date" value={editSaleDate} onChange={e => setEditSaleDate(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-500 mb-1">Document Title (overrides printed header)</label>
+                  <input
+                    type="text"
+                    value={editDocLabel}
+                    onChange={e => setEditDocLabel(e.target.value)}
+                    placeholder={editDocType === 'waybill' ? 'e.g. Delivery Note' : 'e.g. Proforma Invoice'}
+                    maxLength={100}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                  />
+                  <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                    {['Proforma Invoice', 'Quotation', 'Receipt', 'Delivery Note', 'Credit Note'].map(preset => (
+                      <button key={preset} type="button"
+                        onClick={() => setEditDocLabel(preset)}
+                        className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors font-medium ${
+                          editDocLabel === preset
+                            ? 'bg-amber-500 text-white border-amber-500'
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300 hover:text-amber-600'
+                        }`}>
+                        {preset}
+                      </button>
+                    ))}
+                    {editDocLabel && (
+                      <button type="button" onClick={() => setEditDocLabel('')}
+                        className="text-[10px] px-2 py-0.5 rounded-full border border-slate-200 text-slate-400 hover:text-red-500">
+                        Clear
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div>

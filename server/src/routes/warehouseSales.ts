@@ -35,6 +35,7 @@ const toSale = (
   balanceDue:      num(r.balance_due),
   discountedTotal: r.discounted_total != null ? num(r.discounted_total) : null,
   docType:         r.doc_type,
+  docLabel:        r.doc_label ?? null,
   notes:           r.notes,
   saleDate:        r.sale_date,
   createdAt:       r.created_at,
@@ -118,6 +119,7 @@ const saleValidators = [
   body('customerPhone').optional({ nullable: true }).trim().isLength({ max: 30 }),
   body('customerAddress').optional({ nullable: true }).trim().isLength({ max: 500 }),
   body('notes').optional({ nullable: true }).trim().isLength({ max: 1000 }),
+  body('docLabel').optional({ nullable: true }).trim().isLength({ max: 100 }),
   body('paymentMethod').isIn(['cash', 'pos', 'transfer', 'credit']),
   body('docType').isIn(['invoice', 'waybill']),
   body('items').isArray({ min: 1 }),
@@ -137,7 +139,7 @@ router.post('/', saleValidators, async (req: Request, res: Response) => {
       warehouseId,       // primary/issuing warehouse (nullable)
       customerName, customerPhone, customerAddress,
       paymentMethod = 'cash', amountPaid = 0,
-      docType = 'invoice', notes, saleDate, items, discountedTotal,
+      docType = 'invoice', docLabel, notes, saleDate, items, discountedTotal,
     } = req.body;
 
     if (!customerName?.trim())
@@ -189,7 +191,7 @@ router.post('/', saleValidators, async (req: Request, res: Response) => {
         INSERT INTO warehouse_sales (
           warehouse_id, created_by, customer_name, customer_phone,
           customer_address, payment_method, total_amount, amount_paid,
-          discounted_total, doc_type, notes, sale_date
+          discounted_total, doc_type, doc_label, notes, sale_date
         ) VALUES (
           ${warehouseId ?? null},
           ${req.userId!},
@@ -201,6 +203,7 @@ router.post('/', saleValidators, async (req: Request, res: Response) => {
           ${Number(amountPaid)},
           ${discTotal},
           ${docType},
+          ${docLabel?.trim() || null},
           ${notes ?? null},
           ${saleDate ?? sql`CURRENT_DATE`}
         )
@@ -285,7 +288,7 @@ router.put('/:id', saleValidators, async (req: Request, res: Response) => {
     const {
       warehouseId, customerName, customerPhone, customerAddress,
       paymentMethod = 'cash', amountPaid = 0,
-      docType = 'invoice', notes, saleDate, items, discountedTotal,
+      docType = 'invoice', docLabel, notes, saleDate, items, discountedTotal,
     } = req.body;
 
     if (!customerName?.trim())
@@ -369,6 +372,7 @@ router.put('/:id', saleValidators, async (req: Request, res: Response) => {
           amount_paid      = ${Number(amountPaid)},
           discounted_total = ${discTotal},
           doc_type         = ${docType},
+          doc_label        = ${docLabel?.trim() || null},
           notes            = ${notes ?? null},
           sale_date        = ${saleDate ?? sql`CURRENT_DATE`},
           updated_at       = now()
