@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { body, validationResult } from 'express-validator';
 import sql from '../db/client.js';
 import type { WarehouseSaleRow, WarehouseSaleItemRow } from '../db/types.js';
 import { num } from '../db/types.js';
@@ -112,9 +113,25 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
+const saleValidators = [
+  body('customerName').trim().notEmpty().isLength({ max: 200 }),
+  body('customerPhone').optional({ nullable: true }).trim().isLength({ max: 30 }),
+  body('customerAddress').optional({ nullable: true }).trim().isLength({ max: 500 }),
+  body('notes').optional({ nullable: true }).trim().isLength({ max: 1000 }),
+  body('paymentMethod').isIn(['cash', 'pos', 'transfer', 'credit']),
+  body('docType').isIn(['invoice', 'waybill']),
+  body('items').isArray({ min: 1 }),
+  body('items.*.productName').trim().notEmpty().isLength({ max: 300 }),
+  body('items.*.quantity').isFloat({ min: 0.01 }),
+  body('items.*.unitPrice').isFloat({ min: 0 }),
+  body('items.*.subtotal').isFloat({ min: 0 }),
+];
+
 // ── POST /api/warehouse-sales ─────────────────────────────────────────────────
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', saleValidators, async (req: Request, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
   try {
     const {
       warehouseId,       // primary/issuing warehouse (nullable)
@@ -261,7 +278,9 @@ router.post('/', async (req: Request, res: Response) => {
 
 // ── PUT /api/warehouse-sales/:id ─────────────────────────────────────────────
 
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', saleValidators, async (req: Request, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
   try {
     const {
       warehouseId, customerName, customerPhone, customerAddress,

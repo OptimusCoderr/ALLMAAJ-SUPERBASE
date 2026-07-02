@@ -120,12 +120,26 @@ app.use((req, _res, next) => {
 });
 
 // ── Health check ───────────────────────────────────────────────────────────────
+const SERVER_START = Date.now();
 app.get('/api/health', async (_req, res) => {
+  const uptimeSeconds = Math.floor((Date.now() - SERVER_START) / 1000);
   try {
-    await sql`SELECT 1`;
-    res.json({ status: 'ok', db: 'connected', timestamp: new Date().toISOString() });
-  } catch {
-    res.status(503).json({ status: 'error', db: 'disconnected' });
+    const [{ now }] = await sql<{ now: string }[]>`SELECT now()::text AS now`;
+    res.json({
+      status: 'ok',
+      db: 'connected',
+      dbTime: now,
+      uptimeSeconds,
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV ?? 'development',
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'error',
+      db: 'disconnected',
+      uptimeSeconds,
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
