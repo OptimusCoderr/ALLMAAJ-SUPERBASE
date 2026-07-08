@@ -44,20 +44,26 @@ router.post('/', adminOnly, [
 
 // ── Stock Requests (MUST be before /:id to avoid route conflict) ──────────────
 
-// Staff or admin creates a stock request
+// Staff or admin creates a stock request. Optionally pass fromBranchId to
+// request the stock be transferred from another branch instead of the
+// usual warehouse/others restock — still requires admin approval either way.
 //POST /api/branches/stock-requests
 // NEW
 router.post('/stock-requests', async (req: Request, res: Response) => {
   try {
-    const { productId, quantity, notes } = req.body;
+    const { productId, quantity, notes, fromBranchId } = req.body;
     const branchId = req.user?.role !== 'admin' && req.user?.branchId
       ? req.user.branchId
       : req.body.branchId;
     if (!branchId || !productId || !quantity) return sendError(res, 400, 'branchId, productId and quantity are required');
-    
+    if (fromBranchId && fromBranchId === branchId) return sendError(res, 400, 'Source branch must be different from the destination branch');
+
     const [row] = await sql`
-      INSERT INTO stock_requests (branch_id, product_id, quantity, requested_by, requested_by_name, notes)
-      VALUES (${branchId}, ${productId}, ${Number(quantity)}, ${req.user!.id}, ${req.user!.fullName || req.user!.email}, ${notes ?? null})
+      INSERT INTO stock_requests (branch_id, product_id, quantity, requested_by, requested_by_name, notes, from_branch_id, source_type)
+      VALUES (
+        ${branchId}, ${productId}, ${Number(quantity)}, ${req.user!.id}, ${req.user!.fullName || req.user!.email}, ${notes ?? null},
+        ${fromBranchId ?? null}, ${fromBranchId ? 'branch' : null}::stock_source
+      )
       RETURNING *
     `;
     return sendResponse(res, 201, 'Stock request submitted', row);
@@ -68,10 +74,12 @@ router.post('/stock-requests', async (req: Request, res: Response) => {
 router.get('/stock-requests/mine', async (req: Request, res: Response) => {
   try {
     const rows = await sql`
-      SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit
+      SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit,
+             fb.name AS from_branch_name
       FROM stock_requests sr
       JOIN branches b ON b.id = sr.branch_id
       JOIN products p ON p.id = sr.product_id
+      LEFT JOIN branches fb ON fb.id = sr.from_branch_id
       WHERE sr.requested_by = ${req.user!.id}
       ORDER BY sr.created_at DESC
     `;
@@ -86,21 +94,23 @@ router.get('/stock-requests', adminOnly, async (req: Request, res: Response) => 
     const rows = status
       ? await sql`
           SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit,
-                 w.name AS warehouse_name
+                 w.name AS warehouse_name, fb.name AS from_branch_name
           FROM stock_requests sr
           JOIN branches b  ON b.id = sr.branch_id
           JOIN products p  ON p.id = sr.product_id
           LEFT JOIN warehouses w ON w.id = sr.warehouse_id
+          LEFT JOIN branches fb  ON fb.id = sr.from_branch_id
           WHERE sr.status = ${status as string}::stock_request_status
           ORDER BY sr.created_at DESC
         `
       : await sql`
           SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit,
-                 w.name AS warehouse_name
+                 w.name AS warehouse_name, fb.name AS from_branch_name
           FROM stock_requests sr
           JOIN branches b  ON b.id = sr.branch_id
           JOIN products p  ON p.id = sr.product_id
           LEFT JOIN warehouses w ON w.id = sr.warehouse_id
+          LEFT JOIN branches fb  ON fb.id = sr.from_branch_id
           ORDER BY sr.created_at DESC
         `;
     return sendResponse(res, 200, 'Requests fetched', rows);
@@ -109,13 +119,49 @@ router.get('/stock-requests', adminOnly, async (req: Request, res: Response) => 
 
 router.patch('/stock-requests/:id/approve', adminOnly, async (req: Request, res: Response) => {
   try {
-    const { sourceType, warehouseId } = req.body;
-    if (!sourceType) return sendError(res, 400, 'sourceType is required (warehouse or others)');
-    if (sourceType === 'warehouse' && !warehouseId) return sendError(res, 400, 'warehouseId is required when source is warehouse');
-
     const [request] = await sql`SELECT * FROM stock_requests WHERE id = ${req.params.id}`;
     if (!request) return sendError(res, 404, 'Request not found');
     if (request.status !== 'pending') return sendError(res, 400, 'Request is no longer pending');
+
+    // Branch-to-branch transfer: source branch was already chosen by the
+    // requester, admin just approves/rejects — no sourceType/warehouse to pick.
+    if (request.source_type === 'branch') {
+      if (!request.from_branch_id) return sendError(res, 400, 'Transfer request is missing a source branch');
+
+      const [fromStock] = await sql`
+        SELECT quantity FROM branch_stock WHERE branch_id = ${request.from_branch_id} AND product_id = ${request.product_id}
+      `;
+      if (!fromStock || Number(fromStock.quantity) < Number(request.quantity)) {
+        return sendError(res, 400, 'Insufficient stock at the source branch');
+      }
+
+      await sql`
+        UPDATE branch_stock SET quantity = quantity - ${Number(request.quantity)}, updated_at = now()
+        WHERE branch_id = ${request.from_branch_id} AND product_id = ${request.product_id}
+      `;
+      await sql`
+        INSERT INTO branch_stock (branch_id, product_id, quantity)
+        VALUES (${request.branch_id}, ${request.product_id}, ${Number(request.quantity)})
+        ON CONFLICT (branch_id, product_id)
+        DO UPDATE SET quantity = branch_stock.quantity + EXCLUDED.quantity, updated_at = now()
+      `;
+
+      const [updated] = await sql`
+        UPDATE stock_requests SET
+          status           = 'approved',
+          approved_by      = ${req.user!.id},
+          approved_by_name = ${req.user!.fullName || req.user!.email},
+          approved_at      = now(),
+          updated_at       = now()
+        WHERE id = ${req.params.id}
+        RETURNING *
+      `;
+      return sendResponse(res, 200, 'Transfer approved', updated);
+    }
+
+    const { sourceType, warehouseId } = req.body;
+    if (!sourceType) return sendError(res, 400, 'sourceType is required (warehouse or others)');
+    if (sourceType === 'warehouse' && !warehouseId) return sendError(res, 400, 'warehouseId is required when source is warehouse');
 
     if (sourceType === 'warehouse') {
       const [ws] = await sql`SELECT quantity FROM warehouse_stock WHERE warehouse_id = ${warehouseId} AND product_id = ${request.product_id}`;
@@ -220,7 +266,7 @@ router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
       SELECT
         (SELECT COUNT(*) FROM sales          WHERE branch_id = ${req.params.id})::int AS sales_count,
         (SELECT COUNT(*) FROM daily_reports  WHERE branch_id = ${req.params.id})::int AS reports_count,
-        (SELECT COUNT(*) FROM stock_requests WHERE branch_id = ${req.params.id})::int AS requests_count,
+        (SELECT COUNT(*) FROM stock_requests WHERE branch_id = ${req.params.id} OR from_branch_id = ${req.params.id})::int AS requests_count,
         (SELECT COUNT(*) FROM debtors        WHERE branch_id = ${req.params.id})::int AS debtors_count,
         (SELECT COUNT(*) FROM expenses       WHERE branch_id = ${req.params.id})::int AS expenses_count
     `;

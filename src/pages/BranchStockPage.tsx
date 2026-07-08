@@ -7,7 +7,7 @@ import type { Branch, Product } from '../lib/types';
 import {
   Search, Package, Plus, X, Check, Clock, CheckCircle, XCircle,
   RefreshCw, TrendingDown, AlertTriangle, DollarSign, ArrowUpDown,
-  Pencil, Trash2,
+  Pencil, Trash2, ArrowLeftRight,
 } from 'lucide-react';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -40,6 +40,8 @@ interface StockRequest {
   id: string; branch_id: string; branch_name: string; product_id: string;
   product_name: string; product_unit: string; quantity: number;
   requested_by_name: string; status: string; notes: string | null; created_at: string;
+  source_type: 'warehouse' | 'others' | 'branch' | null;
+  from_branch_id: string | null; from_branch_name: string | null;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -251,6 +253,7 @@ export default function BranchStockPage() {
 
   // Request Stock modal
   const [showReqModal, setShowReqModal]   = useState(false);
+  const [reqMode, setReqMode]             = useState<'restock' | 'transfer'>('restock');
   const [reqProductId, setReqProductId]   = useState('');
   const [reqQty, setReqQty]               = useState(1);
   const [reqNotes, setReqNotes]           = useState('');
@@ -261,6 +264,9 @@ export default function BranchStockPage() {
   const [reqSuggestions, setReqSuggestions] = useState<Product[]>([]);
   const [showReqDropdown, setShowReqDropdown] = useState(false);
   const reqInputRef = useRef<HTMLInputElement>(null);
+  const [reqFromBranchId, setReqFromBranchId] = useState('');
+  const [reqFromBranchStock, setReqFromBranchStock] = useState<StockItem[]>([]);
+  const [reqFromBranchStockLoading, setReqFromBranchStockLoading] = useState(false);
 
   // Add Stock modal (admin)
   const [showAddModal, setShowAddModal]   = useState(false);
@@ -302,6 +308,14 @@ export default function BranchStockPage() {
     () => new Map(stock.map(s => [s.productId, s.quantity])),
     [stock]
   );
+
+  const reqFromBranchStockMap = useMemo<Map<string, number>>(
+    () => new Map(reqFromBranchStock.map(s => [s.productId, s.quantity])),
+    [reqFromBranchStock]
+  );
+
+  const reqDestinationBranchId = isAdmin ? selectedBranch : (user?.branchId || '');
+  const transferBranchOptions = branches.filter(b => b._id !== reqDestinationBranchId);
 
   const tableCategories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -376,7 +390,8 @@ export default function BranchStockPage() {
   // Request form search
   function handleReqSearchChange(v: string) {
     setReqSearch(v); setReqProductId('');
-    const m = v.trim() ? getProductMatches(v, reqCategory) : [];
+    let m = v.trim() ? getProductMatches(v, reqCategory) : [];
+    if (reqMode === 'transfer') m = m.filter(p => reqFromBranchStockMap.has(p._id));
     setReqSuggestions(m); setShowReqDropdown(v.trim().length > 0);
   }
   function handleReqCategoryChange(cat: string) {
@@ -390,6 +405,29 @@ export default function BranchStockPage() {
   function resetReqSearch() {
     setReqSearch(''); setReqCategory('all'); setReqProductId('');
     setReqSuggestions([]); setShowReqDropdown(false);
+    setReqMode('restock'); setReqFromBranchId(''); setReqFromBranchStock([]);
+  }
+
+  function handleReqModeChange(mode: 'restock' | 'transfer') {
+    setReqMode(mode); setReqFromBranchId(''); setReqFromBranchStock([]);
+    setReqSearch(''); setReqProductId(''); setReqCategory('all');
+    setReqSuggestions([]); setShowReqDropdown(false);
+  }
+
+  async function handleReqFromBranchChange(branchId: string) {
+    setReqFromBranchId(branchId);
+    setReqSearch(''); setReqProductId(''); setReqSuggestions([]); setShowReqDropdown(false);
+    if (!branchId) { setReqFromBranchStock([]); return; }
+    setReqFromBranchStockLoading(true);
+    try {
+      const data = await authFetch(`/api/branches/${branchId}/stock`, token);
+      const rows = Array.isArray(data) ? data : [];
+      setReqFromBranchStock(rows.map((s: any) => ({
+        productId: s.product_id, quantity: Number(s.quantity), updatedAt: s.updated_at,
+        product: s.product ? { _id: s.product.id, id: s.product.id, name: s.product.name, unit: s.product.unit, category: s.product.category } : undefined,
+      })).filter((s: any) => s.product));
+    } catch {}
+    setReqFromBranchStockLoading(false);
   }
 
   // Add form search
@@ -476,16 +514,24 @@ export default function BranchStockPage() {
   async function submitRequest(e: React.FormEvent) {
     e.preventDefault();
     if (!reqProductId) { setReqError('Select a product'); return; }
+    if (reqMode === 'transfer' && !reqFromBranchId) { setReqError('Select a branch to transfer from'); return; }
+    if (reqMode === 'transfer') {
+      const available = reqFromBranchStockMap.get(reqProductId) ?? 0;
+      if (reqQty > available) { setReqError(`Only ${available} available at the source branch`); return; }
+    }
     setReqSaving(true); setReqError('');
     try {
       await authFetch('/api/branches/stock-requests', token, {
         method: 'POST',
-        body: JSON.stringify({ branchId: selectedBranch, productId: reqProductId, quantity: reqQty, notes: reqNotes }),
+        body: JSON.stringify({
+          branchId: selectedBranch, productId: reqProductId, quantity: reqQty, notes: reqNotes,
+          fromBranchId: reqMode === 'transfer' ? reqFromBranchId : undefined,
+        }),
       });
       setShowReqModal(false);
       setReqQty(1); setReqNotes(''); resetReqSearch();
       fetchMyRequests(); setTab('my-requests');
-      toast.success('Stock request submitted successfully');
+      toast.success(reqMode === 'transfer' ? 'Transfer request submitted successfully' : 'Stock request submitted successfully');
     } catch (err: any) { setReqError(err.message || 'Failed to submit'); }
     setReqSaving(false);
   }
@@ -539,17 +585,18 @@ export default function BranchStockPage() {
   async function approveRequest(e: React.FormEvent) {
     e.preventDefault();
     if (!approving) return;
-    if (approveSourceType === 'warehouse' && !approveWarehouseId) { setApproveError('Select a warehouse'); return; }
+    const isTransfer = approving.source_type === 'branch';
+    if (!isTransfer && approveSourceType === 'warehouse' && !approveWarehouseId) { setApproveError('Select a warehouse'); return; }
     setApproveSaving(true); setApproveError('');
     try {
       await authFetch(`/api/branches/stock-requests/${approving.id}/approve`, token, {
         method: 'PATCH',
-        body: JSON.stringify({ sourceType: approveSourceType, warehouseId: approveWarehouseId || null }),
+        body: JSON.stringify(isTransfer ? {} : { sourceType: approveSourceType, warehouseId: approveWarehouseId || null }),
       });
       const name = approving.product_name;
       setApproving(null);
       fetchRequests();
-      if (approving.branch_id === selectedBranch) fetchStock();
+      if (approving.branch_id === selectedBranch || approving.from_branch_id === selectedBranch) fetchStock();
       toast.success(`Approved request for ${name}`);
     } catch (err: any) { setApproveError(err.message || 'Failed to approve'); }
     setApproveSaving(false);
@@ -865,14 +912,27 @@ export default function BranchStockPage() {
           ) : (
             <div className="space-y-3">
               {filteredRequests.map(req => (
-                <div key={req.id} className="border border-slate-200 border-l-4 border-l-amber-400 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                <div key={req.id} className={`border border-slate-200 border-l-4 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${req.source_type === 'branch' ? 'border-l-blue-400' : 'border-l-amber-400'}`}>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="font-semibold text-slate-800">{req.product_name}</span>
                       <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{req.quantity} {req.product_unit}</span>
+                      {req.source_type === 'branch' && (
+                        <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                          <ArrowLeftRight className="w-3 h-3" />Transfer
+                        </span>
+                      )}
                       <StatusBadge status={req.status} />
                     </div>
-                    <p className="text-sm text-slate-500">Branch: <span className="font-medium text-slate-700">{req.branch_name}</span></p>
+                    {req.source_type === 'branch' ? (
+                      <p className="text-sm text-slate-500">
+                        <span className="font-medium text-slate-700">{req.from_branch_name}</span>
+                        {' → '}
+                        <span className="font-medium text-slate-700">{req.branch_name}</span>
+                      </p>
+                    ) : (
+                      <p className="text-sm text-slate-500">Branch: <span className="font-medium text-slate-700">{req.branch_name}</span></p>
+                    )}
                     <p className="text-sm text-slate-500">
                       By <span className="font-medium text-slate-700">{req.requested_by_name}</span>
                       {' · '}
@@ -934,7 +994,17 @@ export default function BranchStockPage() {
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="font-semibold text-slate-800">{req.product_name}</span>
                         <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{req.quantity} {req.product_unit}</span>
+                        {req.source_type === 'branch' && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                            <ArrowLeftRight className="w-3 h-3" />Transfer
+                          </span>
+                        )}
                       </div>
+                      {req.source_type === 'branch' && (
+                        <p className="text-sm text-slate-500 mb-0.5">
+                          From <span className="font-medium text-slate-700">{req.from_branch_name}</span>
+                        </p>
+                      )}
                       <p className="text-xs text-slate-400" title={new Date(req.created_at).toLocaleString()}>
                         {relativeTime(req.created_at)}
                       </p>
@@ -951,36 +1021,63 @@ export default function BranchStockPage() {
 
       {/* ── Request Stock Modal ── */}
       {showReqModal && (
-        <Modal title="Request Stock" onClose={() => { setShowReqModal(false); resetReqSearch(); }}>
+        <Modal title={reqMode === 'transfer' ? 'Request Branch Transfer' : 'Request Stock'} onClose={() => { setShowReqModal(false); resetReqSearch(); }}>
           {reqError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{reqError}</div>}
           <form onSubmit={submitRequest} className="space-y-4">
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm">
+              <button type="button" onClick={() => handleReqModeChange('restock')}
+                className={`flex-1 py-2 font-medium transition-colors ${reqMode === 'restock' ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                Restock
+              </button>
+              <button type="button" onClick={() => handleReqModeChange('transfer')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 font-medium transition-colors ${reqMode === 'transfer' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                <ArrowLeftRight className="w-3.5 h-3.5" />Transfer from Branch
+              </button>
+            </div>
             {isAdmin && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
-                <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                <label className="block text-sm font-medium text-slate-700 mb-1">Destination Branch</label>
+                <select value={selectedBranch} onChange={e => { setSelectedBranch(e.target.value); if (reqMode === 'transfer') handleReqFromBranchChange(''); }}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
                   {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
                 </select>
               </div>
             )}
+            {reqMode === 'transfer' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Source Branch *</label>
+                <select value={reqFromBranchId} onChange={e => handleReqFromBranchChange(e.target.value)} required
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                  <option value="">Select branch to transfer from...</option>
+                  {transferBranchOptions.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                </select>
+                {reqFromBranchStockLoading && <p className="text-xs text-slate-400 mt-1">Loading stock…</p>}
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
               <ProductSearch
-                products={products}
-                stockMap={stockMap}
+                products={reqMode === 'transfer' ? reqFromBranchStock.map(s => s.product).filter(Boolean) : products}
+                stockMap={reqMode === 'transfer' ? reqFromBranchStockMap : stockMap}
                 value={reqSearch}
                 selectedId={reqProductId}
                 category={reqCategory}
                 suggestions={reqSuggestions}
                 showDropdown={showReqDropdown}
                 inputRef={reqInputRef}
-                accentColor="amber"
+                accentColor={reqMode === 'transfer' ? 'blue' : 'amber'}
                 onSearchChange={handleReqSearchChange}
                 onCategoryChange={handleReqCategoryChange}
                 onSelect={selectReqProduct}
                 onClearSearch={() => { setReqSearch(''); setReqProductId(''); setReqSuggestions([]); setShowReqDropdown(false); }}
                 onDropdownShow={setShowReqDropdown}
               />
+              {reqMode === 'transfer' && !reqFromBranchId && (
+                <p className="text-xs text-slate-400 mt-1">Select a source branch first to search its stock.</p>
+              )}
+              {reqMode === 'transfer' && reqProductId && (
+                <p className="text-xs text-blue-600 mt-1">{reqFromBranchStockMap.get(reqProductId) ?? 0} available at source branch</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
@@ -998,8 +1095,8 @@ export default function BranchStockPage() {
               <button type="button" onClick={() => { setShowReqModal(false); resetReqSearch(); }}
                 className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
               <button type="submit" disabled={reqSaving}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
-                {reqSaving ? <Spinner /> : <Check className="w-4 h-4" />}Submit Request
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-white rounded-lg font-medium text-sm transition-colors ${reqMode === 'transfer' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
+                {reqSaving ? <Spinner /> : <Check className="w-4 h-4" />}{reqMode === 'transfer' ? 'Submit Transfer Request' : 'Submit Request'}
               </button>
             </div>
           </form>
@@ -1149,37 +1246,55 @@ export default function BranchStockPage() {
 
       {/* ── Approve Modal (admin) ── */}
       {approving && (
-        <Modal title="Approve Stock Request" onClose={() => setApproving(null)}>
+        <Modal title={approving.source_type === 'branch' ? 'Approve Branch Transfer' : 'Approve Stock Request'} onClose={() => setApproving(null)}>
           <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
             <p><span className="font-medium">{approving.product_name}</span> × {approving.quantity} {approving.product_unit}</p>
-            <p className="text-slate-500 text-xs mt-1">For {approving.branch_name} · Requested by {approving.requested_by_name}</p>
+            {approving.source_type === 'branch' ? (
+              <p className="text-slate-500 text-xs mt-1">
+                <span className="font-medium text-slate-700">{approving.from_branch_name}</span>
+                {' → '}
+                <span className="font-medium text-slate-700">{approving.branch_name}</span>
+                {' · '}Requested by {approving.requested_by_name}
+              </p>
+            ) : (
+              <p className="text-slate-500 text-xs mt-1">For {approving.branch_name} · Requested by {approving.requested_by_name}</p>
+            )}
           </div>
           {approveError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{approveError}</div>}
           <form onSubmit={approveRequest} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
-              <select value={approveSourceType} onChange={e => { setApproveSourceType(e.target.value); setApproveWarehouseId(''); }}
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
-                <option value="warehouse">From Warehouse</option>
-                <option value="others">Others (External)</option>
-              </select>
-            </div>
-            {approveSourceType === 'warehouse' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
-                <select value={approveWarehouseId} onChange={e => setApproveWarehouseId(e.target.value)} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
-                  <option value="">Select warehouse...</option>
-                  {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
-                </select>
-              </div>
+            {approving.source_type === 'branch' ? (
+              <p className="text-sm text-slate-500">
+                This will move <span className="font-semibold text-slate-700">{approving.quantity} {approving.product_unit}</span> of{' '}
+                <span className="font-semibold text-slate-700">{approving.product_name}</span> out of {approving.from_branch_name} stock and into {approving.branch_name} stock.
+              </p>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
+                  <select value={approveSourceType} onChange={e => { setApproveSourceType(e.target.value); setApproveWarehouseId(''); }}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                    <option value="warehouse">From Warehouse</option>
+                    <option value="others">Others (External)</option>
+                  </select>
+                </div>
+                {approveSourceType === 'warehouse' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
+                    <select value={approveWarehouseId} onChange={e => setApproveWarehouseId(e.target.value)} required
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                      <option value="">Select warehouse...</option>
+                      {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
+                    </select>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setApproving(null)}
                 className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
               <button type="submit" disabled={approveSaving}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
-                {approveSaving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}Approve & Add Stock
+                {approveSaving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}{approving.source_type === 'branch' ? 'Approve Transfer' : 'Approve & Add Stock'}
               </button>
             </div>
           </form>
