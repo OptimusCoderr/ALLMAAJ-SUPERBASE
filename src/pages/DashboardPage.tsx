@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { find, Collections, resetAllSalesData } from '../lib/api';
+import { find, Collections, resetAllSalesData, getAuthToken } from '../lib/api';
 import type { Sale, DailyReport, Debtor } from '../lib/types';
 import { SkeletonStatCard, Skeleton } from '../components/Skeleton';
 import {
   TrendingUp, TrendingDown, Clock, CheckCircle, DollarSign,
   CreditCard, Package, HandCoins, XCircle, ArrowUpDown, RefreshCw, Trash2,
+  AlertTriangle,
 } from 'lucide-react';
+
+const BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+
+interface LowStockItem {
+  branch_id: string; branch_name: string;
+  product_id: string; product_name: string; product_unit: string;
+  quantity: string | number;
+}
 
 interface Stats {
   todaySales: number;
@@ -42,6 +51,7 @@ const ROLE_BADGE: Record<string, string> = {
 export default function DashboardPage() {
   const { user } = useAuth();
   const [stats, setStats] = useState<Stats>(EMPTY);
+  const [lowStock, setLowStock] = useState<LowStockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -91,6 +101,7 @@ export default function DashboardPage() {
         find(Collections.DAILY_REPORTS, reportFilter),
         find(Collections.DEBTORS,       debtorFilter),
       ]);
+      fetchLowStock();
 
       const s = sales   as Sale[];
       const r = reports as DailyReport[];
@@ -123,6 +134,17 @@ export default function DashboardPage() {
       if (isRefresh) setRefreshing(false);
       else setLoading(false);
     }
+  }
+
+  async function fetchLowStock() {
+    try {
+      const token = getAuthToken() ?? '';
+      const res = await fetch(`${BASE}/api/branches/stock/low?threshold=20`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) setLowStock(Array.isArray(j?.data) ? j.data : []);
+    } catch {}
   }
 
   function openResetModal() {
@@ -436,6 +458,41 @@ export default function DashboardPage() {
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* ── Low Stock Alerts ── */}
+      {!loading && lowStock.length > 0 && (
+        <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-slate-100">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+              Low Stock Alerts
+            </h3>
+            <span className="text-xs text-slate-400">
+              {lowStock.length} item{lowStock.length !== 1 ? 's' : ''}
+              {user?.role === 'admin' && ` across ${new Set(lowStock.map(i => i.branch_id)).size} branch${new Set(lowStock.map(i => i.branch_id)).size !== 1 ? 'es' : ''}`}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
+            {lowStock.slice(0, 20).map(item => {
+              const qty = Number(item.quantity);
+              return (
+                <div key={`${item.branch_id}-${item.product_id}`} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-slate-50 border border-slate-100">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{item.product_name}</p>
+                    {user?.role === 'admin' && <p className="text-xs text-slate-400 truncate">{item.branch_name}</p>}
+                  </div>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${qty <= 5 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {qty} {item.product_unit}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {lowStock.length > 20 && (
+            <p className="text-xs text-slate-400 mt-3 text-center">+{lowStock.length - 20} more — visit Branch Stock to see all</p>
+          )}
         </div>
       )}
 

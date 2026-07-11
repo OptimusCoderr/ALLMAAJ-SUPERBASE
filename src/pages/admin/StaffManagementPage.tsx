@@ -121,6 +121,7 @@ export default function StaffManagementPage() {
     active:     staff.filter(u => u.isActive).length,
     inactive:   staff.filter(u => !u.isActive).length,
     admins:     staff.filter(u => u.role === 'admin').length,
+    managers:   staff.filter(u => u.role === 'manager').length,
     staffOnly:  staff.filter(u => u.role === 'staff').length,
     unassigned: staff.filter(u => u.isActive && !u.branchId).length,
   }), [staff]);
@@ -277,7 +278,7 @@ export default function StaffManagementPage() {
       </div>
 
       {/* ── Stats bar ──────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3 shadow-sm">
           <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
             <Users className="w-5 h-5 text-amber-600" />
@@ -303,6 +304,15 @@ export default function StaffManagementPage() {
           <div>
             <p className="text-2xl font-bold text-slate-800">{stats.admins}</p>
             <p className="text-xs text-slate-500">Admins</p>
+          </div>
+        </div>
+        <div className="bg-white border border-slate-100 rounded-xl p-4 flex items-center gap-3 shadow-sm">
+          <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center shrink-0">
+            <Shield className="w-5 h-5 text-purple-600" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-slate-800">{stats.managers}</p>
+            <p className="text-xs text-slate-500">Managers</p>
           </div>
         </div>
         <div className={`border rounded-xl p-4 flex items-center gap-3 shadow-sm ${
@@ -344,7 +354,7 @@ export default function StaffManagementPage() {
 
           {/* Role filter */}
           <div className="flex gap-1.5 shrink-0">
-            {(['all', 'admin', 'staff'] as const).map(r => (
+            {(['all', 'admin', 'manager', 'staff'] as const).map(r => (
               <button
                 key={r}
                 onClick={() => setRoleFilter(r)}
@@ -464,11 +474,11 @@ export default function StaffManagementPage() {
                     {/* Role */}
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${
-                        u.role === 'admin'
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-blue-100 text-blue-700'
+                        u.role === 'admin'   ? 'bg-red-100 text-red-700'
+                        : u.role === 'manager' ? 'bg-purple-100 text-purple-700'
+                        :                        'bg-blue-100 text-blue-700'
                       }`}>
-                        {u.role === 'admin' ? '⚡ Admin' : 'Staff'}
+                        {u.role === 'admin' ? '⚡ Admin' : u.role === 'manager' ? 'Manager' : 'Staff'}
                       </span>
                     </td>
 
@@ -480,11 +490,11 @@ export default function StaffManagementPage() {
                             {branchMap[u.branchId]}
                           </span>
                         : <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            u.isActive && u.role === 'staff'
+                            u.isActive && u.role !== 'admin'
                               ? 'bg-amber-100 text-amber-700'
                               : 'text-slate-300'
                           }`}>
-                            {u.isActive && u.role === 'staff' ? 'Unassigned' : '—'}
+                            {u.isActive && u.role !== 'admin' ? 'Unassigned' : '—'}
                           </span>}
                     </td>
 
@@ -547,6 +557,8 @@ export default function StaffManagementPage() {
                   </td>
                   <td colSpan={4} className="px-4 py-2.5 text-xs text-slate-400 text-right">
                     {filtered.filter(u => u.role === 'admin').length} admin{filtered.filter(u => u.role === 'admin').length !== 1 ? 's' : ''}
+                    {' · '}
+                    {filtered.filter(u => u.role === 'manager').length} manager{filtered.filter(u => u.role === 'manager').length !== 1 ? 's' : ''}
                     {' · '}
                     {filtered.filter(u => u.role === 'staff').length} staff
                   </td>
@@ -684,10 +696,11 @@ export default function StaffManagementPage() {
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Role</label>
                   <select
                     value={form.role}
-                    onChange={e => setForm(p => ({ ...p, role: e.target.value as 'admin' | 'staff' }))}
+                    onChange={e => setForm(p => ({ ...p, role: e.target.value as 'admin' | 'manager' | 'staff' }))}
                     className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   >
                     <option value="staff">Staff</option>
+                    <option value="manager">Manager</option>
                     <option value="admin">Admin</option>
                   </select>
                 </div>
@@ -706,12 +719,14 @@ export default function StaffManagementPage() {
 
               {/* Role info box */}
               <div className={`p-3 rounded-xl text-xs border ${
-                form.role === 'admin'
-                  ? 'bg-red-50 border-red-100 text-red-700'
-                  : 'bg-blue-50 border-blue-100 text-blue-700'
+                form.role === 'admin'   ? 'bg-red-50 border-red-100 text-red-700'
+                : form.role === 'manager' ? 'bg-purple-50 border-purple-100 text-purple-700'
+                :                           'bg-blue-50 border-blue-100 text-blue-700'
               }`}>
                 {form.role === 'admin'
                   ? '⚡ Admins have full access: manage staff, approve reports, view all branches.'
+                  : form.role === 'manager'
+                  ? '🛡️ Managers can approve/reject daily reports and view sales reports/debtors, in addition to staff abilities.'
                   : '👤 Staff can record sales, submit daily reports, and manage their branch stock.'}
               </div>
 

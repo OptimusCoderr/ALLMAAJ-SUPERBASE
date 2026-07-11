@@ -15,6 +15,7 @@ import userRoutes      from './routes/users.js';
 import warehouseRoutes      from './routes/warehouses.js';
 import warehouseSaleRoutes  from './routes/warehouseSales.js';
 import specialCustomerRoutes from './routes/specialCustomers.js';
+import notificationRoutes    from './routes/notifications.js';
 
 import sql from './db/client.js';
 
@@ -153,6 +154,7 @@ app.use('/api/users',      userRoutes);
 app.use('/api/warehouses',      warehouseRoutes);
 app.use('/api/warehouse-sales', warehouseSaleRoutes);
 app.use('/api/special-customers', specialCustomerRoutes);
+app.use('/api/notifications',     notificationRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ message: 'Route not found' }));
