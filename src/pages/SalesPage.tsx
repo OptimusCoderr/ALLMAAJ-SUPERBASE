@@ -1712,7 +1712,7 @@ export default function SalesPage() {
                 { key: 'sales',    label: `Sales (${todaySales.length})` },
                 { key: 'expenses', label: `Expenses (${todayExpenses.length})` },
                 { key: 'debtors',  label: `Debtors (${todayDebtors.length})` },
-                ...(rejectedReports.length > 0 ? [{ key: 'rejected', label: `Rejected (${rejectedReports.length})` }] : []),
+                { key: 'rejected', label: `Rejected (${rejectedReports.length})` },
               ] as { key: RightTab; label: string }[]).map(t => (
                 <button key={t.key} onClick={() => setRightTab(t.key)}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
