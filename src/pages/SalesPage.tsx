@@ -3,11 +3,11 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useConfirm } from '../context/ConfirmContext';
 import { find, insertOne, updateOne, Collections } from '../lib/api';
-import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer } from '../lib/types';
+import type { Product, Branch, BranchStock, Expense, Debtor, SpecialCustomer, DailyReport } from '../lib/types';
 import {
   Plus, Trash2, ShoppingCart, CheckCircle, UserPlus, Receipt,
   Pencil, Lock, Send, AlertTriangle, X, Wrench, FileText, Search,
-  Scissors, ToggleLeft, ToggleRight, RefreshCw,
+  Scissors, ToggleLeft, ToggleRight, RefreshCw, XCircle, Clock, ArrowLeft,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ interface CartItem {
 interface ServiceCartItem { serviceName: string; serviceNotes: string; quantity: number; unitPrice: number }
 type Tab           = 'sale' | 'debtor' | 'expense';
 type PaymentMethod = 'cash' | 'pos' | 'part' | 'unpaid' | 'split';
+type RightTab       = 'sales' | 'expenses' | 'debtors' | 'rejected';
 
 const SERVICE_SUGGESTIONS = ['Monogramming', 'Large Format Printing', 'Sublimation', 'Graphics Design'];
 
@@ -117,8 +118,14 @@ export default function SalesPage() {
   const [todaySales, setTodaySales]       = useState<any[]>([]);
   const [todayExpenses, setTodayExpenses] = useState<Expense[]>([]);
   const [todayDebtors, setTodayDebtors]   = useState<Debtor[]>([]);
-  const [rightTab, setRightTab] = useState<'sales' | 'expenses' | 'debtors'>('sales');
+  const [rightTab, setRightTab] = useState<RightTab>('sales');
   const [refreshing, setRefreshing] = useState(false);
+
+  // The date whose sales/expenses are shown in the right panel — normally
+  // today, but switches to a rejected date while the staff fixes it.
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [activeDate, setActiveDate] = useState(todayStr);
+  const [branchReports, setBranchReports] = useState<DailyReport[]>([]);
 
   // Sale form
   const [selectedBranch, setSelectedBranch]   = useState(user?.branchId || '');
@@ -195,14 +202,39 @@ export default function SalesPage() {
     if (selectedBranch) {
       fetchStock(selectedBranch);
       fetchTodayData(selectedBranch);
+      fetchReportsMeta(selectedBranch);
     }
-  }, [selectedBranch]);
+  }, [selectedBranch, activeDate]);
 
   async function handleRefresh() {
     if (!selectedBranch || refreshing) return;
     setRefreshing(true);
-    await Promise.all([fetchStock(selectedBranch), fetchTodayData(selectedBranch)]);
+    await Promise.all([fetchStock(selectedBranch), fetchTodayData(selectedBranch), fetchReportsMeta(selectedBranch)]);
     setRefreshing(false);
+  }
+
+  // Rejected reports for this branch, and the report (if any) for the date
+  // currently shown in the right panel — drives the Rejected tab and the
+  // Pending/Rejected/Approved badge next to "Submit Daily Report".
+  async function fetchReportsMeta(branchId: string) {
+    const data = await find(Collections.DAILY_REPORTS, { branchId }, { limit: 30 });
+    setBranchReports(data as DailyReport[]);
+  }
+  function reportDateStr(r: DailyReport) {
+    return typeof r.reportDate === 'string' ? r.reportDate.split('T')[0] : r.reportDate;
+  }
+  const rejectedReports  = branchReports.filter(r => r.status === 'rejected');
+  const activeDateReport = branchReports.find(r => reportDateStr(r) === activeDate);
+
+  function viewRejectedDate(dateStr: string) {
+    setActiveDate(dateStr);
+    setRightTab('sales');
+    setSaleDate(dateStr);
+  }
+  function backToToday() {
+    setActiveDate(todayStr);
+    setRightTab('sales');
+    setSaleDate(todayStr);
   }
 
   // ── Product search autocomplete ───────────────────────────────────────────
@@ -298,12 +330,11 @@ export default function SalesPage() {
     setBranchStock(data as BranchStock[]);
   }
 
-  async function fetchTodayData(branchId: string) {
-    const today = new Date().toISOString().split('T')[0];
-    const start = `${today}T00:00:00.000Z`;
-    const end   = `${today}T23:59:59.999Z`;
+  async function fetchTodayData(branchId: string, date: string = activeDate) {
+    const start = `${date}T00:00:00.000Z`;
+    const end   = `${date}T23:59:59.999Z`;
     const [salesData, expensesData, debtorsData] = await Promise.all([
-      find(Collections.SALES,    { branchId, saleDate:    { $gte: start } }, { sort: { createdAt: -1 }, limit: 100 }),
+      find(Collections.SALES,    { branchId, saleDate:    { $gte: start, $lte: end } }, { sort: { createdAt: -1 }, limit: 100 }),
       find(Collections.EXPENSES, { branchId, expenseDate: { $gte: start, $lte: end } }),
       find(Collections.DEBTORS,  { branchId, isCleared: false }),
     ]);
@@ -533,9 +564,8 @@ export default function SalesPage() {
     setReportConfirmOpen(false);
     setReportLoading(true); setReportMsg(null);
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const start = `${today}T00:00:00.000Z`;
-      const end   = `${today}T23:59:59.999Z`;
+      const start = `${activeDate}T00:00:00.000Z`;
+      const end   = `${activeDate}T23:59:59.999Z`;
       const [expensesData, debtorsData] = await Promise.all([
         find(Collections.EXPENSES, { branchId: selectedBranch, expenseDate: { $gte: start, $lte: end } }),
         find(Collections.DEBTORS,  { branchId: selectedBranch, isCleared: false }),
@@ -561,7 +591,7 @@ export default function SalesPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({
-          branchId: selectedBranch, reportDate: today,
+          branchId: selectedBranch, reportDate: activeDate,
           totalCashSales, totalPosSales, totalUnpaidSales, totalPartSales,
           totalExpenses, netIncome, debtorCount, totalDebtorAmount,
         }),
@@ -573,6 +603,7 @@ export default function SalesPage() {
       setReportMsg({ ok: true, text: 'Daily report submitted! Awaiting admin review.' });
       setReportConfirmOpen(false);
       fetchTodayData(selectedBranch);
+      fetchReportsMeta(selectedBranch);
       setTimeout(() => setReportMsg(null), 6000);
     } catch (err: any) {
       setReportMsg({ ok: false, text: err.message || 'Failed to submit report' });
@@ -745,8 +776,15 @@ export default function SalesPage() {
     setLoading(false);
   }
 
+  // A sale can be edited/deleted if it's from today, or from a date whose
+  // daily report was rejected — staff use the Rejected tab to jump to that
+  // date and fix the records before resubmitting.
+  function isRejectedDateStr(dateStr: string) {
+    return rejectedReports.some(r => reportDateStr(r) === dateStr);
+  }
   function canEditOrDelete(sale: any) {
-    return isToday(sale.saleDate) && (isAdmin || sale.staffId === user?.id);
+    const saleDateStr = new Date(sale.saleDate).toISOString().split('T')[0];
+    return (isToday(sale.saleDate) || isRejectedDateStr(saleDateStr)) && (isAdmin || sale.staffId === user?.id);
   }
 
   // ── Edit Expense ──────────────────────────────────────────────────────────
@@ -1599,25 +1637,53 @@ export default function SalesPage() {
 
           {/* Submit daily report */}
           <div className="p-4 bg-gradient-to-br from-amber-50 to-orange-50 border-b border-amber-100">
-            <div className="flex items-start gap-2 mb-3">
-              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-700 font-medium leading-snug">
-                Sales lock at midnight — submit your report before 12:00 AM
-              </p>
-            </div>
+            {activeDate !== todayStr ? (
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <p className="text-xs text-red-700 font-medium leading-snug">
+                  Fixing records for {activeDate} — resubmit once corrected.
+                </p>
+                <button type="button" onClick={backToToday}
+                  className="shrink-0 flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-slate-800">
+                  <ArrowLeft className="w-3 h-3" />Today
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 mb-3">
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 font-medium leading-snug">
+                  Sales lock at midnight — submit your report before 12:00 AM
+                </p>
+              </div>
+            )}
             <button
               onClick={() => setReportConfirmOpen(true)}
-              disabled={reportLoading}
+              disabled={reportLoading || activeDateReport?.status === 'approved'}
               className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white text-sm font-bold rounded-xl transition-colors shadow-sm">
               {reportLoading
                 ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 : <Send className="w-4 h-4" />}
-              {reportLoading ? 'Submitting…' : 'Submit Daily Report'}
+              {reportLoading ? 'Submitting…' : activeDateReport?.status === 'rejected' ? 'Resubmit Report' : 'Submit Daily Report'}
             </button>
             {reportMsg && (
               <p className={`text-xs font-medium mt-2 text-center ${reportMsg.ok ? 'text-green-700' : 'text-red-600'}`}>
                 {reportMsg.text}
               </p>
+            )}
+            {activeDateReport && (
+              <div className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg mt-2 ${
+                activeDateReport.status === 'approved' ? 'bg-green-100 text-green-700' :
+                activeDateReport.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                                                          'bg-amber-100 text-amber-700'
+              }`}>
+                {activeDateReport.status === 'approved' ? <CheckCircle className="w-3.5 h-3.5" /> :
+                 activeDateReport.status === 'rejected' ? <XCircle className="w-3.5 h-3.5" />    :
+                                                           <Clock className="w-3.5 h-3.5" />}
+                {activeDateReport.status === 'approved' ? 'Approved' :
+                 activeDateReport.status === 'rejected' ? 'Rejected' : 'Pending review'}
+              </div>
+            )}
+            {activeDateReport?.status === 'rejected' && activeDateReport.reviewNotes && (
+              <p className="text-xs text-red-600 italic mt-1">"{activeDateReport.reviewNotes}"</p>
             )}
           </div>
 
@@ -1646,10 +1712,13 @@ export default function SalesPage() {
                 { key: 'sales',    label: `Sales (${todaySales.length})` },
                 { key: 'expenses', label: `Expenses (${todayExpenses.length})` },
                 { key: 'debtors',  label: `Debtors (${todayDebtors.length})` },
-              ] as const).map(t => (
+                ...(rejectedReports.length > 0 ? [{ key: 'rejected', label: `Rejected (${rejectedReports.length})` }] : []),
+              ] as { key: RightTab; label: string }[]).map(t => (
                 <button key={t.key} onClick={() => setRightTab(t.key)}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                    rightTab === t.key ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    rightTab === t.key
+                      ? (t.key === 'rejected' ? 'bg-red-500 text-white' : 'bg-amber-500 text-white')
+                      : (t.key === 'rejected' ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')
                   }`}>
                   {t.label}
                 </button>
@@ -1667,18 +1736,48 @@ export default function SalesPage() {
 
           <div className="p-3">
 
+            {/* REJECTED REPORTS LIST */}
+            {rightTab === 'rejected' && (
+              rejectedReports.length === 0 ? (
+                <div className="text-center py-8">
+                  <XCircle className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                  <p className="text-slate-400 text-sm">No rejected reports</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[550px] overflow-y-auto pr-0.5">
+                  {rejectedReports.map(r => {
+                    const dateStr = reportDateStr(r);
+                    return (
+                      <div key={(r as any)._id || (r as any).id} className="p-3 bg-red-50 rounded-xl border border-red-100">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="font-bold text-slate-800 text-sm">{dateStr}</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">Rejected</span>
+                        </div>
+                        {r.reviewedByName && <p className="text-xs text-slate-500 mb-0.5">By {r.reviewedByName}</p>}
+                        {r.reviewNotes && <p className="text-xs text-red-600 italic mb-2">"{r.reviewNotes}"</p>}
+                        <button onClick={() => viewRejectedDate(dateStr)}
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg font-semibold transition-colors">
+                          <Pencil className="w-3 h-3" />Edit Records
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
+
             {/* SALES LIST */}
             {rightTab === 'sales' && (
               todaySales.length === 0 ? (
                 <div className="text-center py-8">
                   <ShoppingCart className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-                  <p className="text-slate-400 text-sm">No sales recorded today</p>
+                  <p className="text-slate-400 text-sm">No sales recorded {activeDate === todayStr ? 'today' : `for ${activeDate}`}</p>
                 </div>
               ) : (
                 <div className="space-y-2 max-h-[550px] overflow-y-auto pr-0.5">
                   {todaySales.map(s => {
-                    const locked   = !isToday(s.saleDate);
                     const editable = canEditOrDelete(s);
+                    const locked   = !isToday(s.saleDate) && !editable;
                     const items    = safeItems(s.items);
                     return (
                       <div key={s._id || s.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
