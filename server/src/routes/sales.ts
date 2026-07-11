@@ -255,12 +255,19 @@ router.put(
       const [existing] = await sql<SaleRow[]>`SELECT * FROM sales WHERE id = ${saleId}`;
       if (!existing) return sendError(res, 404, 'Sale not found');
 
-      const [dateCheck] = await sql<[{ is_today: boolean }]>`
-        SELECT (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
-               = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today
+      const [dateCheck] = await sql<[{ is_today: boolean; is_rejected_day: boolean }]>`
+        SELECT
+          (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
+            = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today,
+          EXISTS (
+            SELECT 1 FROM daily_reports dr
+            WHERE dr.branch_id = ${existing.branch_id}
+              AND dr.report_date = (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
+              AND dr.status = 'rejected'
+          ) AS is_rejected_day
       `;
-      if (!dateCheck.is_today)
-        return sendError(res, 403, 'Sales can only be edited on the day they were made. This sale is locked.');
+      if (!dateCheck.is_today && !dateCheck.is_rejected_day)
+        return sendError(res, 403, 'Sales can only be edited on the day they were made, or a day whose report was rejected. This sale is locked.');
 
       if (!isAdmin && existing.staff_id !== req.userId)
         return sendError(res, 403, 'You can only edit your own sales.');
@@ -424,12 +431,19 @@ router.delete('/:id', async (req: Request, res: Response) => {
     const [existing] = await sql<SaleRow[]>`SELECT * FROM sales WHERE id = ${saleId}`;
     if (!existing) return sendError(res, 404, 'Sale not found');
 
-    const [dateCheck] = await sql<[{ is_today: boolean }]>`
-      SELECT (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
-             = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today
+    const [dateCheck] = await sql<[{ is_today: boolean; is_rejected_day: boolean }]>`
+      SELECT
+        (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
+          = (NOW() AT TIME ZONE 'Africa/Lagos')::date AS is_today,
+        EXISTS (
+          SELECT 1 FROM daily_reports dr
+          WHERE dr.branch_id = ${existing.branch_id}
+            AND dr.report_date = (${existing.sale_date}::timestamptz AT TIME ZONE 'Africa/Lagos')::date
+            AND dr.status = 'rejected'
+        ) AS is_rejected_day
     `;
-    if (!dateCheck.is_today)
-      return sendError(res, 403, 'Sales can only be deleted on the day they were made. This sale is locked.');
+    if (!dateCheck.is_today && !dateCheck.is_rejected_day)
+      return sendError(res, 403, 'Sales can only be deleted on the day they were made, or a day whose report was rejected. This sale is locked.');
 
     if (!isAdmin && existing.staff_id !== req.userId)
       return sendError(res, 403, 'You can only delete your own sales.');
