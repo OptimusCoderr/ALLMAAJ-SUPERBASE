@@ -7,7 +7,7 @@ import type { Branch, Product } from '../lib/types';
 import {
   Search, Package, Plus, X, Check, Clock, CheckCircle, XCircle,
   RefreshCw, TrendingDown, AlertTriangle, DollarSign, ArrowUpDown,
-  Pencil, Trash2,
+  Pencil, Trash2, ArrowLeftRight,
 } from 'lucide-react';
 
 const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -36,10 +36,22 @@ function relativeTime(dateStr: string) {
 }
 
 interface StockItem { productId: string; product: any; quantity: number; updatedAt: string; }
-interface StockRequest {
-  id: string; branch_id: string; branch_name: string; product_id: string;
-  product_name: string; product_unit: string; quantity: number;
-  requested_by_name: string; status: string; notes: string | null; created_at: string;
+
+// A cart line while building a request in the modal, before it's submitted
+interface CartItem { productId: string; productName: string; productUnit: string; quantity: number; }
+
+// A submitted request/transfer batch — one or more product line-items approved/rejected together
+interface StockRequestItem { id: string; productId: string; productName: string; productUnit: string; quantity: number; }
+interface StockRequestBatch {
+  batchId: string; branchId: string; branchName: string;
+  fromBranchId: string | null; fromBranchName: string | null;
+  sourceType: 'warehouse' | 'others' | 'branch' | null;
+  warehouseId: string | null; warehouseName: string | null;
+  requestedBy: string; requestedByName: string;
+  notes: string | null; status: string;
+  approvedBy: string | null; approvedByName: string | null; approvedAt: string | null;
+  createdAt: string;
+  items: StockRequestItem[];
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -229,9 +241,9 @@ export default function BranchStockPage() {
   const [stockLoading, setStockLoading] = useState(false);
   const [products, setProducts]     = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
-  const [requests, setRequests]     = useState<StockRequest[]>([]);
+  const [requests, setRequests]     = useState<StockRequestBatch[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
-  const [myRequests, setMyRequests] = useState<StockRequest[]>([]);
+  const [myRequests, setMyRequests] = useState<StockRequestBatch[]>([]);
   const [myRequestsLoading, setMyRequestsLoading] = useState(false);
 
   // ── UI state ─────────────────────────────────────────────────────────────────
@@ -251,6 +263,7 @@ export default function BranchStockPage() {
 
   // Request Stock modal
   const [showReqModal, setShowReqModal]   = useState(false);
+  const [reqMode, setReqMode]             = useState<'restock' | 'transfer'>('restock');
   const [reqProductId, setReqProductId]   = useState('');
   const [reqQty, setReqQty]               = useState(1);
   const [reqNotes, setReqNotes]           = useState('');
@@ -261,6 +274,10 @@ export default function BranchStockPage() {
   const [reqSuggestions, setReqSuggestions] = useState<Product[]>([]);
   const [showReqDropdown, setShowReqDropdown] = useState(false);
   const reqInputRef = useRef<HTMLInputElement>(null);
+  const [reqFromBranchId, setReqFromBranchId] = useState('');
+  const [reqFromBranchStock, setReqFromBranchStock] = useState<StockItem[]>([]);
+  const [reqFromBranchStockLoading, setReqFromBranchStockLoading] = useState(false);
+  const [reqItems, setReqItems]           = useState<CartItem[]>([]);
 
   // Add Stock modal (admin)
   const [showAddModal, setShowAddModal]   = useState(false);
@@ -285,7 +302,7 @@ export default function BranchStockPage() {
   const [editError, setEditError]         = useState('');
 
   // Approve modal (admin)
-  const [approving, setApproving]         = useState<StockRequest | null>(null);
+  const [approving, setApproving]         = useState<StockRequestBatch | null>(null);
   const [approveSourceType, setApproveSourceType] = useState('warehouse');
   const [approveWarehouseId, setApproveWarehouseId] = useState('');
   const [approveSaving, setApproveSaving] = useState(false);
@@ -302,6 +319,14 @@ export default function BranchStockPage() {
     () => new Map(stock.map(s => [s.productId, s.quantity])),
     [stock]
   );
+
+  const reqFromBranchStockMap = useMemo<Map<string, number>>(
+    () => new Map(reqFromBranchStock.map(s => [s.productId, s.quantity])),
+    [reqFromBranchStock]
+  );
+
+  const reqDestinationBranchId = isAdmin ? selectedBranch : (user?.branchId || '');
+  const transferBranchOptions = branches.filter(b => b._id !== reqDestinationBranchId);
 
   const tableCategories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -335,12 +360,12 @@ export default function BranchStockPage() {
 
   const requestBranches = useMemo(() => {
     const map = new Map<string, string>();
-    requests.forEach(r => map.set(r.branch_id, r.branch_name));
+    requests.forEach(r => map.set(r.branchId, r.branchName));
     return Array.from(map.entries());
   }, [requests]);
 
   const filteredRequests = requestsBranchFilter
-    ? requests.filter(r => r.branch_id === requestsBranchFilter)
+    ? requests.filter(r => r.branchId === requestsBranchFilter)
     : requests;
 
   const pendingMyRequests = myRequests.filter(r => r.status === 'pending').length;
@@ -376,7 +401,8 @@ export default function BranchStockPage() {
   // Request form search
   function handleReqSearchChange(v: string) {
     setReqSearch(v); setReqProductId('');
-    const m = v.trim() ? getProductMatches(v, reqCategory) : [];
+    let m = v.trim() ? getProductMatches(v, reqCategory) : [];
+    if (reqMode === 'transfer') m = m.filter(p => reqFromBranchStockMap.has(p._id));
     setReqSuggestions(m); setShowReqDropdown(v.trim().length > 0);
   }
   function handleReqCategoryChange(cat: string) {
@@ -388,8 +414,58 @@ export default function BranchStockPage() {
     setReqSuggestions([]); setShowReqDropdown(false);
   }
   function resetReqSearch() {
-    setReqSearch(''); setReqCategory('all'); setReqProductId('');
+    setReqSearch(''); setReqCategory('all'); setReqProductId(''); setReqQty(1);
     setReqSuggestions([]); setShowReqDropdown(false);
+    setReqMode('restock'); setReqFromBranchId(''); setReqFromBranchStock([]);
+    setReqItems([]);
+  }
+
+  function handleReqModeChange(mode: 'restock' | 'transfer') {
+    setReqMode(mode); setReqFromBranchId(''); setReqFromBranchStock([]);
+    setReqSearch(''); setReqProductId(''); setReqCategory('all'); setReqQty(1);
+    setReqSuggestions([]); setShowReqDropdown(false);
+    setReqItems([]);
+  }
+
+  async function handleReqFromBranchChange(branchId: string) {
+    setReqFromBranchId(branchId);
+    setReqSearch(''); setReqProductId(''); setReqSuggestions([]); setShowReqDropdown(false);
+    setReqItems([]);
+    if (!branchId) { setReqFromBranchStock([]); return; }
+    setReqFromBranchStockLoading(true);
+    try {
+      const data = await authFetch(`/api/branches/${branchId}/stock`, token);
+      const rows = Array.isArray(data) ? data : [];
+      setReqFromBranchStock(rows.map((s: any) => ({
+        productId: s.product_id, quantity: Number(s.quantity), updatedAt: s.updated_at,
+        product: s.product ? { _id: s.product.id, id: s.product.id, name: s.product.name, unit: s.product.unit, category: s.product.category } : undefined,
+      })).filter((s: any) => s.product));
+    } catch {}
+    setReqFromBranchStockLoading(false);
+  }
+
+  // Cart helpers for the multi-item Request Stock modal
+  function addReqItem() {
+    if (!reqProductId) { setReqError('Select a product first'); return; }
+    if (!reqQty || reqQty <= 0) { setReqError('Enter a valid quantity'); return; }
+    if (reqItems.some(i => i.productId === reqProductId)) {
+      setReqError('That product is already in the list — remove it first to change the quantity');
+      return;
+    }
+    if (reqMode === 'transfer') {
+      const available = reqFromBranchStockMap.get(reqProductId) ?? 0;
+      if (reqQty > available) { setReqError(`Only ${available} available at the source branch`); return; }
+    }
+    const pool = reqMode === 'transfer' ? reqFromBranchStock.map(s => s.product).filter(Boolean) : products;
+    const product = pool.find((p: any) => p._id === reqProductId);
+    if (!product) return;
+    setReqItems(items => [...items, { productId: reqProductId, productName: product.name, productUnit: product.unit, quantity: reqQty }]);
+    setReqError('');
+    setReqSearch(''); setReqProductId(''); setReqQty(1); setReqSuggestions([]); setShowReqDropdown(false);
+  }
+
+  function removeReqItem(productId: string) {
+    setReqItems(items => items.filter(i => i.productId !== productId));
   }
 
   // Add form search
@@ -475,17 +551,40 @@ export default function BranchStockPage() {
 
   async function submitRequest(e: React.FormEvent) {
     e.preventDefault();
-    if (!reqProductId) { setReqError('Select a product'); return; }
+    // Fold in whatever's currently in the product/qty fields as one last item,
+    // so a single-product request doesn't require clicking "Add Item" first.
+    const items = [...reqItems];
+    if (reqProductId) {
+      if (items.some(i => i.productId === reqProductId)) { setReqError('That product is already in the list'); return; }
+      if (!reqQty || reqQty <= 0) { setReqError('Enter a valid quantity'); return; }
+      if (reqMode === 'transfer') {
+        const available = reqFromBranchStockMap.get(reqProductId) ?? 0;
+        if (reqQty > available) { setReqError(`Only ${available} available at the source branch`); return; }
+      }
+      const pool = reqMode === 'transfer' ? reqFromBranchStock.map(s => s.product).filter(Boolean) : products;
+      const product = pool.find((p: any) => p._id === reqProductId);
+      if (product) items.push({ productId: reqProductId, productName: product.name, productUnit: product.unit, quantity: reqQty });
+    }
+    if (items.length === 0) { setReqError('Add at least one product'); return; }
+    if (reqMode === 'transfer' && !reqFromBranchId) { setReqError('Select a branch to transfer from'); return; }
+
     setReqSaving(true); setReqError('');
     try {
       await authFetch('/api/branches/stock-requests', token, {
         method: 'POST',
-        body: JSON.stringify({ branchId: selectedBranch, productId: reqProductId, quantity: reqQty, notes: reqNotes }),
+        body: JSON.stringify({
+          branchId: selectedBranch, notes: reqNotes,
+          fromBranchId: reqMode === 'transfer' ? reqFromBranchId : undefined,
+          items: items.map(i => ({ productId: i.productId, quantity: i.quantity })),
+        }),
       });
       setShowReqModal(false);
-      setReqQty(1); setReqNotes(''); resetReqSearch();
+      setReqNotes(''); resetReqSearch();
       fetchMyRequests(); setTab('my-requests');
-      toast.success('Stock request submitted successfully');
+      const itemWord = items.length === 1 ? 'item' : 'items';
+      toast.success(reqMode === 'transfer'
+        ? `Transfer request submitted (${items.length} ${itemWord})`
+        : `Stock request submitted (${items.length} ${itemWord})`);
     } catch (err: any) { setReqError(err.message || 'Failed to submit'); }
     setReqSaving(false);
   }
@@ -539,27 +638,29 @@ export default function BranchStockPage() {
   async function approveRequest(e: React.FormEvent) {
     e.preventDefault();
     if (!approving) return;
-    if (approveSourceType === 'warehouse' && !approveWarehouseId) { setApproveError('Select a warehouse'); return; }
+    const isTransfer = approving.sourceType === 'branch';
+    if (!isTransfer && approveSourceType === 'warehouse' && !approveWarehouseId) { setApproveError('Select a warehouse'); return; }
     setApproveSaving(true); setApproveError('');
     try {
-      await authFetch(`/api/branches/stock-requests/${approving.id}/approve`, token, {
+      await authFetch(`/api/branches/stock-requests/${approving.batchId}/approve`, token, {
         method: 'PATCH',
-        body: JSON.stringify({ sourceType: approveSourceType, warehouseId: approveWarehouseId || null }),
+        body: JSON.stringify(isTransfer ? {} : { sourceType: approveSourceType, warehouseId: approveWarehouseId || null }),
       });
-      const name = approving.product_name;
+      const count = approving.items.length;
       setApproving(null);
       fetchRequests();
-      if (approving.branch_id === selectedBranch) fetchStock();
-      toast.success(`Approved request for ${name}`);
+      if (approving.branchId === selectedBranch || approving.fromBranchId === selectedBranch) fetchStock();
+      toast.success(`Approved ${count} item${count !== 1 ? 's' : ''}`);
     } catch (err: any) { setApproveError(err.message || 'Failed to approve'); }
     setApproveSaving(false);
   }
 
-  async function rejectRequest(req: StockRequest) {
-    if (!await confirm({ title: 'Reject Request', message: `Reject stock request for "${req.product_name}" at ${req.branch_name}?`, confirmText: 'Reject', danger: true })) return;
+  async function rejectRequest(req: StockRequestBatch) {
+    const count = req.items.length;
+    if (!await confirm({ title: 'Reject Request', message: `Reject this request (${count} item${count !== 1 ? 's' : ''}) at ${req.branchName}?`, confirmText: 'Reject', danger: true })) return;
     try {
-      await authFetch(`/api/branches/stock-requests/${req.id}/reject`, token, { method: 'PATCH' });
-      fetchRequests(); toast.error(`Rejected request for ${req.product_name}`);
+      await authFetch(`/api/branches/stock-requests/${req.batchId}/reject`, token, { method: 'PATCH' });
+      fetchRequests(); toast.error(`Rejected ${count} item${count !== 1 ? 's' : ''}`);
     } catch (err: any) { toast.error(err.message || 'Failed to reject'); }
   }
 
@@ -865,18 +966,40 @@ export default function BranchStockPage() {
           ) : (
             <div className="space-y-3">
               {filteredRequests.map(req => (
-                <div key={req.id} className="border border-slate-200 border-l-4 border-l-amber-400 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-semibold text-slate-800">{req.product_name}</span>
-                      <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{req.quantity} {req.product_unit}</span>
+                <div key={req.batchId} className={`border border-slate-200 border-l-4 rounded-xl p-4 flex flex-col sm:flex-row sm:items-start gap-4 ${req.sourceType === 'branch' ? 'border-l-blue-400' : 'border-l-amber-400'}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                      <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
+                        {req.items.length} item{req.items.length !== 1 ? 's' : ''}
+                      </span>
+                      {req.sourceType === 'branch' && (
+                        <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                          <ArrowLeftRight className="w-3 h-3" />Transfer
+                        </span>
+                      )}
                       <StatusBadge status={req.status} />
                     </div>
-                    <p className="text-sm text-slate-500">Branch: <span className="font-medium text-slate-700">{req.branch_name}</span></p>
+                    {req.sourceType === 'branch' ? (
+                      <p className="text-sm text-slate-500 mb-1.5">
+                        <span className="font-medium text-slate-700">{req.fromBranchName}</span>
+                        {' → '}
+                        <span className="font-medium text-slate-700">{req.branchName}</span>
+                      </p>
+                    ) : (
+                      <p className="text-sm text-slate-500 mb-1.5">Branch: <span className="font-medium text-slate-700">{req.branchName}</span></p>
+                    )}
+                    <div className="space-y-1 mb-1.5">
+                      {req.items.map(item => (
+                        <div key={item.id} className="flex items-center gap-2 text-sm">
+                          <span className="font-medium text-slate-800">{item.productName}</span>
+                          <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{item.quantity} {item.productUnit}</span>
+                        </div>
+                      ))}
+                    </div>
                     <p className="text-sm text-slate-500">
-                      By <span className="font-medium text-slate-700">{req.requested_by_name}</span>
+                      By <span className="font-medium text-slate-700">{req.requestedByName}</span>
                       {' · '}
-                      <span title={new Date(req.created_at).toLocaleString()}>{relativeTime(req.created_at)}</span>
+                      <span title={new Date(req.createdAt).toLocaleString()}>{relativeTime(req.createdAt)}</span>
                     </p>
                     {req.notes && <p className="text-xs text-slate-400 mt-1 italic">"{req.notes}"</p>}
                   </div>
@@ -922,7 +1045,7 @@ export default function BranchStockPage() {
           ) : (
             <div className="space-y-3">
               {myRequests.map(req => (
-                <div key={req.id} className={`border rounded-xl p-4 border-l-4 ${
+                <div key={req.batchId} className={`border rounded-xl p-4 border-l-4 ${
                   req.status === 'approved' || req.status === 'accepted'
                     ? 'border-slate-100 border-l-green-400'
                     : req.status === 'rejected'
@@ -930,13 +1053,32 @@ export default function BranchStockPage() {
                     : 'border-slate-200 border-l-amber-400'
                 }`}>
                   <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="font-semibold text-slate-800">{req.product_name}</span>
-                        <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{req.quantity} {req.product_unit}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                        <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
+                          {req.items.length} item{req.items.length !== 1 ? 's' : ''}
+                        </span>
+                        {req.sourceType === 'branch' && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                            <ArrowLeftRight className="w-3 h-3" />Transfer
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-400" title={new Date(req.created_at).toLocaleString()}>
-                        {relativeTime(req.created_at)}
+                      {req.sourceType === 'branch' && (
+                        <p className="text-sm text-slate-500 mb-1">
+                          From <span className="font-medium text-slate-700">{req.fromBranchName}</span>
+                        </p>
+                      )}
+                      <div className="space-y-1 mb-1">
+                        {req.items.map(item => (
+                          <div key={item.id} className="flex items-center gap-2 text-sm">
+                            <span className="font-medium text-slate-800">{item.productName}</span>
+                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{item.quantity} {item.productUnit}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-slate-400" title={new Date(req.createdAt).toLocaleString()}>
+                        {relativeTime(req.createdAt)}
                       </p>
                       {req.notes && <p className="text-xs text-slate-500 mt-1 italic">"{req.notes}"</p>}
                     </div>
@@ -951,43 +1093,100 @@ export default function BranchStockPage() {
 
       {/* ── Request Stock Modal ── */}
       {showReqModal && (
-        <Modal title="Request Stock" onClose={() => { setShowReqModal(false); resetReqSearch(); }}>
+        <Modal title={reqMode === 'transfer' ? 'Request Branch Transfer' : 'Request Stock'} onClose={() => { setShowReqModal(false); resetReqSearch(); }}>
           {reqError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{reqError}</div>}
           <form onSubmit={submitRequest} className="space-y-4">
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm">
+              <button type="button" onClick={() => handleReqModeChange('restock')}
+                className={`flex-1 py-2 font-medium transition-colors ${reqMode === 'restock' ? 'bg-amber-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                Restock
+              </button>
+              <button type="button" onClick={() => handleReqModeChange('transfer')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 font-medium transition-colors ${reqMode === 'transfer' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                <ArrowLeftRight className="w-3.5 h-3.5" />Transfer from Branch
+              </button>
+            </div>
             {isAdmin && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
-                <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                <label className="block text-sm font-medium text-slate-700 mb-1">Destination Branch</label>
+                <select value={selectedBranch} onChange={e => { setSelectedBranch(e.target.value); if (reqMode === 'transfer') handleReqFromBranchChange(''); }}
                   className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
                   {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
                 </select>
               </div>
             )}
+            {reqMode === 'transfer' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Source Branch *</label>
+                <select value={reqFromBranchId} onChange={e => handleReqFromBranchChange(e.target.value)} required
+                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                  <option value="">Select branch to transfer from...</option>
+                  {transferBranchOptions.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                </select>
+                {reqFromBranchStockLoading && <p className="text-xs text-slate-400 mt-1">Loading stock…</p>}
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Product *</label>
               <ProductSearch
-                products={products}
-                stockMap={stockMap}
+                products={reqMode === 'transfer' ? reqFromBranchStock.map(s => s.product).filter(Boolean) : products}
+                stockMap={reqMode === 'transfer' ? reqFromBranchStockMap : stockMap}
                 value={reqSearch}
                 selectedId={reqProductId}
                 category={reqCategory}
                 suggestions={reqSuggestions}
                 showDropdown={showReqDropdown}
                 inputRef={reqInputRef}
-                accentColor="amber"
+                accentColor={reqMode === 'transfer' ? 'blue' : 'amber'}
                 onSearchChange={handleReqSearchChange}
                 onCategoryChange={handleReqCategoryChange}
                 onSelect={selectReqProduct}
                 onClearSearch={() => { setReqSearch(''); setReqProductId(''); setReqSuggestions([]); setShowReqDropdown(false); }}
                 onDropdownShow={setShowReqDropdown}
               />
+              {reqMode === 'transfer' && !reqFromBranchId && (
+                <p className="text-xs text-slate-400 mt-1">Select a source branch first to search its stock.</p>
+              )}
+              {reqMode === 'transfer' && reqProductId && (
+                <p className="text-xs text-blue-600 mt-1">{reqFromBranchStockMap.get(reqProductId) ?? 0} available at source branch</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
-              <input type="number" min="0.01" step="0.01" value={reqQty}
-                onChange={e => setReqQty(Number(e.target.value))} required
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm" />
+              <div className="flex gap-2">
+                <input type="number" min="0.01" step="0.01" value={reqQty}
+                  onChange={e => setReqQty(Number(e.target.value))}
+                  className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm" />
+                <button type="button" onClick={addReqItem}
+                  className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium text-white shrink-0 transition-colors ${reqMode === 'transfer' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
+                  <Plus className="w-4 h-4" />Add Item
+                </button>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">Add each product you need, then submit the whole list in one request.</p>
             </div>
+
+            {reqItems.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Items to {reqMode === 'transfer' ? 'transfer' : 'request'} ({reqItems.length})
+                </label>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto border border-slate-200 rounded-lg p-2">
+                  {reqItems.map(item => (
+                    <div key={item.productId} className="flex items-center justify-between gap-2 bg-slate-50 rounded-lg px-3 py-2 text-sm">
+                      <span className="font-medium text-slate-800 truncate">{item.productName}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{item.quantity} {item.productUnit}</span>
+                        <button type="button" onClick={() => removeReqItem(item.productId)}
+                          className="text-slate-400 hover:text-red-500 transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
               <textarea value={reqNotes} onChange={e => setReqNotes(e.target.value)} rows={2}
@@ -998,8 +1197,8 @@ export default function BranchStockPage() {
               <button type="button" onClick={() => { setShowReqModal(false); resetReqSearch(); }}
                 className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
               <button type="submit" disabled={reqSaving}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium text-sm transition-colors">
-                {reqSaving ? <Spinner /> : <Check className="w-4 h-4" />}Submit Request
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-white rounded-lg font-medium text-sm transition-colors ${reqMode === 'transfer' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-amber-500 hover:bg-amber-600'}`}>
+                {reqSaving ? <Spinner /> : <Check className="w-4 h-4" />}{reqMode === 'transfer' ? 'Submit Transfer Request' : 'Submit Request'}
               </button>
             </div>
           </form>
@@ -1149,37 +1348,59 @@ export default function BranchStockPage() {
 
       {/* ── Approve Modal (admin) ── */}
       {approving && (
-        <Modal title="Approve Stock Request" onClose={() => setApproving(null)}>
+        <Modal title={approving.sourceType === 'branch' ? 'Approve Branch Transfer' : 'Approve Stock Request'} onClose={() => setApproving(null)}>
           <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
-            <p><span className="font-medium">{approving.product_name}</span> × {approving.quantity} {approving.product_unit}</p>
-            <p className="text-slate-500 text-xs mt-1">For {approving.branch_name} · Requested by {approving.requested_by_name}</p>
+            {approving.sourceType === 'branch' ? (
+              <p className="text-slate-500 text-xs mb-2">
+                <span className="font-medium text-slate-700">{approving.fromBranchName}</span>
+                {' → '}
+                <span className="font-medium text-slate-700">{approving.branchName}</span>
+                {' · '}Requested by {approving.requestedByName}
+              </p>
+            ) : (
+              <p className="text-slate-500 text-xs mb-2">For {approving.branchName} · Requested by {approving.requestedByName}</p>
+            )}
+            <div className="space-y-1 max-h-40 overflow-y-auto">
+              {approving.items.map(item => (
+                <p key={item.id}><span className="font-medium">{item.productName}</span> × {item.quantity} {item.productUnit}</p>
+              ))}
+            </div>
           </div>
           {approveError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{approveError}</div>}
           <form onSubmit={approveRequest} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
-              <select value={approveSourceType} onChange={e => { setApproveSourceType(e.target.value); setApproveWarehouseId(''); }}
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
-                <option value="warehouse">From Warehouse</option>
-                <option value="others">Others (External)</option>
-              </select>
-            </div>
-            {approveSourceType === 'warehouse' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
-                <select value={approveWarehouseId} onChange={e => setApproveWarehouseId(e.target.value)} required
-                  className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
-                  <option value="">Select warehouse...</option>
-                  {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
-                </select>
-              </div>
+            {approving.sourceType === 'branch' ? (
+              <p className="text-sm text-slate-500">
+                This will move {approving.items.length > 1 ? 'these items' : 'this item'} out of {approving.fromBranchName} stock and into {approving.branchName} stock.
+              </p>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
+                  <select value={approveSourceType} onChange={e => { setApproveSourceType(e.target.value); setApproveWarehouseId(''); }}
+                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                    <option value="warehouse">From Warehouse</option>
+                    <option value="others">Others (External)</option>
+                  </select>
+                </div>
+                {approveSourceType === 'warehouse' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
+                    <select value={approveWarehouseId} onChange={e => setApproveWarehouseId(e.target.value)} required
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                      <option value="">Select warehouse...</option>
+                      {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
+                    </select>
+                    <p className="text-xs text-slate-400 mt-1">All items in this request will be pulled from the same warehouse.</p>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={() => setApproving(null)}
                 className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
               <button type="submit" disabled={approveSaving}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
-                {approveSaving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}Approve & Add Stock
+                {approveSaving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}{approving.sourceType === 'branch' ? 'Approve Transfer' : 'Approve & Add Stock'}
               </button>
             </div>
           </form>

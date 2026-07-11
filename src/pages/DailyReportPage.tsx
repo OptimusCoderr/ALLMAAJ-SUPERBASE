@@ -130,6 +130,14 @@ export default function DailyReportPage() {
   const futureDate  = isFutureDate(reportDate);
   const hasData     = sales.length > 0 || expenses.length > 0 || debtors.length > 0;
 
+  // Rejected reports for dates other than the one currently selected — pastReports
+  // is fetched without a date filter, so this stays accurate no matter how many
+  // days have passed since the rejection.
+  const otherRejectedReports = pastReports.filter(r => {
+    const dateStr = typeof r.reportDate === 'string' ? r.reportDate.split('T')[0] : r.reportDate;
+    return r.status === 'rejected' && dateStr !== reportDate;
+  });
+
   async function submitReport() {
     if (!selectedBranch) { setError('Select a branch'); return; }
     if (futureDate)       { setError('Cannot submit a report for a future date'); return; }
@@ -200,6 +208,39 @@ export default function DailyReportPage() {
         <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-sm">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
           You're viewing a future date. No data will be shown and submission is disabled.
+        </div>
+      )}
+
+      {/* Persistent alert for rejected reports on OTHER dates — stays visible even after
+          the day has passed, since staff otherwise only sees a rejection while that
+          specific date happens to be selected. */}
+      {otherRejectedReports.length > 0 && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700">
+          <div className="flex items-start gap-3">
+            <XCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold">
+                {otherRejectedReports.length} report{otherRejectedReports.length !== 1 ? 's' : ''} rejected and awaiting correction
+              </p>
+              <div className="mt-2 space-y-2">
+                {otherRejectedReports.map(r => {
+                  const dateStr = typeof r.reportDate === 'string' ? r.reportDate.split('T')[0] : r.reportDate;
+                  return (
+                    <div key={r._id || (r as any).id} className="flex items-center justify-between gap-3 bg-white/60 rounded-lg px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{dateStr}{r.reviewedByName ? ` · rejected by ${r.reviewedByName}` : ''}</p>
+                        {r.reviewNotes && <p className="text-xs italic mt-0.5 truncate">"{r.reviewNotes}"</p>}
+                      </div>
+                      <button onClick={() => setReportDate(dateStr)}
+                        className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors">
+                        Fix Now
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

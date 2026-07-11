@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
+import { randomUUID } from 'crypto';
 import sql from '../db/client.js';
 import type { BranchRow, BranchStockRow, ProductRow } from '../db/types.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.js';
@@ -43,125 +44,250 @@ router.post('/', adminOnly, [
 });
 
 // ── Stock Requests (MUST be before /:id to avoid route conflict) ──────────────
+// A "batch" is one or more stock_requests rows sharing a batch_id — staff can
+// bundle several products into a single request/transfer, and admins
+// approve or reject the whole batch in one action.
 
-// Staff or admin creates a stock request
+// Group flat stock_requests rows (one per product) into batch objects with an items[] array.
+function groupIntoBatches(rows: any[]) {
+  const batches = new Map<string, any>();
+  for (const r of rows) {
+    let batch = batches.get(r.batch_id);
+    if (!batch) {
+      batch = {
+        batchId:         r.batch_id,
+        branchId:        r.branch_id,
+        branchName:      r.branch_name,
+        fromBranchId:    r.from_branch_id,
+        fromBranchName:  r.from_branch_name,
+        sourceType:      r.source_type,
+        warehouseId:     r.warehouse_id,
+        warehouseName:   r.warehouse_name,
+        requestedBy:     r.requested_by,
+        requestedByName: r.requested_by_name,
+        notes:           r.notes,
+        status:          r.status,
+        approvedBy:      r.approved_by,
+        approvedByName:  r.approved_by_name,
+        approvedAt:      r.approved_at,
+        createdAt:       r.created_at,
+        items:           [] as any[],
+      };
+      batches.set(r.batch_id, batch);
+    }
+    batch.items.push({
+      id: r.id, productId: r.product_id, productName: r.product_name,
+      productUnit: r.product_unit, quantity: Number(r.quantity),
+    });
+  }
+  return Array.from(batches.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+// Staff or admin creates a stock request with one or more product line-items.
+// Optionally pass fromBranchId to request the items be transferred from
+// another branch instead of the usual warehouse/others restock — still
+// requires admin approval either way.
 //POST /api/branches/stock-requests
-// NEW
 router.post('/stock-requests', async (req: Request, res: Response) => {
   try {
-    const { productId, quantity, notes } = req.body;
+    const { notes, fromBranchId } = req.body;
     const branchId = req.user?.role !== 'admin' && req.user?.branchId
       ? req.user.branchId
       : req.body.branchId;
-    if (!branchId || !productId || !quantity) return sendError(res, 400, 'branchId, productId and quantity are required');
-    
-    const [row] = await sql`
-      INSERT INTO stock_requests (branch_id, product_id, quantity, requested_by, requested_by_name, notes)
-      VALUES (${branchId}, ${productId}, ${Number(quantity)}, ${req.user!.id}, ${req.user!.fullName || req.user!.email}, ${notes ?? null})
-      RETURNING *
-    `;
-    return sendResponse(res, 201, 'Stock request submitted', row);
+
+    // Accept either items: [{productId, quantity}] or the legacy single productId/quantity shape.
+    const items: { productId: string; quantity: number }[] = Array.isArray(req.body.items) && req.body.items.length > 0
+      ? req.body.items
+      : (req.body.productId && req.body.quantity ? [{ productId: req.body.productId, quantity: req.body.quantity }] : []);
+
+    if (!branchId || items.length === 0) return sendError(res, 400, 'branchId and at least one item (productId, quantity) are required');
+    if (fromBranchId && fromBranchId === branchId) return sendError(res, 400, 'Source branch must be different from the destination branch');
+    for (const item of items) {
+      if (!item.productId || !item.quantity || Number(item.quantity) <= 0) {
+        return sendError(res, 400, 'Each item requires a productId and a positive quantity');
+      }
+    }
+
+    const batchId    = randomUUID();
+    const sourceType = fromBranchId ? 'branch' : null;
+
+    const rows = await sql.begin(async (tx) => {
+      const inserted = [];
+      for (const item of items) {
+        const [row] = await tx`
+          INSERT INTO stock_requests (batch_id, branch_id, product_id, quantity, requested_by, requested_by_name, notes, from_branch_id, source_type)
+          VALUES (
+            ${batchId}, ${branchId}, ${item.productId}, ${Number(item.quantity)}, ${req.user!.id}, ${req.user!.fullName || req.user!.email}, ${notes ?? null},
+            ${fromBranchId ?? null}, ${sourceType}::stock_source
+          )
+          RETURNING *
+        `;
+        inserted.push(row);
+      }
+      return inserted;
+    });
+
+    return sendResponse(res, 201, 'Stock request submitted', { batchId, items: rows });
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
-// Staff gets their own requests (all statuses)
+// Staff gets their own requests (all statuses), grouped into batches
 router.get('/stock-requests/mine', async (req: Request, res: Response) => {
   try {
     const rows = await sql`
-      SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit
+      SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit,
+             w.name AS warehouse_name, fb.name AS from_branch_name
       FROM stock_requests sr
       JOIN branches b ON b.id = sr.branch_id
       JOIN products p ON p.id = sr.product_id
+      LEFT JOIN warehouses w ON w.id = sr.warehouse_id
+      LEFT JOIN branches fb  ON fb.id = sr.from_branch_id
       WHERE sr.requested_by = ${req.user!.id}
       ORDER BY sr.created_at DESC
     `;
-    return sendResponse(res, 200, 'Your requests fetched', rows);
+    return sendResponse(res, 200, 'Your requests fetched', groupIntoBatches(rows));
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
-// Admin gets all requests (filtered by status if provided)
+// Admin gets all requests (filtered by status if provided), grouped into batches
 router.get('/stock-requests', adminOnly, async (req: Request, res: Response) => {
   try {
     const { status } = req.query;
     const rows = status
       ? await sql`
           SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit,
-                 w.name AS warehouse_name
+                 w.name AS warehouse_name, fb.name AS from_branch_name
           FROM stock_requests sr
           JOIN branches b  ON b.id = sr.branch_id
           JOIN products p  ON p.id = sr.product_id
           LEFT JOIN warehouses w ON w.id = sr.warehouse_id
+          LEFT JOIN branches fb  ON fb.id = sr.from_branch_id
           WHERE sr.status = ${status as string}::stock_request_status
           ORDER BY sr.created_at DESC
         `
       : await sql`
           SELECT sr.*, b.name AS branch_name, p.name AS product_name, p.unit AS product_unit,
-                 w.name AS warehouse_name
+                 w.name AS warehouse_name, fb.name AS from_branch_name
           FROM stock_requests sr
           JOIN branches b  ON b.id = sr.branch_id
           JOIN products p  ON p.id = sr.product_id
           LEFT JOIN warehouses w ON w.id = sr.warehouse_id
+          LEFT JOIN branches fb  ON fb.id = sr.from_branch_id
           ORDER BY sr.created_at DESC
         `;
-    return sendResponse(res, 200, 'Requests fetched', rows);
+    return sendResponse(res, 200, 'Requests fetched', groupIntoBatches(rows));
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
-router.patch('/stock-requests/:id/approve', adminOnly, async (req: Request, res: Response) => {
+// :batchId identifies the whole group of line-items — approving/rejecting acts on all of them together.
+router.patch('/stock-requests/:batchId/approve', adminOnly, async (req: Request, res: Response) => {
   try {
-    const { sourceType, warehouseId } = req.body;
-    if (!sourceType) return sendError(res, 400, 'sourceType is required (warehouse or others)');
-    if (sourceType === 'warehouse' && !warehouseId) return sendError(res, 400, 'warehouseId is required when source is warehouse');
+    const items = await sql`SELECT * FROM stock_requests WHERE batch_id = ${req.params.batchId}`;
+    if (items.length === 0) return sendError(res, 404, 'Request not found');
+    if (items.some((r: any) => r.status !== 'pending')) return sendError(res, 400, 'Request is no longer pending');
 
-    const [request] = await sql`SELECT * FROM stock_requests WHERE id = ${req.params.id}`;
-    if (!request) return sendError(res, 404, 'Request not found');
-    if (request.status !== 'pending') return sendError(res, 400, 'Request is no longer pending');
+    const first = items[0];
 
-    if (sourceType === 'warehouse') {
-      const [ws] = await sql`SELECT quantity FROM warehouse_stock WHERE warehouse_id = ${warehouseId} AND product_id = ${request.product_id}`;
-      if (!ws || Number(ws.quantity) < Number(request.quantity)) return sendError(res, 400, 'Insufficient warehouse stock');
-      await sql`
-        UPDATE warehouse_stock SET quantity = quantity - ${Number(request.quantity)}, updated_at = now()
-        WHERE warehouse_id = ${warehouseId} AND product_id = ${request.product_id}
+    const updated = await sql.begin(async (tx) => {
+      // Branch-to-branch transfer: source branch was already chosen by the
+      // requester, admin just approves/rejects — no sourceType/warehouse to pick.
+      if (first.source_type === 'branch') {
+        if (!first.from_branch_id) throw Object.assign(new Error('Transfer request is missing a source branch'), { status: 400 });
+
+        for (const item of items) {
+          const [fromStock] = await tx`
+            SELECT quantity FROM branch_stock WHERE branch_id = ${item.from_branch_id} AND product_id = ${item.product_id}
+          `;
+          if (!fromStock || Number(fromStock.quantity) < Number(item.quantity)) {
+            throw Object.assign(new Error(`Insufficient stock at the source branch for one of the items`), { status: 400 });
+          }
+        }
+        for (const item of items) {
+          await tx`
+            UPDATE branch_stock SET quantity = quantity - ${Number(item.quantity)}, updated_at = now()
+            WHERE branch_id = ${item.from_branch_id} AND product_id = ${item.product_id}
+          `;
+          await tx`
+            INSERT INTO branch_stock (branch_id, product_id, quantity)
+            VALUES (${item.branch_id}, ${item.product_id}, ${Number(item.quantity)})
+            ON CONFLICT (branch_id, product_id)
+            DO UPDATE SET quantity = branch_stock.quantity + EXCLUDED.quantity, updated_at = now()
+          `;
+        }
+        return tx`
+          UPDATE stock_requests SET
+            status           = 'approved',
+            approved_by      = ${req.user!.id},
+            approved_by_name = ${req.user!.fullName || req.user!.email},
+            approved_at      = now(),
+            updated_at       = now()
+          WHERE batch_id = ${req.params.batchId}
+          RETURNING *
+        `;
+      }
+
+      const { sourceType, warehouseId } = req.body;
+      if (!sourceType) throw Object.assign(new Error('sourceType is required (warehouse or others)'), { status: 400 });
+      if (sourceType === 'warehouse' && !warehouseId) throw Object.assign(new Error('warehouseId is required when source is warehouse'), { status: 400 });
+
+      if (sourceType === 'warehouse') {
+        for (const item of items) {
+          const [ws] = await tx`SELECT quantity FROM warehouse_stock WHERE warehouse_id = ${warehouseId} AND product_id = ${item.product_id}`;
+          if (!ws || Number(ws.quantity) < Number(item.quantity)) {
+            throw Object.assign(new Error('Insufficient warehouse stock for one of the items'), { status: 400 });
+          }
+        }
+        for (const item of items) {
+          await tx`
+            UPDATE warehouse_stock SET quantity = quantity - ${Number(item.quantity)}, updated_at = now()
+            WHERE warehouse_id = ${warehouseId} AND product_id = ${item.product_id}
+          `;
+        }
+      }
+
+      for (const item of items) {
+        await tx`
+          INSERT INTO branch_stock (branch_id, product_id, quantity)
+          VALUES (${item.branch_id}, ${item.product_id}, ${Number(item.quantity)})
+          ON CONFLICT (branch_id, product_id)
+          DO UPDATE SET quantity = branch_stock.quantity + EXCLUDED.quantity, updated_at = now()
+        `;
+      }
+
+      return tx`
+        UPDATE stock_requests SET
+          status           = 'approved',
+          source_type      = ${sourceType}::stock_source,
+          warehouse_id     = ${warehouseId ?? null},
+          approved_by      = ${req.user!.id},
+          approved_by_name = ${req.user!.fullName || req.user!.email},
+          approved_at      = now(),
+          updated_at       = now()
+        WHERE batch_id = ${req.params.batchId}
+        RETURNING *
       `;
-    }
+    });
 
-    await sql`
-      INSERT INTO branch_stock (branch_id, product_id, quantity)
-      VALUES (${request.branch_id}, ${request.product_id}, ${Number(request.quantity)})
-      ON CONFLICT (branch_id, product_id)
-      DO UPDATE SET quantity = branch_stock.quantity + EXCLUDED.quantity, updated_at = now()
-    `;
-
-    const [updated] = await sql`
-      UPDATE stock_requests SET
-        status           = 'approved',
-        source_type      = ${sourceType}::stock_source,
-        warehouse_id     = ${warehouseId ?? null},
-        approved_by      = ${req.user!.id},
-        approved_by_name = ${req.user!.fullName || req.user!.email},
-        approved_at      = now(),
-        updated_at       = now()
-      WHERE id = ${req.params.id}
-      RETURNING *
-    `;
-    return sendResponse(res, 200, 'Request approved', updated);
-  } catch (err) { return sendError(res, 500, 'Server error', err); }
+    return sendResponse(res, 200, 'Request approved', groupIntoBatches(updated)[0]);
+  } catch (err: any) {
+    if (err?.status === 400) return sendError(res, 400, err.message);
+    return sendError(res, 500, 'Server error', err);
+  }
 });
 
-router.patch('/stock-requests/:id/reject', adminOnly, async (req: Request, res: Response) => {
+router.patch('/stock-requests/:batchId/reject', adminOnly, async (req: Request, res: Response) => {
   try {
     const { notes } = req.body;
-    const [updated] = await sql`
+    const updated = await sql`
       UPDATE stock_requests SET
         status      = 'rejected',
         notes       = COALESCE(${notes ?? null}, notes),
         updated_at  = now()
-      WHERE id = ${req.params.id} AND status = 'pending'
+      WHERE batch_id = ${req.params.batchId} AND status = 'pending'
       RETURNING *
     `;
-    if (!updated) return sendError(res, 404, 'Request not found or already processed');
-    return sendResponse(res, 200, 'Request rejected', updated);
+    if (updated.length === 0) return sendError(res, 404, 'Request not found or already processed');
+    return sendResponse(res, 200, 'Request rejected', groupIntoBatches(updated)[0]);
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
@@ -220,7 +346,7 @@ router.delete('/:id', adminOnly, async (req: Request, res: Response) => {
       SELECT
         (SELECT COUNT(*) FROM sales          WHERE branch_id = ${req.params.id})::int AS sales_count,
         (SELECT COUNT(*) FROM daily_reports  WHERE branch_id = ${req.params.id})::int AS reports_count,
-        (SELECT COUNT(*) FROM stock_requests WHERE branch_id = ${req.params.id})::int AS requests_count,
+        (SELECT COUNT(*) FROM stock_requests WHERE branch_id = ${req.params.id} OR from_branch_id = ${req.params.id})::int AS requests_count,
         (SELECT COUNT(*) FROM debtors        WHERE branch_id = ${req.params.id})::int AS debtors_count,
         (SELECT COUNT(*) FROM expenses       WHERE branch_id = ${req.params.id})::int AS expenses_count
     `;

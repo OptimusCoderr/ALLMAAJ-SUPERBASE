@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { find, Collections } from '../lib/api';
+import type { DailyReport } from '../lib/types';
 import {
   ShoppingBag, LayoutDashboard, Package, Warehouse, GitBranch,
   TrendingUp, FileText, Users, Menu, LogOut,
@@ -34,9 +36,28 @@ export default function Layout() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [rejectedReportCount, setRejectedReportCount] = useState(0);
 
   const role = user?.role ?? 'staff';
   const visibleItems = NAV_ITEMS.filter(item => item.roles.includes(role));
+
+  // Surface rejected daily reports that still need correction, no matter how
+  // long ago they were rejected — this stays visible on every page, not just
+  // when the staff happens to have that date selected on the Daily Report page.
+  useEffect(() => {
+    if (!user?.branchId) { setRejectedReportCount(0); return; }
+
+    let cancelled = false;
+    const fetchRejected = () => {
+      find(Collections.DAILY_REPORTS, { branchId: user.branchId, status: 'rejected' })
+        .then(data => { if (!cancelled) setRejectedReportCount((data as DailyReport[]).length); })
+        .catch(() => {});
+    };
+
+    fetchRejected();
+    window.addEventListener('focus', fetchRejected);
+    return () => { cancelled = true; window.removeEventListener('focus', fetchRejected); };
+  }, [user?.branchId]);
 
   const roleBadgeColor: Record<string, string> = {
     admin:   'bg-red-100 text-red-700',
@@ -75,6 +96,11 @@ export default function Layout() {
           >
             {item.icon}
             <span className="flex-1 text-left truncate">{item.label}</span>
+            {item.path === '/daily-report' && rejectedReportCount > 0 && (
+              <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full leading-none shrink-0" title={`${rejectedReportCount} report${rejectedReportCount !== 1 ? 's' : ''} need correction`}>
+                {rejectedReportCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
