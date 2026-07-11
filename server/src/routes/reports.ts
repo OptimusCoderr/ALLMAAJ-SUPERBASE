@@ -4,6 +4,7 @@ import type { DailyReportRow, DebtorRow, DebtorPaymentRow, ExpenseRow } from '..
 import { num } from '../db/types.js';
 import { authMiddleware, adminOnly, managerOrAdmin } from '../middleware/auth.js';
 import { sendResponse, sendError } from '../utils/apiResponse.js';
+import { notifyAdmins, notifyUser } from '../utils/notifications.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -193,6 +194,14 @@ router.post('/daily', async (req: Request, res: Response) => {
         AND (report_id IS NULL OR report_id != ${report.id})
     `;
 
+    const [branchRow] = await sql`SELECT name FROM branches WHERE id = ${branchId}`;
+    await notifyAdmins({
+      type: 'daily_report_pending',
+      title: 'New daily report submitted',
+      message: `${req.user!.fullName || req.user!.email} submitted a report for ${branchRow?.name ?? 'a branch'} (${reportDate})`,
+      link: '/admin/report-approvals',
+    });
+
     return sendResponse(res, 201, 'Report submitted', toReport(report));
   } catch (err) {
     return sendError(res, 500, 'Server error', err);
@@ -231,6 +240,16 @@ router.patch('/daily/:id/review', managerOrAdmin, async (req: Request, res: Resp
       RETURNING *
     `;
     if (!report) return sendError(res, 404, 'Report not found');
+
+    if (status === 'approved' || status === 'rejected') {
+      await notifyUser(report.submitted_by, {
+        type: status === 'approved' ? 'daily_report_approved' : 'daily_report_rejected',
+        title: status === 'approved' ? 'Your daily report was approved' : 'Your daily report was rejected',
+        message: reviewNotes ?? undefined,
+        link: '/daily-report',
+      });
+    }
+
     return sendResponse(res, 200, 'Report reviewed', toReport(report));
   } catch (err) {
     return sendError(res, 500, 'Server error', err);

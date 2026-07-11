@@ -5,6 +5,7 @@ import sql from '../db/client.js';
 import type { BranchRow, BranchStockRow, ProductRow } from '../db/types.js';
 import { authMiddleware, adminOnly } from '../middleware/auth.js';
 import { sendResponse, sendError } from '../utils/apiResponse.js';
+import { notifyAdmins, notifyUser } from '../utils/notifications.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -125,6 +126,19 @@ router.post('/stock-requests', async (req: Request, res: Response) => {
         inserted.push(row);
       }
       return inserted;
+    });
+
+    const branchNames = await sql`SELECT id, name FROM branches WHERE id IN (${branchId}, ${fromBranchId ?? branchId})`;
+    const branchNameMap = Object.fromEntries(branchNames.map((b: any) => [b.id, b.name]));
+    const requesterName = req.user!.fullName || req.user!.email;
+    const itemWord = items.length === 1 ? 'item' : 'items';
+    await notifyAdmins({
+      type: 'stock_request_pending',
+      title: fromBranchId ? `New transfer request (${items.length} ${itemWord})` : `New stock request (${items.length} ${itemWord})`,
+      message: fromBranchId
+        ? `${requesterName} requested a transfer from ${branchNameMap[fromBranchId] ?? 'another branch'} to ${branchNameMap[branchId] ?? 'a branch'}`
+        : `${requesterName} requested stock for ${branchNameMap[branchId] ?? 'a branch'}`,
+      link: '/branch-stock',
     });
 
     return sendResponse(res, 201, 'Stock request submitted', { batchId, items: rows });
@@ -268,6 +282,13 @@ router.patch('/stock-requests/:batchId/approve', adminOnly, async (req: Request,
       `;
     });
 
+    const itemWord = items.length === 1 ? 'item' : 'items';
+    await notifyUser(first.requested_by, {
+      type: 'stock_request_approved',
+      title: `Your stock request was approved (${items.length} ${itemWord})`,
+      link: '/branch-stock',
+    });
+
     return sendResponse(res, 200, 'Request approved', groupIntoBatches(updated)[0]);
   } catch (err: any) {
     if (err?.status === 400) return sendError(res, 400, err.message);
@@ -287,7 +308,39 @@ router.patch('/stock-requests/:batchId/reject', adminOnly, async (req: Request, 
       RETURNING *
     `;
     if (updated.length === 0) return sendError(res, 404, 'Request not found or already processed');
+
+    const first = updated[0];
+    const itemWord = updated.length === 1 ? 'item' : 'items';
+    await notifyUser(first.requested_by, {
+      type: 'stock_request_rejected',
+      title: `Your stock request was rejected (${updated.length} ${itemWord})`,
+      message: notes ?? undefined,
+      link: '/branch-stock',
+    });
+
     return sendResponse(res, 200, 'Request rejected', groupIntoBatches(updated)[0]);
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+// Low-stock items across branches — admins see every branch, staff/managers
+// see only their own. Drives the dashboard's low-stock widget.
+// GET /api/branches/stock/low?threshold=20
+router.get('/stock/low', async (req: Request, res: Response) => {
+  try {
+    const threshold = Number(req.query.threshold) || 20;
+    const branchId = req.user?.role !== 'admin' && req.user?.branchId ? req.user.branchId : null;
+
+    const rows = await sql`
+      SELECT bs.branch_id, b.name AS branch_name, bs.product_id, p.name AS product_name, p.unit AS product_unit, bs.quantity
+      FROM branch_stock bs
+      JOIN branches b ON b.id = bs.branch_id
+      JOIN products p ON p.id = bs.product_id
+      WHERE bs.quantity <= ${threshold}
+        AND (${branchId}::uuid IS NULL OR bs.branch_id = ${branchId}::uuid)
+      ORDER BY bs.quantity ASC
+      LIMIT 100
+    `;
+    return sendResponse(res, 200, 'Low stock fetched', rows);
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 

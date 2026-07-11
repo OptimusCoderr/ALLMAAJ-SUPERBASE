@@ -10,7 +10,7 @@ export interface AuthUser {
   fullName: string;
   email: string;
   phone: string;
-  role: 'admin' | 'staff';
+  role: 'admin' | 'manager' | 'staff';
   branchId: string | null;
 }
 

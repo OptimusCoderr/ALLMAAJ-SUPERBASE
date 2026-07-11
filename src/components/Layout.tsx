@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { find, Collections } from '../lib/api';
 import type { DailyReport } from '../lib/types';
+import NotificationBell from './NotificationBell';
 import {
   ShoppingBag, LayoutDashboard, Package, Warehouse, GitBranch,
   TrendingUp, FileText, Users, Menu, LogOut,
@@ -144,16 +145,23 @@ export default function Layout() {
       )}
 
       <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="lg:hidden flex items-center gap-3 p-3 sm:p-4 bg-white border-b border-slate-200">
-          <button onClick={() => setSidebarOpen(true)} className="text-slate-600 hover:text-slate-900">
-            <Menu className="w-6 h-6" />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center">
-              <ShoppingBag className="w-4 h-4 text-white" />
+          <div className="lg:hidden flex items-center justify-between gap-3 p-3 sm:p-4 bg-white border-b border-slate-200">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSidebarOpen(true)} className="text-slate-600 hover:text-slate-900">
+              <Menu className="w-6 h-6" />
+            </button>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center">
+                <ShoppingBag className="w-4 h-4 text-white" />
+              </div>
+              <span className="font-bold text-slate-800">ALLMAAJ-PRO</span>
             </div>
-            <span className="font-bold text-slate-800">ALLMAAJ-PRO</span>
           </div>
+          <NotificationBell />
+        </div>
+
+        <div className="hidden lg:flex items-center justify-end px-6 py-3 bg-white border-b border-slate-200">
+          <NotificationBell />
         </div>
 
         <main className="flex-1 overflow-y-auto">
