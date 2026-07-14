@@ -41,15 +41,17 @@ interface StockItem { productId: string; product: any; quantity: number; updated
 interface CartItem { productId: string; productName: string; productUnit: string; quantity: number; }
 
 // A submitted request/transfer batch — one or more product line-items approved/rejected together
-interface StockRequestItem { id: string; productId: string; productName: string; productUnit: string; quantity: number; }
+interface StockRequestItem {
+  id: string; productId: string; productName: string; productUnit: string; quantity: number;
+  status: string; approvedByName: string | null; approvedAt: string | null;
+}
 interface StockRequestBatch {
   batchId: string; branchId: string; branchName: string;
   fromBranchId: string | null; fromBranchName: string | null;
   sourceType: 'warehouse' | 'others' | 'branch' | null;
   warehouseId: string | null; warehouseName: string | null;
   requestedBy: string; requestedByName: string;
-  notes: string | null; status: string;
-  approvedBy: string | null; approvedByName: string | null; approvedAt: string | null;
+  notes: string | null; status: string; // 'pending' | 'approved' | 'rejected' | 'mixed'
   createdAt: string;
   items: StockRequestItem[];
 }
@@ -68,6 +70,13 @@ function StatusBadge({ status }: { status: string }) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
         <XCircle className="w-3.5 h-3.5" />Rejected
+      </span>
+    );
+  }
+  if (status === 'mixed') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-200 text-slate-700">
+        Mixed
       </span>
     );
   }
@@ -302,7 +311,10 @@ export default function BranchStockPage() {
   const [editError, setEditError]         = useState('');
 
   // Approve modal (admin)
-  const [approving, setApproving]         = useState<StockRequestBatch | null>(null);
+  // item === null means "approve/reject every pending item in the batch at once";
+  // a specific item means a single line-item is being actioned on its own —
+  // useful since different materials can come from different warehouses.
+  const [approving, setApproving]         = useState<{ batch: StockRequestBatch; item: StockRequestItem | null } | null>(null);
   const [approveSourceType, setApproveSourceType] = useState('warehouse');
   const [approveWarehouseId, setApproveWarehouseId] = useState('');
   const [approveSaving, setApproveSaving] = useState(false);
@@ -368,7 +380,7 @@ export default function BranchStockPage() {
     ? requests.filter(r => r.branchId === requestsBranchFilter)
     : requests;
 
-  const pendingMyRequests = myRequests.filter(r => r.status === 'pending').length;
+  const pendingMyRequests = myRequests.filter(r => r.items.some(i => i.status === 'pending')).length;
   const branchName = branches.find(b => b._id === selectedBranch)?.name || '';
   const critical   = stock.filter(s => s.quantity <= 5).length;
   const low        = stock.filter(s => s.quantity > 5 && s.quantity <= 20).length;
@@ -638,28 +650,36 @@ export default function BranchStockPage() {
   async function approveRequest(e: React.FormEvent) {
     e.preventDefault();
     if (!approving) return;
-    const isTransfer = approving.sourceType === 'branch';
+    const { batch, item } = approving;
+    const isTransfer = batch.sourceType === 'branch';
     if (!isTransfer && approveSourceType === 'warehouse' && !approveWarehouseId) { setApproveError('Select a warehouse'); return; }
     setApproveSaving(true); setApproveError('');
     try {
-      await authFetch(`/api/branches/stock-requests/${approving.batchId}/approve`, token, {
+      const url = item
+        ? `/api/branches/stock-requests/item/${item.id}/approve`
+        : `/api/branches/stock-requests/${batch.batchId}/approve`;
+      await authFetch(url, token, {
         method: 'PATCH',
         body: JSON.stringify(isTransfer ? {} : { sourceType: approveSourceType, warehouseId: approveWarehouseId || null }),
       });
-      const count = approving.items.length;
+      const count = item ? 1 : batch.items.length;
       setApproving(null);
       fetchRequests();
-      if (approving.branchId === selectedBranch || approving.fromBranchId === selectedBranch) fetchStock();
+      if (batch.branchId === selectedBranch || batch.fromBranchId === selectedBranch) fetchStock();
       toast.success(`Approved ${count} item${count !== 1 ? 's' : ''}`);
     } catch (err: any) { setApproveError(err.message || 'Failed to approve'); }
     setApproveSaving(false);
   }
 
-  async function rejectRequest(req: StockRequestBatch) {
-    const count = req.items.length;
-    if (!await confirm({ title: 'Reject Request', message: `Reject this request (${count} item${count !== 1 ? 's' : ''}) at ${req.branchName}?`, confirmText: 'Reject', danger: true })) return;
+  async function rejectRequest(batch: StockRequestBatch, item?: StockRequestItem) {
+    const count = item ? 1 : batch.items.length;
+    const label = item ? `"${item.productName}"` : `this request (${count} item${count !== 1 ? 's' : ''})`;
+    if (!await confirm({ title: 'Reject Request', message: `Reject ${label} at ${batch.branchName}?`, confirmText: 'Reject', danger: true })) return;
     try {
-      await authFetch(`/api/branches/stock-requests/${req.batchId}/reject`, token, { method: 'PATCH' });
+      const url = item
+        ? `/api/branches/stock-requests/item/${item.id}/reject`
+        : `/api/branches/stock-requests/${batch.batchId}/reject`;
+      await authFetch(url, token, { method: 'PATCH' });
       fetchRequests(); toast.error(`Rejected ${count} item${count !== 1 ? 's' : ''}`);
     } catch (err: any) { toast.error(err.message || 'Failed to reject'); }
   }
@@ -990,9 +1010,26 @@ export default function BranchStockPage() {
                     )}
                     <div className="space-y-1 mb-1.5">
                       {req.items.map(item => (
-                        <div key={item.id} className="flex items-center gap-2 text-sm">
-                          <span className="font-medium text-slate-800">{item.productName}</span>
-                          <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{item.quantity} {item.productUnit}</span>
+                        <div key={item.id} className="flex items-center justify-between gap-2 text-sm">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-medium text-slate-800 truncate">{item.productName}</span>
+                            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full shrink-0">{item.quantity} {item.productUnit}</span>
+                          </div>
+                          {req.items.length > 1 && (
+                            <div className="flex gap-1 shrink-0">
+                              <button
+                                onClick={() => { setApproving({ batch: req, item }); setApproveSourceType('warehouse'); setApproveWarehouseId(''); setApproveError(''); }}
+                                title="Approve this item"
+                                className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors">
+                                <CheckCircle className="w-4 h-4" />
+                              </button>
+                              <button onClick={() => rejectRequest(req, item)}
+                                title="Reject this item"
+                                className="p-1 text-red-500 hover:bg-red-50 rounded transition-colors">
+                                <XCircle className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1002,16 +1039,19 @@ export default function BranchStockPage() {
                       <span title={new Date(req.createdAt).toLocaleString()}>{relativeTime(req.createdAt)}</span>
                     </p>
                     {req.notes && <p className="text-xs text-slate-400 mt-1 italic">"{req.notes}"</p>}
+                    {req.items.length > 1 && (
+                      <p className="text-xs text-slate-400 mt-1">Different items can be approved individually from different warehouses using the icons above.</p>
+                    )}
                   </div>
                   <div className="flex gap-2 shrink-0">
                     <button
-                      onClick={() => { setApproving(req); setApproveSourceType('warehouse'); setApproveWarehouseId(''); setApproveError(''); }}
+                      onClick={() => { setApproving({ batch: req, item: null }); setApproveSourceType('warehouse'); setApproveWarehouseId(''); setApproveError(''); }}
                       className="flex items-center gap-1.5 px-3 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors">
-                      <CheckCircle className="w-4 h-4" />Approve
+                      <CheckCircle className="w-4 h-4" />{req.items.length > 1 ? 'Approve All' : 'Approve'}
                     </button>
                     <button onClick={() => rejectRequest(req)}
                       className="flex items-center gap-1.5 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-sm font-medium transition-colors">
-                      <XCircle className="w-4 h-4" />Reject
+                      <XCircle className="w-4 h-4" />{req.items.length > 1 ? 'Reject All' : 'Reject'}
                     </button>
                   </div>
                 </div>
@@ -1071,9 +1111,10 @@ export default function BranchStockPage() {
                       )}
                       <div className="space-y-1 mb-1">
                         {req.items.map(item => (
-                          <div key={item.id} className="flex items-center gap-2 text-sm">
+                          <div key={item.id} className="flex items-center gap-2 text-sm flex-wrap">
                             <span className="font-medium text-slate-800">{item.productName}</span>
                             <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{item.quantity} {item.productUnit}</span>
+                            {req.items.length > 1 && <StatusBadge status={item.status} />}
                           </div>
                         ))}
                       </div>
@@ -1347,65 +1388,76 @@ export default function BranchStockPage() {
       )}
 
       {/* ── Approve Modal (admin) ── */}
-      {approving && (
-        <Modal title={approving.sourceType === 'branch' ? 'Approve Branch Transfer' : 'Approve Stock Request'} onClose={() => setApproving(null)}>
-          <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
-            {approving.sourceType === 'branch' ? (
-              <p className="text-slate-500 text-xs mb-2">
-                <span className="font-medium text-slate-700">{approving.fromBranchName}</span>
-                {' → '}
-                <span className="font-medium text-slate-700">{approving.branchName}</span>
-                {' · '}Requested by {approving.requestedByName}
-              </p>
-            ) : (
-              <p className="text-slate-500 text-xs mb-2">For {approving.branchName} · Requested by {approving.requestedByName}</p>
-            )}
-            <div className="space-y-1 max-h-40 overflow-y-auto">
-              {approving.items.map(item => (
-                <p key={item.id}><span className="font-medium">{item.productName}</span> × {item.quantity} {item.productUnit}</p>
-              ))}
+      {approving && (() => {
+        const { batch, item } = approving;
+        const isTransfer = batch.sourceType === 'branch';
+        const displayItems = item ? [item] : batch.items;
+        return (
+          <Modal title={
+            isTransfer ? (item ? 'Approve Transfer Item' : 'Approve Branch Transfer')
+                       : (item ? 'Approve Item' : 'Approve Stock Request')
+          } onClose={() => setApproving(null)}>
+            <div className="mb-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-700">
+              {isTransfer ? (
+                <p className="text-slate-500 text-xs mb-2">
+                  <span className="font-medium text-slate-700">{batch.fromBranchName}</span>
+                  {' → '}
+                  <span className="font-medium text-slate-700">{batch.branchName}</span>
+                  {' · '}Requested by {batch.requestedByName}
+                </p>
+              ) : (
+                <p className="text-slate-500 text-xs mb-2">For {batch.branchName} · Requested by {batch.requestedByName}</p>
+              )}
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {displayItems.map(i => (
+                  <p key={i.id}><span className="font-medium">{i.productName}</span> × {i.quantity} {i.productUnit}</p>
+                ))}
+              </div>
             </div>
-          </div>
-          {approveError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{approveError}</div>}
-          <form onSubmit={approveRequest} className="space-y-4">
-            {approving.sourceType === 'branch' ? (
-              <p className="text-sm text-slate-500">
-                This will move {approving.items.length > 1 ? 'these items' : 'this item'} out of {approving.fromBranchName} stock and into {approving.branchName} stock.
-              </p>
-            ) : (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
-                  <select value={approveSourceType} onChange={e => { setApproveSourceType(e.target.value); setApproveWarehouseId(''); }}
-                    className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
-                    <option value="warehouse">From Warehouse</option>
-                    <option value="others">Others (External)</option>
-                  </select>
-                </div>
-                {approveSourceType === 'warehouse' && (
+            {approveError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{approveError}</div>}
+            <form onSubmit={approveRequest} className="space-y-4">
+              {isTransfer ? (
+                <p className="text-sm text-slate-500">
+                  This will move {displayItems.length > 1 ? 'these items' : 'this item'} out of {batch.fromBranchName} stock and into {batch.branchName} stock.
+                </p>
+              ) : (
+                <>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
-                    <select value={approveWarehouseId} onChange={e => setApproveWarehouseId(e.target.value)} required
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Stock Source *</label>
+                    <select value={approveSourceType} onChange={e => { setApproveSourceType(e.target.value); setApproveWarehouseId(''); }}
                       className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
-                      <option value="">Select warehouse...</option>
-                      {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
+                      <option value="warehouse">From Warehouse</option>
+                      <option value="others">Others (External)</option>
                     </select>
-                    <p className="text-xs text-slate-400 mt-1">All items in this request will be pulled from the same warehouse.</p>
                   </div>
-                )}
-              </>
-            )}
-            <div className="flex gap-3 pt-2">
-              <button type="button" onClick={() => setApproving(null)}
-                className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
-              <button type="submit" disabled={approveSaving}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
-                {approveSaving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}{approving.sourceType === 'branch' ? 'Approve Transfer' : 'Approve & Add Stock'}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
+                  {approveSourceType === 'warehouse' && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Warehouse *</label>
+                      <select value={approveWarehouseId} onChange={e => setApproveWarehouseId(e.target.value)} required
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 text-sm">
+                        <option value="">Select warehouse...</option>
+                        {warehouses.map((w: any) => <option key={w._id} value={w._id}>{w.name}</option>)}
+                      </select>
+                      {!item && displayItems.length > 1 && (
+                        <p className="text-xs text-slate-400 mt-1">All items approved here come from the same warehouse — use the per-item approve buttons to split sourcing.</p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setApproving(null)}
+                  className="flex-1 py-2.5 border border-slate-200 rounded-lg text-slate-600 font-medium text-sm">Cancel</button>
+                <button type="submit" disabled={approveSaving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-colors">
+                  {approveSaving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+                  {isTransfer ? (item ? 'Approve Item' : 'Approve Transfer') : (item ? 'Approve Item' : 'Approve All & Add Stock')}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
 
     </div>
   );

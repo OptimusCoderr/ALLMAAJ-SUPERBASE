@@ -49,7 +49,11 @@ router.post('/', adminOnly, [
 // bundle several products into a single request/transfer, and admins
 // approve or reject the whole batch in one action.
 
-// Group flat stock_requests rows (one per product) into batch objects with an items[] array.
+// Group flat stock_requests rows (one per product) into batch objects with an
+// items[] array. Each item carries its own status/approvedByName/approvedAt
+// since admins can approve/reject items individually (different materials
+// often need to come from different warehouses) — a batch's overall status
+// is 'mixed' once its items disagree.
 function groupIntoBatches(rows: any[]) {
   const batches = new Map<string, any>();
   for (const r of rows) {
@@ -67,10 +71,6 @@ function groupIntoBatches(rows: any[]) {
         requestedBy:     r.requested_by,
         requestedByName: r.requested_by_name,
         notes:           r.notes,
-        status:          r.status,
-        approvedBy:      r.approved_by,
-        approvedByName:  r.approved_by_name,
-        approvedAt:      r.approved_at,
         createdAt:       r.created_at,
         items:           [] as any[],
       };
@@ -79,9 +79,15 @@ function groupIntoBatches(rows: any[]) {
     batch.items.push({
       id: r.id, productId: r.product_id, productName: r.product_name,
       productUnit: r.product_unit, quantity: Number(r.quantity),
+      status: r.status, approvedByName: r.approved_by_name, approvedAt: r.approved_at,
     });
   }
-  return Array.from(batches.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const result = Array.from(batches.values());
+  for (const batch of result) {
+    const statuses = new Set(batch.items.map((i: any) => i.status));
+    batch.status = statuses.size === 1 ? batch.items[0].status : 'mixed';
+  }
+  return result.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
 // Staff or admin creates a stock request with one or more product line-items.
@@ -193,12 +199,15 @@ router.get('/stock-requests', adminOnly, async (req: Request, res: Response) => 
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
-// :batchId identifies the whole group of line-items — approving/rejecting acts on all of them together.
+// :batchId identifies the whole group of line-items — approves/rejects
+// whichever items in the batch are still pending (items already resolved
+// individually, see below, are left untouched).
 router.patch('/stock-requests/:batchId/approve', adminOnly, async (req: Request, res: Response) => {
   try {
-    const items = await sql`SELECT * FROM stock_requests WHERE batch_id = ${req.params.batchId}`;
-    if (items.length === 0) return sendError(res, 404, 'Request not found');
-    if (items.some((r: any) => r.status !== 'pending')) return sendError(res, 400, 'Request is no longer pending');
+    const allItems = await sql`SELECT * FROM stock_requests WHERE batch_id = ${req.params.batchId}`;
+    if (allItems.length === 0) return sendError(res, 404, 'Request not found');
+    const items = allItems.filter((r: any) => r.status === 'pending');
+    if (items.length === 0) return sendError(res, 400, 'No pending items left in this request');
 
     const first = items[0];
 
@@ -235,7 +244,7 @@ router.patch('/stock-requests/:batchId/approve', adminOnly, async (req: Request,
             approved_by_name = ${req.user!.fullName || req.user!.email},
             approved_at      = now(),
             updated_at       = now()
-          WHERE batch_id = ${req.params.batchId}
+          WHERE batch_id = ${req.params.batchId} AND status = 'pending'
           RETURNING *
         `;
       }
@@ -277,7 +286,7 @@ router.patch('/stock-requests/:batchId/approve', adminOnly, async (req: Request,
           approved_by_name = ${req.user!.fullName || req.user!.email},
           approved_at      = now(),
           updated_at       = now()
-        WHERE batch_id = ${req.params.batchId}
+        WHERE batch_id = ${req.params.batchId} AND status = 'pending'
         RETURNING *
       `;
     });
@@ -319,6 +328,119 @@ router.patch('/stock-requests/:batchId/reject', adminOnly, async (req: Request, 
     });
 
     return sendResponse(res, 200, 'Request rejected', groupIntoBatches(updated)[0]);
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
+// Approve/reject a single line-item within a batch, independent of the rest —
+// different materials often need to be sourced from different warehouses.
+router.patch('/stock-requests/item/:itemId/approve', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const [item] = await sql`SELECT * FROM stock_requests WHERE id = ${req.params.itemId}`;
+    if (!item) return sendError(res, 404, 'Item not found');
+    if (item.status !== 'pending') return sendError(res, 400, 'Item is no longer pending');
+
+    const updated = await sql.begin(async (tx) => {
+      if (item.source_type === 'branch') {
+        if (!item.from_branch_id) throw Object.assign(new Error('Transfer item is missing a source branch'), { status: 400 });
+
+        const [fromStock] = await tx`
+          SELECT quantity FROM branch_stock WHERE branch_id = ${item.from_branch_id} AND product_id = ${item.product_id}
+        `;
+        if (!fromStock || Number(fromStock.quantity) < Number(item.quantity)) {
+          throw Object.assign(new Error('Insufficient stock at the source branch'), { status: 400 });
+        }
+        await tx`
+          UPDATE branch_stock SET quantity = quantity - ${Number(item.quantity)}, updated_at = now()
+          WHERE branch_id = ${item.from_branch_id} AND product_id = ${item.product_id}
+        `;
+        await tx`
+          INSERT INTO branch_stock (branch_id, product_id, quantity)
+          VALUES (${item.branch_id}, ${item.product_id}, ${Number(item.quantity)})
+          ON CONFLICT (branch_id, product_id)
+          DO UPDATE SET quantity = branch_stock.quantity + EXCLUDED.quantity, updated_at = now()
+        `;
+        const [row] = await tx`
+          UPDATE stock_requests SET
+            status = 'approved', approved_by = ${req.user!.id}, approved_by_name = ${req.user!.fullName || req.user!.email},
+            approved_at = now(), updated_at = now()
+          WHERE id = ${req.params.itemId} AND status = 'pending'
+          RETURNING *
+        `;
+        return row;
+      }
+
+      const { sourceType, warehouseId } = req.body;
+      if (!sourceType) throw Object.assign(new Error('sourceType is required (warehouse or others)'), { status: 400 });
+      if (sourceType === 'warehouse' && !warehouseId) throw Object.assign(new Error('warehouseId is required when source is warehouse'), { status: 400 });
+
+      if (sourceType === 'warehouse') {
+        const [ws] = await tx`SELECT quantity FROM warehouse_stock WHERE warehouse_id = ${warehouseId} AND product_id = ${item.product_id}`;
+        if (!ws || Number(ws.quantity) < Number(item.quantity)) {
+          throw Object.assign(new Error('Insufficient warehouse stock'), { status: 400 });
+        }
+        await tx`
+          UPDATE warehouse_stock SET quantity = quantity - ${Number(item.quantity)}, updated_at = now()
+          WHERE warehouse_id = ${warehouseId} AND product_id = ${item.product_id}
+        `;
+      }
+
+      await tx`
+        INSERT INTO branch_stock (branch_id, product_id, quantity)
+        VALUES (${item.branch_id}, ${item.product_id}, ${Number(item.quantity)})
+        ON CONFLICT (branch_id, product_id)
+        DO UPDATE SET quantity = branch_stock.quantity + EXCLUDED.quantity, updated_at = now()
+      `;
+
+      const [row] = await tx`
+        UPDATE stock_requests SET
+          status = 'approved', source_type = ${sourceType}::stock_source, warehouse_id = ${warehouseId ?? null},
+          approved_by = ${req.user!.id}, approved_by_name = ${req.user!.fullName || req.user!.email},
+          approved_at = now(), updated_at = now()
+        WHERE id = ${req.params.itemId} AND status = 'pending'
+        RETURNING *
+      `;
+      return row;
+    });
+
+    if (!updated) return sendError(res, 400, 'Item is no longer pending');
+
+    const [productRow] = await sql`SELECT name, unit FROM products WHERE id = ${item.product_id}`;
+    await notifyUser(item.requested_by, {
+      type: 'stock_request_approved',
+      title: 'A stock request item was approved',
+      message: `${productRow?.name ?? 'Item'} × ${item.quantity} ${productRow?.unit ?? ''}`.trim(),
+      link: '/branch-stock',
+    });
+
+    return sendResponse(res, 200, 'Item approved', updated);
+  } catch (err: any) {
+    if (err?.status === 400) return sendError(res, 400, err.message);
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
+router.patch('/stock-requests/item/:itemId/reject', adminOnly, async (req: Request, res: Response) => {
+  try {
+    const { notes } = req.body;
+    const [updated] = await sql`
+      UPDATE stock_requests SET
+        status      = 'rejected',
+        notes       = COALESCE(${notes ?? null}, notes),
+        updated_at  = now()
+      WHERE id = ${req.params.itemId} AND status = 'pending'
+      RETURNING *
+    `;
+    if (!updated) return sendError(res, 404, 'Item not found or already processed');
+
+    const [productRow] = await sql`SELECT name, unit FROM products WHERE id = ${updated.product_id}`;
+    await notifyUser(updated.requested_by, {
+      type: 'stock_request_rejected',
+      title: 'A stock request item was rejected',
+      message: `${productRow?.name ?? 'Item'} × ${updated.quantity} ${productRow?.unit ?? ''}`.trim(),
+      link: '/branch-stock',
+    });
+
+    return sendResponse(res, 200, 'Item rejected', updated);
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
