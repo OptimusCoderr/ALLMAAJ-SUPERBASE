@@ -181,6 +181,10 @@ export interface WarehouseSale extends MongoDoc {
   docLabel?: string | null;
   notes?: string | null;
   saleDate: string;
+  isClosed: boolean;
+  closedBy?: string | null;
+  closedByName?: string | null;
+  closedAt?: string | null;
   items: WarehouseSaleItem[];
   createdAt: string;
   updatedAt: string;

@@ -16,6 +16,7 @@ const toSale = (
   r: WarehouseSaleRow & {
     warehouse_name?: string | null;
     created_by_name?: string | null;
+    closed_by_name?: string | null;
     items?: (WarehouseSaleItemRow & { source_warehouse_name?: string | null; source_branch_name?: string | null })[];
   }
 ) => ({
@@ -38,6 +39,10 @@ const toSale = (
   docLabel:        r.doc_label ?? null,
   notes:           r.notes,
   saleDate:        r.sale_date,
+  isClosed:        r.is_closed,
+  closedBy:        r.closed_by,
+  closedByName:    r.closed_by_name ?? null,
+  closedAt:        r.closed_at,
   createdAt:       r.created_at,
   updatedAt:       r.updated_at,
   items: (r.items ?? []).map(i => ({
@@ -64,11 +69,12 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const { warehouseId, startDate, endDate, limit = '100' } = req.query as Record<string, string>;
 
-    const sales = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string })[]>`
-      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name
+    const sales = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string; closed_by_name: string | null })[]>`
+      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name, cu.full_name AS closed_by_name
       FROM   warehouse_sales ws
       LEFT JOIN warehouses w ON w.id = ws.warehouse_id
       JOIN  users u           ON u.id = ws.created_by
+      LEFT JOIN users cu      ON cu.id = ws.closed_by
       WHERE
         (${warehouseId ?? null}::uuid IS NULL OR ws.warehouse_id = ${warehouseId ?? null}::uuid
           OR EXISTS (
@@ -91,11 +97,12 @@ router.get('/', async (req: Request, res: Response) => {
 
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const [sale] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string })[]>`
-      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name
+    const [sale] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string; closed_by_name: string | null })[]>`
+      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name, cu.full_name AS closed_by_name
       FROM   warehouse_sales ws
       LEFT JOIN warehouses w ON w.id = ws.warehouse_id
       JOIN  users u           ON u.id = ws.created_by
+      LEFT JOIN users cu      ON cu.id = ws.closed_by
       WHERE  ws.id = ${req.params.id}
     `;
     if (!sale) return sendError(res, 404, 'Sale not found');
@@ -259,11 +266,12 @@ router.post('/', saleValidators, async (req: Request, res: Response) => {
     });
 
     // Re-fetch with names
-    const [full] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string })[]>`
-      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name
+    const [full] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string; closed_by_name: string | null })[]>`
+      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name, cu.full_name AS closed_by_name
       FROM   warehouse_sales ws
       LEFT JOIN warehouses w ON w.id = ws.warehouse_id
       JOIN  users u           ON u.id = ws.created_by
+      LEFT JOIN users cu      ON cu.id = ws.closed_by
       WHERE  ws.id = ${result.id}
     `;
     const itemRows = await sql<WarehouseSaleItemRow[]>`
@@ -285,6 +293,10 @@ router.put('/:id', saleValidators, async (req: Request, res: Response) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return sendError(res, 400, 'Validation failed', errors.array());
   try {
+    const [existing] = await sql<WarehouseSaleRow[]>`SELECT is_closed FROM warehouse_sales WHERE id = ${req.params.id}`;
+    if (!existing) return sendError(res, 404, 'Sale not found');
+    if (existing.is_closed) return sendError(res, 409, 'This invoice is closed and can no longer be edited.');
+
     const {
       warehouseId, customerName, customerPhone, customerAddress,
       paymentMethod = 'cash', amountPaid = 0,
@@ -421,11 +433,12 @@ router.put('/:id', saleValidators, async (req: Request, res: Response) => {
       }
     });
 
-    const [full] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string })[]>`
-      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name
+    const [full] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string; closed_by_name: string | null })[]>`
+      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name, cu.full_name AS closed_by_name
       FROM   warehouse_sales ws
       LEFT JOIN warehouses w ON w.id = ws.warehouse_id
       JOIN  users u           ON u.id = ws.created_by
+      LEFT JOIN users cu      ON cu.id = ws.closed_by
       WHERE  ws.id = ${req.params.id}
     `;
     if (!full) return sendError(res, 404, 'Sale not found');
@@ -439,6 +452,46 @@ router.put('/:id', saleValidators, async (req: Request, res: Response) => {
     console.error('[PUT /warehouse-sales/:id]', err);
     if (err.message?.includes('Insufficient stock') || err.message?.includes('not found in'))
       return sendError(res, 409, err.message);
+    return sendError(res, 500, 'Server error', err);
+  }
+});
+
+// ── PATCH /api/warehouse-sales/:id/close ─────────────────────────────────────
+// Permanently locks the invoice/waybill against further edits. Only allowed
+// once fully paid — deletion stays available regardless of closed status.
+
+router.patch('/:id/close', async (req: Request, res: Response) => {
+  try {
+    const [sale] = await sql<WarehouseSaleRow[]>`SELECT * FROM warehouse_sales WHERE id = ${req.params.id}`;
+    if (!sale) return sendError(res, 404, 'Sale not found');
+    if (sale.is_closed) return sendError(res, 400, 'This invoice is already closed');
+    if (num(sale.balance_due) > 0.01)
+      return sendError(res, 400, `Cannot close an invoice with an outstanding balance of ₦${num(sale.balance_due).toLocaleString('en-NG')}. It must be fully paid first.`);
+
+    await sql`
+      UPDATE warehouse_sales SET
+        is_closed  = true,
+        closed_by  = ${req.userId!},
+        closed_at  = now(),
+        updated_at = now()
+      WHERE id = ${req.params.id}
+    `;
+
+    const [full] = await sql<(WarehouseSaleRow & { warehouse_name: string | null; created_by_name: string; closed_by_name: string | null })[]>`
+      SELECT ws.*, w.name AS warehouse_name, u.full_name AS created_by_name, cu.full_name AS closed_by_name
+      FROM   warehouse_sales ws
+      LEFT JOIN warehouses w ON w.id = ws.warehouse_id
+      JOIN  users u           ON u.id = ws.created_by
+      LEFT JOIN users cu      ON cu.id = ws.closed_by
+      WHERE  ws.id = ${req.params.id}
+    `;
+    const itemRows = await sql<WarehouseSaleItemRow[]>`
+      SELECT * FROM warehouse_sale_items WHERE sale_id = ${req.params.id} ORDER BY id
+    `;
+
+    return sendResponse(res, 200, 'Invoice closed', toSale({ ...full, items: itemRows }));
+  } catch (err) {
+    console.error('[PATCH /warehouse-sales/:id/close]', err);
     return sendError(res, 500, 'Server error', err);
   }
 });
