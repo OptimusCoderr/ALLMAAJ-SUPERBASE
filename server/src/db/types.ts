@@ -193,6 +193,9 @@ export interface WarehouseSaleRow {
   doc_label: string | null;
   notes: string | null;
   sale_date: string;
+  is_closed: boolean;
+  closed_by: string | null;
+  closed_at: string | null;
   created_at: string;
   updated_at: string;
 }
