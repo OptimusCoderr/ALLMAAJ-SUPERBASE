@@ -84,6 +84,10 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').slice(-10);
 }
 
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function fmtDateTime(dateStr: string) {
   const d = new Date(dateStr);
   return {
@@ -93,39 +97,69 @@ function fmtDateTime(dateStr: string) {
 }
 
 // ── Special-customer grouping ────────────────────────────────────────────────
+//
+// A debtor record only ever carries a name + phone (no email — that only
+// lives on the Special Customer profile, so it can't be used to match
+// incoming debt records against one). The same person can end up with
+// slightly different phone numbers across visits (retyped, new line, etc.),
+// so a debtor is matched to a Special Customer if EITHER its phone OR its
+// name matches — phone is tried first since it's the stronger identifier.
 
 interface CustomerGroupRow { type: 'group'; key: string; special: SpecialCustomer; debtors: Debtor[] }
 interface SingleRow        { type: 'single'; key: string; debtor: Debtor }
 type ListRow = CustomerGroupRow | SingleRow;
 
-function buildSpecialCustomerMap(specials: SpecialCustomer[]): Map<string, SpecialCustomer> {
-  const map = new Map<string, SpecialCustomer>();
+interface SpecialCustomerIndex {
+  byPhone: Map<string, SpecialCustomer>;
+  byName: Map<string, SpecialCustomer>;
+}
+
+function buildSpecialCustomerIndex(specials: SpecialCustomer[]): SpecialCustomerIndex {
+  const byPhone = new Map<string, SpecialCustomer>();
+  const byName  = new Map<string, SpecialCustomer>();
   for (const c of specials) {
     if (c.phone) {
       const norm = normalizePhone(c.phone);
-      if (norm.length >= 7) map.set(norm, c);
+      if (norm.length >= 7) byPhone.set(norm, c);
     }
+    if (c.name) byName.set(normalizeName(c.name), c);
   }
-  return map;
+  return { byPhone, byName };
 }
 
-// Groups debtor records whose phone matches a known Special Customer into a
-// single row (with all their debts inside), leaving everyone else as-is.
-// Preserves the incoming order — each group appears at the position of its
+function matchSpecialCustomer(d: Debtor, index: SpecialCustomerIndex): SpecialCustomer | undefined {
+  if (d.phone) {
+    const norm = normalizePhone(d.phone);
+    if (norm.length >= 7) {
+      const byPhone = index.byPhone.get(norm);
+      if (byPhone) return byPhone;
+    }
+  }
+  if (d.name) {
+    const byName = index.byName.get(normalizeName(d.name));
+    if (byName) return byName;
+  }
+  return undefined;
+}
+
+// Groups debtor records matching a known Special Customer (by phone or name)
+// into a single row with all their debts inside, leaving everyone else as-is.
+// Grouped by the customer's stable _id so debts that matched via different
+// signals (one by phone, another by name) still land in the same group.
+// Preserves incoming order — each group appears at the position of its
 // first (most recent, since the list is newest-first) matching debt.
-function buildListRows(debtors: Debtor[], specialMap: Map<string, SpecialCustomer>): ListRow[] {
+function buildListRows(debtors: Debtor[], index: SpecialCustomerIndex): ListRow[] {
   const rows: ListRow[] = [];
   const groupIndex = new Map<string, number>();
   for (const d of debtors) {
-    const norm = d.phone ? normalizePhone(d.phone) : '';
-    const special = norm.length >= 7 ? specialMap.get(norm) : undefined;
+    const special = matchSpecialCustomer(d, index);
     if (special) {
-      const idx = groupIndex.get(norm);
+      const idx = groupIndex.get(special._id);
       if (idx !== undefined) {
         (rows[idx] as CustomerGroupRow).debtors.push(d);
       } else {
-        groupIndex.set(norm, rows.length);
-        rows.push({ type: 'group', key: `group-${norm}`, special, debtors: [d] });
+        groupIndex.set(special._id, rows.length);
+        rows.push({ type: 'group', key: `group-${special._id}`, special, debtors: [d] });
       }
     } else {
       rows.push({ type: 'single', key: d._id, debtor: d });
@@ -135,9 +169,10 @@ function buildListRows(debtors: Debtor[], specialMap: Map<string, SpecialCustome
 }
 
 // Lifetime relationship stats for a special customer, computed over ALL of
-// their debt records (not just whatever the current filters show).
-function customerLifetimeStats(allDebtors: Debtor[], normPhone: string) {
-  const matches = allDebtors.filter(d => d.phone && normalizePhone(d.phone) === normPhone);
+// their debt records (not just whatever the current filters show) — matched
+// the same phone-or-name way as the grouping above.
+function customerLifetimeStats(allDebtors: Debtor[], special: SpecialCustomer, index: SpecialCustomerIndex) {
+  const matches = allDebtors.filter(d => matchSpecialCustomer(d, index)?._id === special._id);
   const totalTransactions   = matches.length;
   const totalClearedCount   = matches.filter(d => d.isCleared).length;
   const totalEverOwed       = matches.reduce((s, d) => s + (d.totalAmount ?? d.totalSaleAmount ?? d.amountOwed), 0);
@@ -376,16 +411,16 @@ function DebtorCard({ d, actions }: { d: Debtor; actions: DebtorActions }) {
 // outstanding time frame called out per row. ──────────────────────────────────
 
 function CustomerGroupCard({
-  group, allDebtors, actions,
+  group, allDebtors, index, actions,
 }: {
   group: CustomerGroupRow;
   allDebtors: Debtor[];
+  index: SpecialCustomerIndex;
   actions: DebtorActions;
 }) {
   const [open, setOpen] = useState(false);
   const { special, debtors } = group;
-  const norm = special.phone ? normalizePhone(special.phone) : '';
-  const stats = useMemo(() => customerLifetimeStats(allDebtors, norm), [allDebtors, norm]);
+  const stats = useMemo(() => customerLifetimeStats(allDebtors, special, index), [allDebtors, special, index]);
 
   const sorted      = [...debtors].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const totalOwed   = debtors.reduce((s, d) => s + d.amountOwed, 0);
@@ -783,8 +818,8 @@ export default function DebtorsPage() {
 
   // Debtors matching a Special Customer (by phone) are grouped into one row
   // with all their debts inside, shown as a table once expanded.
-  const specialCustomerMap = useMemo(() => buildSpecialCustomerMap(specialCustomers), [specialCustomers]);
-  const rows        = useMemo(() => buildListRows(filtered, specialCustomerMap), [filtered, specialCustomerMap]);
+  const specialCustomerIndex = useMemo(() => buildSpecialCustomerIndex(specialCustomers), [specialCustomers]);
+  const rows        = useMemo(() => buildListRows(filtered, specialCustomerIndex), [filtered, specialCustomerIndex]);
   const paginated   = rows.slice((page - 1) * limit, page * limit);
   const totalPages  = Math.max(1, Math.ceil(rows.length / limit));
 
@@ -887,7 +922,7 @@ export default function DebtorsPage() {
       ) : (
         <div className="space-y-3">
           {paginated.map(row => row.type === 'group'
-            ? <CustomerGroupCard key={row.key} group={row} allDebtors={debtors} actions={debtorActions} />
+            ? <CustomerGroupCard key={row.key} group={row} allDebtors={debtors} index={specialCustomerIndex} actions={debtorActions} />
             : <DebtorCard key={row.key} d={row.debtor} actions={debtorActions} />
           )}
         </div>
