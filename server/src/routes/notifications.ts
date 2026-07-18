@@ -43,4 +43,12 @@ router.patch('/read-all', async (req: Request, res: Response) => {
   } catch (err) { return sendError(res, 500, 'Server error', err); }
 });
 
+// DELETE /api/notifications — clears every notification for the current user
+router.delete('/', async (req: Request, res: Response) => {
+  try {
+    await sql`DELETE FROM notifications WHERE user_id = ${req.user!.id}`;
+    return sendResponse(res, 200, 'Notifications cleared');
+  } catch (err) { return sendError(res, 500, 'Server error', err); }
+});
+
 export default router;
