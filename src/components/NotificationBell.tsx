@@ -90,6 +90,11 @@ export default function NotificationBell({ dark = false }: { dark?: boolean }) {
     authFetch('/api/notifications/read-all', { method: 'PATCH' }).catch(() => {});
   }
 
+  function handleClearAll() {
+    setNotifications([]);
+    authFetch('/api/notifications', { method: 'DELETE' }).catch(() => {});
+  }
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -109,11 +114,18 @@ export default function NotificationBell({ dark = false }: { dark?: boolean }) {
         <div className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
             <span className="font-semibold text-slate-800 text-sm">Notifications</span>
-            {unreadCount > 0 && (
-              <button onClick={handleMarkAllRead} className="text-xs text-amber-600 hover:text-amber-700 font-medium">
-                Mark all read
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {unreadCount > 0 && (
+                <button onClick={handleMarkAllRead} className="text-xs text-amber-600 hover:text-amber-700 font-medium">
+                  Mark all read
+                </button>
+              )}
+              {notifications.length > 0 && (
+                <button onClick={handleClearAll} className="text-xs text-slate-400 hover:text-red-500 font-medium">
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
           <div className="max-h-96 overflow-y-auto">
             {notifications.length === 0 ? (
